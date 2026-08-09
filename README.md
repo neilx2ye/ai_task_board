@@ -73,7 +73,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 npm run dev
 ```
 
-打开 `http://localhost:3000`。网页用户经 Supabase Auth 登录；创建 AI Connection 时请立即复制只显示一次的连接令牌。AI 客户端使用它调用 REST 或 MCP，不能自行提交 `workspace_id`。空闲会话也应至少每分钟发送一次 session heartbeat；两分钟没有活动的会话不能接收新的 Web 预留任务。
+打开 `http://localhost:3000`。网页用户经 Supabase Auth 登录；创建 AI Connection 时请立即复制只显示一次的连接令牌。AI 客户端使用它调用 REST 或 MCP，不能自行提交 `workspace_id`。每个仍处于活动生命周期的会话都应至少每分钟发送一次 session heartbeat，空闲或等待用户回复时也不停止；两分钟没有活动的会话不能接收新的 Web 预留任务。
 
 常用检查：
 

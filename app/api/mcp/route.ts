@@ -77,6 +77,13 @@ const getUpdatesToolSchema = z
 
 const noStoreHeaders = { "Cache-Control": "no-store" } as const;
 
+const MCP_SERVER_INSTRUCTIONS = [
+  "Per conversation or agent context, call register_session once and retain its session.id only there. Every 60s call heartbeat_session with session_id and a fresh idempotency_key; continue while idle or waiting for user input. While holding a task claim, also call heartbeat before lease expiry with task_id, current claim_token, and a fresh key; session heartbeat does not renew task leases. Stop session heartbeats only on explicit user request, MCP host/client close, or conversation end.",
+  "Use a stable, unique external_conversation_ref when registering or resuming a conversation. Pass the returned session.id as arguments.session_id; never set a shared global X-AI-Session-ID for multiple conversations.",
+  "Stop the task heartbeat when its claim ends through request_user_input, complete_task, complete_task_and_claim_next, fail_task, release_task, LEASE_EXPIRED, or INVALID_CLAIM_TOKEN, but keep heartbeat_session running while the conversation remains active. Before intentionally ending a conversation with unfinished claimed work, call release_task.",
+  "If the host suspends execution and cannot call tools in the background, do not start an external daemon that outlives the conversation. When reactivated, call register_session with the same external_conversation_ref to restore the session and resume heartbeats. Reuse an idempotency_key only when retrying that same heartbeat tick.",
+].join("\n\n");
+
 type ToolDefinition = {
   name: string;
   description: string;
@@ -86,7 +93,7 @@ type ToolDefinition = {
 };
 
 const tools: ToolDefinition[] = [
-  { name: "register_session", description: "Register or refresh an external AI session. Supply a unique idempotency_key.", schema: registerSessionSchema, requiresSession: false },
+  { name: "register_session", description: "Register or restore one session per distinct conversation. Save its session.id and start heartbeat_session at least every 60 seconds until stopped or the conversation ends.", schema: registerSessionSchema, requiresSession: false },
   { name: "report_current_task", description: "Idempotently sync work already running externally.", schema: reportCurrentTaskSchema },
   { name: "claim_next_task", description: "Receive the highest-priority executable task reserved for this session.", schema: claimOptionsSchema },
   { name: "claim_task", description: "Receive a specific executable task reserved for this session.", schema: claimTaskSchema },
@@ -95,8 +102,8 @@ const tools: ToolDefinition[] = [
   { name: "report_progress", description: "Report an estimate and progress note for a claimed task.", schema: reportProgressSchema },
   { name: "post_task_message", description: "Add a message to a task conversation.", schema: postTaskMessageSchema },
   { name: "request_user_input", description: "Ask the user a question and end the current lease.", schema: requestUserInputSchema },
-  { name: "heartbeat_session", description: "Refresh an idle session so it remains an eligible Web dispatch target.", schema: sessionHeartbeatSchema },
-  { name: "heartbeat", description: "Extend a valid task claim lease.", schema: heartbeatClaimSchema },
+  { name: "heartbeat_session", description: "Refresh AI session presence. Call at least every 60 seconds while the conversation is active, including while idle; this does not renew task claims.", schema: sessionHeartbeatSchema },
+  { name: "heartbeat", description: "Extend a claimed task lease before expiry. Call this in addition to heartbeat_session while a task is held.", schema: heartbeatClaimSchema },
   { name: "complete_task", description: "Complete a claimed task with results and artifact references.", schema: completeTaskSchema },
   { name: "complete_task_and_claim_next", description: "Complete a task and atomically claim related follow-up work.", schema: completeAndClaimNextSchema },
   { name: "fail_task", description: "Mark a claimed task as failed and record the reason.", schema: failTaskSchema },
@@ -280,6 +287,7 @@ export async function POST(request: Request) {
               : LATEST_PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ai-task-board", version: "0.1.0" },
+          instructions: MCP_SERVER_INSTRUCTIONS,
         });
       }
       case "notifications/initialized":

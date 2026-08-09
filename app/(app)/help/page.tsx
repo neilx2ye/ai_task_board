@@ -173,8 +173,8 @@ export default function HelpPage() {
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
           <Step index={2} title="在 CLI / APP 建立上下文并注册会话">
-            先把任务背景和约束交给 AI，再用稳定的对话引用注册会话。空闲时也要持续
-            发送心跳；两分钟没有活动的会话不会被视为存活。
+            先把任务背景和约束交给 AI，再用稳定的对话引用注册会话。所有仍存活的
+            会话（包含等待回复的）都要持续发送心跳；两分钟没有活动的会话不会被视为存活。
           </Step>
           <Step index={3} title="同步当前任务或定向预留">
             CLI / APP 已开始的工作用 report-current 同步；如果从 Web 创建任务，请在
@@ -514,6 +514,55 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
               调用 request_user_input 后任务进入「等我回复」并结束当前租约，
               <strong>旧 claim token 立即失效</strong>
               ；用户回复后必须重新 claim 才能继续执行。
+            </span>
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">自动心跳约定</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            服务端会在 initialize 的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">instructions</code>
+            中自动下发这套规则：支持并遵循 initialize instructions 的客户端会把
+            它作为<strong className="text-foreground">服务器级规则</strong>执行，
+            你无需在每个会话里再粘贴提示词。
+          </p>
+          <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+            <li>
+              每个对话调用
+              <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
+              后，在会话存活期间<strong className="text-foreground">至少每 60 秒</strong>
+              调用一次
+              <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat_session</code>
+              ，即使空闲也要调用。
+            </li>
+            <li>
+              持有已领取任务时，还必须<strong className="text-foreground">独立</strong>
+              调用
+              <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
+              在租约到期前续租；session 心跳不能代替任务续租。
+            </li>
+            <li>
+              任务进入「等我回复」（waiting_user）期间，
+              <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat_session</code>
+              照常继续，但任务
+              <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
+              必须停止（此时租约已随提问结束）。
+            </li>
+            <li>
+              仅在三种情况下停止心跳：用户明确要求停止、MCP host/client 关闭、
+              对话结束。若对话准备主动结束且仍持有未完成的 claim，先调用
+              <code className="mx-1 rounded bg-muted px-1 text-xs">release_task</code>
+              再停止心跳。停止超过<strong className="text-foreground"> 2 分钟</strong>
+              后，页面会把该会话显示为离线。
+            </li>
+          </ul>
+          <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              坦诚说明：如果宿主暂停了模型（进程休眠或已退出），模型
+              <strong>无法真正在后台调用工具</strong>
+              ；重新激活时应先恢复或重新 register_session，再继续定时心跳。
             </span>
           </p>
         </div>

@@ -36,6 +36,19 @@ AI Connection Token 属于整个 AI 环境或 MCP 连接，可在全局 MCP 配�
 
 > 例外：`X-AI-Session-ID` 请求头只适合一个独立进程永久绑定一个 Session 的专用 Worker。共享或全局 MCP 环境不要配置它——当请求头与 `arguments.session_id` 同时存在时请求头优先，固定的请求头会覆盖每次调用传入的 `session_id`，导致所有对话被归到同一个 Session。
 
+## 自动心跳约定
+
+服务端会在 MCP `initialize` 响应的 `instructions` 字段中自动下发会话生命周期规则。支持 server instructions 的 AI Host 会把它作为整个服务器的使用指引，所以不需要用户在每个新对话里再次粘贴心跳提示词：
+
+- 每个新对话或 Agent 上下文调用一次 `register_session` 后，应保存该上下文自己的 Session ID，并在上下文存活期间至少每 60 秒调用一次 `heartbeat_session`；空闲或正在等待用户回复时也继续。
+- 只有在用户明确要求停止、MCP Host/客户端正在关闭，或该对话已经结束时才停止会话心跳。停止超过两分钟后，该 Session 会在网页中显示为离线，且不能接收新的 Web 预留任务。
+- 已领取任务时必须另外在租约到期前调用 `heartbeat`；`heartbeat_session` 只维持会话在线，不能延长任务租约。任务完成、失败、释放或进入 `waiting_user` 后停止该任务的租约心跳。
+- 每次定时心跳是新的逻辑操作，应使用新的 `idempotency_key`；只有重试同一次心跳请求时才复用原 Key。
+
+若准备主动结束对话但仍持有未完成任务，应先调用 `release_task` 再停止心跳，避免任务一直占用到租约自然过期。异常退出时则由租约超时保护接管。
+
+MCP instructions 能教会并约束支持它的 AI 客户端，但不能让已经被宿主暂停的模型、休眠的进程或已退出的对话继续执行后台工具调用。此时不应启动一个脱离对话生命周期的外部守护进程；下次激活时，用相同的 `external_conversation_ref` 再次调用 `register_session` 恢复原 Session，然后继续心跳。
+
 ## 用 JSON-RPC 引导一个会话
 
 以下示例便于在接入 MCP Host 前验证端点。先设置：
@@ -156,7 +169,7 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 | `report_progress` | `tasks/report-progress` | `task_id`、`claim_token`、进度说明与估计 |
 | `post_task_message` | `tasks/messages` | `task_id`、`claim_token`、`content`、`reply_to_message_id?` |
 | `request_user_input` | `tasks/request-user-input` | `task_id`、`claim_token`、`question` |
-| `heartbeat_session` | `sessions/presence` | 空闲会话存活心跳，无任务字段 |
+| `heartbeat_session` | `sessions/presence` | 会话存活心跳，无任务字段；空闲或等待用户时也持续 |
 | `heartbeat` | `sessions/heartbeat` | `task_id`、`claim_token`、`lease_seconds?` |
 | `complete_task` | `tasks/complete` | 领取凭证、结果、消息与附件引用 |
 | `complete_task_and_claim_next` | 同名 REST 路由 | 完成输入及 `lease_seconds?` |

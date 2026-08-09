@@ -69,7 +69,7 @@ export ATB_SESSION_ID='<data.session.id>'
 
 同一连接与 `external_conversation_ref` 的重复注册会幂等更新同一个 `AISession`。
 
-空闲会话应至少每分钟刷新一次存活状态，使 Web Console 可以继续向它预留任务：
+每个仍处于活动生命周期的会话都应至少每分钟刷新一次存活状态，使 Web Console 可以继续向它预留任务；空闲或正在等待用户回复时也要继续：
 
 ```bash
 curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/presence" \

@@ -67,6 +67,19 @@ describe("stateless MCP endpoint", () => {
         serverInfo: { name: "ai-task-board", version: "0.1.0" },
       },
     });
+    const instructions = (payload.result as { instructions: string }).instructions;
+    const firstParagraph = instructions.split("\n\n", 1)[0];
+    expect(firstParagraph.length).toBeLessThanOrEqual(512);
+    expect(firstParagraph).toContain("register_session");
+    expect(firstParagraph).toContain("Every 60s");
+    expect(firstParagraph).toContain("heartbeat_session");
+    expect(firstParagraph).toContain("waiting for user input");
+    expect(firstParagraph).toContain("also call heartbeat");
+    expect(firstParagraph).toContain("explicit user request");
+    expect(firstParagraph).toContain("conversation end");
+    expect(instructions).toContain("session heartbeat does not renew task leases");
+    expect(instructions).toContain("call release_task");
+    expect(instructions).toContain("do not start an external daemon");
     expect(authMocks.authenticateAIRequest).toHaveBeenCalledOnce();
   });
 
@@ -124,6 +137,33 @@ describe("stateless MCP endpoint", () => {
     expect(getSchema.required).not.toContain("idempotency_key");
     expect(getSchema.properties).toHaveProperty("session_id");
     expect(getSchema.properties).not.toHaveProperty("idempotency_key");
+
+    expect(byName.get("register_session")?.description).toContain("every 60 seconds");
+    expect(byName.get("heartbeat_session")?.description).toContain(
+      "does not renew task claims",
+    );
+    expect(byName.get("heartbeat")?.description).toContain(
+      "in addition to heartbeat_session",
+    );
+
+    const sessionHeartbeatSchema = byName.get("heartbeat_session")?.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(sessionHeartbeatSchema.required).toContain("idempotency_key");
+    expect(sessionHeartbeatSchema.properties).toHaveProperty("session_id");
+    expect(sessionHeartbeatSchema.properties).not.toHaveProperty("task_id");
+    expect(sessionHeartbeatSchema.properties).not.toHaveProperty("claim_token");
+
+    const taskHeartbeatSchema = byName.get("heartbeat")?.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(taskHeartbeatSchema.required).toEqual(
+      expect.arrayContaining(["idempotency_key", "task_id", "claim_token"]),
+    );
+    expect(taskHeartbeatSchema.properties).toHaveProperty("session_id");
+    expect(taskHeartbeatSchema.properties).toHaveProperty("lease_seconds");
   });
 
   it("acknowledges initialized notifications without JSON state", async () => {
