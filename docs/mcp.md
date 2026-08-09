@@ -14,26 +14,27 @@ AI Task Board 在 `POST /api/mcp` 提供无状态 MCP Streamable HTTP 端点。�
 
 ## 客户端配置
 
-先取得 AI Session ID，再为该会话建立一个远程 HTTP MCP 配置。不同 MCP Host 的字段名可能略有差异，通用配置如下：
+AI Connection Token 属于整个 AI 环境或 MCP 连接，可在全局 MCP 配置中固定；AI Session 属于具体的对话、线程或 Agent 上下文，同一个 Connection 下可以（并且通常会）有多个 Session。因此共享的 MCP 配置只固定令牌，不配置会话头：
 
 ```json
 {
   "mcpServers": {
-    "ai-task-board-claude-research": {
+    "ai-task-board": {
       "type": "http",
       "url": "http://localhost:3000/api/mcp",
       "headers": {
-        "Authorization": "Bearer atb_REPLACE_ME",
-        "X-AI-Session-ID": "00000000-0000-4000-8000-000000000000"
+        "Authorization": "Bearer atb_REPLACE_ME"
       }
     }
   }
 }
 ```
 
-有些 Host 把 `type` 命名为 `streamable-http`。请优先使用 Host 的 Secret/环境变量插值能力，不要把 `atb_...` 明文提交到配置仓库。一个 AI Task Board Connection 可以注册多个会话；为 `Claude Research`、`Codex Builder` 和 `ChatGPT Writer` 分别配置同一个 Connection Token 和不同的 `X-AI-Session-ID`。
+有些 Host 把 `type` 命名为 `streamable-http`。请优先使用 Host 的 Secret/环境变量插值能力，不要把 `atb_...` 明文提交到配置仓库。
 
-如果 Host 不能配置会话头，也可以在每个工具的 arguments 中发送 `session_id`。写工具还必须为每次逻辑操作发送唯一的 `idempotency_key`；重试同一操作时复用原 Key。
+每个新对话或 Agent 上下文首次使用时调用 `register_session`，提供该上下文稳定且唯一的 `external_conversation_ref`，并保存 `result.structuredContent.data.session.id`；同一 Connection + `external_conversation_ref` 重连会恢复同一 Session。之后每次工具调用在 `arguments.session_id` 中传该对话自己的 Session ID——除 `register_session` 外，服务端 schema 已公开 `session_id`。写工具还必须为每次逻辑操作发送唯一的 `idempotency_key`；重试同一操作时复用原 Key。
+
+> 例外：`X-AI-Session-ID` 请求头只适合一个独立进程永久绑定一个 Session 的专用 Worker。共享或全局 MCP 环境不要配置它——当请求头与 `arguments.session_id` 同时存在时请求头优先，固定的请求头会覆盖每次调用传入的 `session_id`，导致所有对话被归到同一个 Session。
 
 ## 用 JSON-RPC 引导一个会话
 
@@ -107,7 +108,6 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 ```bash
 curl --fail-with-body -sS "$ATB_MCP_URL" \
   -H "Authorization: Bearer $ATB_CONNECTION_TOKEN" \
-  -H "X-AI-Session-ID: $ATB_SESSION_ID" \
   -H 'Content-Type: application/json' \
   --data "{
     \"jsonrpc\": \"2.0\",
@@ -116,6 +116,7 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
     \"params\": {
       \"name\": \"claim_next_task\",
       \"arguments\": {
+        \"session_id\": \"$ATB_SESSION_ID\",
         \"idempotency_key\": \"mcp/claim-next/$(openssl rand -hex 16)\",
         \"lease_seconds\": 900
       }
@@ -123,7 +124,7 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
   }"
 ```
 
-若不使用 `X-AI-Session-ID`，把 `"session_id": "$ATB_SESSION_ID"` 放到 arguments 中即可。不要同时发送两个不同的会话 ID；服务端优先使用请求头。
+会话 ID 通过 `arguments.session_id` 传递，每个对话传自己的 Session ID。`X-AI-Session-ID` 请求头仅适用于永久绑定单一 Session 的专用 Worker；服务端优先使用请求头，固定请求头会覆盖 arguments 中的 `session_id`。
 
 工具成功结果同时提供 MCP 文本内容与结构化数据：
 
@@ -163,7 +164,7 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 | `release_task` | `tasks/release` | `task_id`、`claim_token`、`reason?` |
 | `get_task_updates` | `GET tasks/:taskId/updates` | `task_id`、`after?`、`limit?` |
 
-完整字段约束由 `tools/list` 返回。除了 `get_task`、`get_task_updates` 之外，所有工具都要求 `idempotency_key`；除了 `register_session` 之外，所有工具都要求请求头或 arguments 中存在 AI Session ID。
+完整字段约束由 `tools/list` 返回。除了 `get_task`、`get_task_updates` 之外，所有工具都要求 `idempotency_key`；除了 `register_session` 之外，所有工具都要求 `arguments.session_id`（或专用 Worker 的 `X-AI-Session-ID` 请求头）中存在 AI Session ID。
 
 涉及租约的 `lease_seconds` 范围为 `60..3600`，默认 `900`。MCP 工具只提交附件元数据或外部 URL；浏览器的私有文件上传接口见 [REST API 示例](rest-api.md)。
 

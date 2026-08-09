@@ -309,6 +309,21 @@ Idempotency-Key: <唯一键>
           initialize、notifications/initialized、ping、tools/list 与 tools/call。
         </p>
 
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">Connection 与 Session 的区别</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            <strong className="text-foreground">Connection Token</strong>
+            属于整个 AI 环境或 MCP 连接，可以固定在全局 MCP 配置中；
+            <strong className="text-foreground">Session</strong>
+            属于具体的一次对话、线程或 Agent 上下文，同一个 Connection 下可以
+            （并且通常会）存在多个 Session。因此共享的 Codex CLI、IDE、
+            ChatGPT desktop MCP 配置
+            <strong className="text-foreground">绝不要固定 X-AI-Session-ID</strong>
+            ，否则所有对话的工作都会被错误归到同一个 Session；会话 ID 应由每个
+            对话上下文各自持有，并随每次工具调用传递。
+          </p>
+        </div>
+
         <ol className="flex flex-col gap-4">
           <Step index={1} title="创建一次性连接令牌">
             <span className="flex flex-col items-start gap-2">
@@ -326,20 +341,22 @@ Idempotency-Key: <唯一键>
             </span>
           </Step>
           <Step index={2} title="调用 register_session 注册会话">
-            客户端连接端点后调用
+            每个新对话或 Agent 上下文首次使用时调用
             <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
-            ，从返回的
+            ，并提供该上下文稳定且唯一的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">external_conversation_ref</code>
+            ；同一 Connection + external_conversation_ref 重连会恢复同一 Session。
+            从返回的
             <code className="mx-1 rounded bg-muted px-1 text-xs break-all">
               result.structuredContent.data.session.id
             </code>
             取得会话 ID。
           </Step>
-          <Step index={3} title="配置会话 ID">
-            把会话 ID 配置为
-            <code className="mx-1 rounded bg-muted px-1 text-xs">X-AI-Session-ID</code>
-            请求头；若 Host 不支持自定义请求头，则在每次工具调用的
+          <Step index={3} title="在对话上下文中保存并传递会话 ID">
+            把会话 ID 保存在当前对话或 Agent 上下文中，之后每次工具调用都在
             <code className="mx-1 rounded bg-muted px-1 text-xs">arguments.session_id</code>
-            中携带。两种方式不要同时发送不同的会话 ID。
+            中传该对话自己的 Session ID（除 register_session 外，服务端 schema
+            已公开 session_id 字段）。不要把会话 ID 写进共享的全局 MCP 配置。
           </Step>
           <Step index={4} title="领取与执行">
             之后按下方主循环领取预留任务、回传进度并完成。
@@ -351,7 +368,7 @@ Idempotency-Key: <唯一键>
             除
             <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
             外，<strong className="text-foreground">所有工具都需要会话 ID</strong>
-            （请求头或 arguments 二选一）。
+            ，在每次调用的 arguments.session_id 中传递（专用 Worker 的请求头例外见文末说明）。
           </li>
           <li>
             除
@@ -363,13 +380,13 @@ Idempotency-Key: <唯一键>
         </ul>
 
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">Codex 配置</h3>
+          <h3 className="text-sm font-medium">Codex 配置（全局，不含会话 ID）</h3>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            首次连接时还没有会话 ID，为避免循环依赖，配置分两步。第一步：在
+            全局的
             <code className="mx-1 rounded bg-muted px-1 text-xs">~/.codex/config.toml</code>
-            中只配置 url 与 bearer_token_env_var，连接后调用 register_session：
+            只固定端点和令牌，会话 ID 由每个对话在工具 arguments 中传递：
           </p>
-          <CopyableCodeBlock copyLabel="复制 Codex 首次连接配置">{`# ~/.codex/config.toml（第一步：首次连接，尚无会话 ID）
+          <CopyableCodeBlock copyLabel="复制 Codex 配置">{`# ~/.codex/config.toml
 # 先设置环境变量：
 #   export ATB_CONNECTION_TOKEN='atb_...'   # 一次性连接令牌
 
@@ -377,27 +394,10 @@ Idempotency-Key: <唯一键>
 url = "https://task.neilx.online/api/mcp"
 bearer_token_env_var = "ATB_CONNECTION_TOKEN"
 
-# 连接后调用 register_session，从返回的
-# result.structuredContent.data.session.id 取得会话 ID`}</CopyableCodeBlock>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            第二步：设置
-            <code className="mx-1 rounded bg-muted px-1 text-xs">ATB_SESSION_ID</code>
-            环境变量，补上 env_http_headers，然后重启或重新载入 MCP 客户端：
-          </p>
-          <CopyableCodeBlock copyLabel="复制 Codex 完整配置">{`# ~/.codex/config.toml（第二步：补上会话 ID 请求头）
-# 先设置环境变量：
-#   export ATB_CONNECTION_TOKEN='atb_...'    # 一次性连接令牌
-#   export ATB_SESSION_ID='<session_id>'     # register_session 返回的会话 ID
-
-[mcp_servers.ai_task_board]
-url = "https://task.neilx.online/api/mcp"
-bearer_token_env_var = "ATB_CONNECTION_TOKEN"
-env_http_headers = { "X-AI-Session-ID" = "ATB_SESSION_ID" }`}</CopyableCodeBlock>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            另一选择是始终省略 env_http_headers，在每次工具调用的
-            <code className="mx-1 rounded bg-muted px-1 text-xs">arguments.session_id</code>
-            中显式传入会话 ID，这样配置文件无需二次修改。
-          </p>
+# 不要在这里配置 X-AI-Session-ID：这份配置被所有对话共享，
+# 固定会话头会让所有对话归到同一个 Session。
+# 每个对话首次使用时调用 register_session，之后在每次
+# 工具调用的 arguments.session_id 中传自己的会话 ID。`}</CopyableCodeBlock>
           <p className="text-sm leading-relaxed text-muted-foreground">
             Codex CLI、IDE 扩展与 ChatGPT desktop 共用同一 Codex host 的这份配置；
             保存后可用
@@ -414,8 +414,8 @@ env_http_headers = { "X-AI-Session-ID" = "ATB_SESSION_ID" }`}</CopyableCodeBlock
             其他 MCP Host 可使用等价的 JSON 配置（部分 Host 把
             <code className="mx-1 rounded bg-muted px-1 text-xs">type</code> 命名为
             <code className="mx-1 rounded bg-muted px-1 text-xs">streamable-http</code>
-            ）。以下全部为占位符，请用自己的令牌和会话 ID 替换，优先使用 Host 的
-            Secret 插值能力：
+            ）。全局配置同样只固定令牌，请用自己的连接令牌替换占位符，优先使用
+            Host 的 Secret 插值能力：
           </p>
           <CopyableCodeBlock copyLabel="复制通用 MCP 配置">{`{
   "mcpServers": {
@@ -423,12 +423,15 @@ env_http_headers = { "X-AI-Session-ID" = "ATB_SESSION_ID" }`}</CopyableCodeBlock
       "type": "http",
       "url": "https://task.neilx.online/api/mcp",
       "headers": {
-        "Authorization": "Bearer atb_REPLACE_ME",
-        "X-AI-Session-ID": "REPLACE_WITH_SESSION_ID"
+        "Authorization": "Bearer atb_REPLACE_ME"
       }
     }
   }
 }`}</CopyableCodeBlock>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            会话 ID 不写入此配置：每个对话首次调用 register_session 取得后，
+            在每次工具调用的 arguments.session_id 中传递。
+          </p>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -512,6 +515,20 @@ env_http_headers = { "X-AI-Session-ID" = "ATB_SESSION_ID" }`}</CopyableCodeBlock
               <strong>旧 claim token 立即失效</strong>
               ；用户回复后必须重新 claim 才能继续执行。
             </span>
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">高级：X-AI-Session-ID 请求头（仅限专用 Worker）</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            服务端也接受
+            <code className="mx-1 rounded bg-muted px-1 text-xs">X-AI-Session-ID</code>
+            请求头，但它只适合
+            <strong className="text-foreground">一个独立进程永久绑定一个 Session 的
+            专用 Worker</strong>。共享或全局 MCP 环境不要配置它：当请求头与
+            arguments.session_id 同时存在时<strong className="text-foreground">请求头优先</strong>，
+            固定的请求头会覆盖每次调用传入的 arguments.session_id，导致所有
+            对话都被归到同一个 Session。
           </p>
         </div>
       </Section>
