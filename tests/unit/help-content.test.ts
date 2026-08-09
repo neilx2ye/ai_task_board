@@ -16,6 +16,7 @@ describe("帮助页结构元数据", () => {
         "getting-started",
         "task-status",
         "ai-integration",
+        "mcp-integration",
         "attachments",
         "faq",
       ]),

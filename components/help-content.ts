@@ -12,6 +12,7 @@ export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "getting-started", label: "快速上手" },
   { id: "task-status", label: "任务状态" },
   { id: "ai-integration", label: "AI 接入" },
+  { id: "mcp-integration", label: "MCP 接入" },
   { id: "attachments", label: "附件" },
   { id: "faq", label: "常见问题" },
 ];

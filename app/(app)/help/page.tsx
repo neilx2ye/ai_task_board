@@ -9,6 +9,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 
+import { CopyButton } from "@/components/copy-button";
 import { HELP_ACTIONS, HELP_SECTIONS } from "@/components/help-content";
 import { TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,23 @@ function CodeBlock({ children }: { children: string }) {
     <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs leading-relaxed">
       <code>{children}</code>
     </pre>
+  );
+}
+
+function CopyableCodeBlock({
+  copyLabel,
+  children,
+}: {
+  copyLabel: string;
+  children: string;
+}) {
+  return (
+    <div className="relative">
+      <div className="absolute top-1.5 right-1.5">
+        <CopyButton text={children} label={copyLabel} />
+      </div>
+      <CodeBlock>{children}</CodeBlock>
+    </div>
   );
 }
 
@@ -249,16 +267,253 @@ Idempotency-Key: <唯一键>
           。心跳接口可延长租约；租约过期后仍只有原目标会话可以重新接收，改派需要用户明确操作。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          使用 MCP 的客户端可将入口指向
-          <code className="mx-1 rounded bg-muted px-1 text-xs">/api/mcp</code>
-          ，它提供与 REST 一致的工具集（register_session、claim_next_task、
-          report_progress、request_user_input、complete_task 等）。
+          使用 MCP 的客户端（如 Codex）请直接阅读下方
+          <a
+            href="#mcp-integration"
+            className="mx-1 text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            MCP 接入
+          </a>
+          章节，其中的工具集与 REST 一一对应。
         </p>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           连接令牌只在创建或轮换时显示一次，服务端只保存其哈希。请勿把令牌、
           SUPABASE_SECRET_KEY 提交到仓库或发送到公开渠道。
         </p>
+      </Section>
+
+      <Section id="mcp-integration" title="MCP 接入（Codex 等 MCP 客户端）">
+        <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            <strong>看板不会自动启动或唤醒 Codex 子 Agent。</strong>
+            MCP 客户端必须主动连接端点并调用或轮询工具；仅在看板上创建或预留任务，
+            不会有任何 AI 自动开始工作。
+          </span>
+        </p>
+
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          公网端点为
+          <code className="mx-1 rounded bg-muted px-1 text-xs break-all">
+            https://task.neilx.online/api/mcp
+          </code>
+          ，是无状态的 MCP Streamable HTTP 服务：所有请求都必须携带
+          <code className="mx-1 rounded bg-muted px-1 text-xs">
+            Authorization: Bearer atb_...
+          </code>
+          连接令牌；服务端返回
+          <code className="mx-1 rounded bg-muted px-1 text-xs">application/json</code>
+          ，<strong className="text-foreground">不签发 Mcp-Session-Id</strong>
+          ，因此每次调用都是独立请求，需重复发送鉴权头。端点支持
+          initialize、notifications/initialized、ping、tools/list 与 tools/call。
+        </p>
+
+        <ol className="flex flex-col gap-4">
+          <Step index={1} title="创建一次性连接令牌">
+            <span className="flex flex-col items-start gap-2">
+              <span>
+                在「AI 连接」页创建连接并立即保存
+                <code className="mx-1 rounded bg-muted px-1 text-xs">atb_...</code>
+                令牌；它只显示一次，是建立 MCP 连接的鉴权凭证。
+              </span>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/connections">
+                  打开 AI 连接
+                  <ArrowRightIcon />
+                </Link>
+              </Button>
+            </span>
+          </Step>
+          <Step index={2} title="调用 register_session 注册会话">
+            客户端连接端点后调用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
+            ，从返回的
+            <code className="mx-1 rounded bg-muted px-1 text-xs break-all">
+              result.structuredContent.data.session.id
+            </code>
+            取得会话 ID。
+          </Step>
+          <Step index={3} title="配置会话 ID">
+            把会话 ID 配置为
+            <code className="mx-1 rounded bg-muted px-1 text-xs">X-AI-Session-ID</code>
+            请求头；若 Host 不支持自定义请求头，则在每次工具调用的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">arguments.session_id</code>
+            中携带。两种方式不要同时发送不同的会话 ID。
+          </Step>
+          <Step index={4} title="领取与执行">
+            之后按下方主循环领取预留任务、回传进度并完成。
+          </Step>
+        </ol>
+
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            除
+            <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
+            外，<strong className="text-foreground">所有工具都需要会话 ID</strong>
+            （请求头或 arguments 二选一）。
+          </li>
+          <li>
+            除
+            <code className="mx-1 rounded bg-muted px-1 text-xs">get_task</code> 和
+            <code className="mx-1 rounded bg-muted px-1 text-xs">get_task_updates</code>
+            外，<strong className="text-foreground">所有工具都需要唯一的
+            idempotency_key</strong>；对同一逻辑操作重试时必须复用原 key。
+          </li>
+        </ul>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">Codex 配置</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            首次连接时还没有会话 ID，为避免循环依赖，配置分两步。第一步：在
+            <code className="mx-1 rounded bg-muted px-1 text-xs">~/.codex/config.toml</code>
+            中只配置 url 与 bearer_token_env_var，连接后调用 register_session：
+          </p>
+          <CopyableCodeBlock copyLabel="复制 Codex 首次连接配置">{`# ~/.codex/config.toml（第一步：首次连接，尚无会话 ID）
+# 先设置环境变量：
+#   export ATB_CONNECTION_TOKEN='atb_...'   # 一次性连接令牌
+
+[mcp_servers.ai_task_board]
+url = "https://task.neilx.online/api/mcp"
+bearer_token_env_var = "ATB_CONNECTION_TOKEN"
+
+# 连接后调用 register_session，从返回的
+# result.structuredContent.data.session.id 取得会话 ID`}</CopyableCodeBlock>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            第二步：设置
+            <code className="mx-1 rounded bg-muted px-1 text-xs">ATB_SESSION_ID</code>
+            环境变量，补上 env_http_headers，然后重启或重新载入 MCP 客户端：
+          </p>
+          <CopyableCodeBlock copyLabel="复制 Codex 完整配置">{`# ~/.codex/config.toml（第二步：补上会话 ID 请求头）
+# 先设置环境变量：
+#   export ATB_CONNECTION_TOKEN='atb_...'    # 一次性连接令牌
+#   export ATB_SESSION_ID='<session_id>'     # register_session 返回的会话 ID
+
+[mcp_servers.ai_task_board]
+url = "https://task.neilx.online/api/mcp"
+bearer_token_env_var = "ATB_CONNECTION_TOKEN"
+env_http_headers = { "X-AI-Session-ID" = "ATB_SESSION_ID" }`}</CopyableCodeBlock>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            另一选择是始终省略 env_http_headers，在每次工具调用的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">arguments.session_id</code>
+            中显式传入会话 ID，这样配置文件无需二次修改。
+          </p>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Codex CLI、IDE 扩展与 ChatGPT desktop 共用同一 Codex host 的这份配置；
+            保存后可用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">codex mcp list</code>
+            或会话内的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">/mcp</code>
+            命令检查连接状态。注意 ChatGPT 网页版不会读取这份本地配置。
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">通用 Streamable HTTP 客户端</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            其他 MCP Host 可使用等价的 JSON 配置（部分 Host 把
+            <code className="mx-1 rounded bg-muted px-1 text-xs">type</code> 命名为
+            <code className="mx-1 rounded bg-muted px-1 text-xs">streamable-http</code>
+            ）。以下全部为占位符，请用自己的令牌和会话 ID 替换，优先使用 Host 的
+            Secret 插值能力：
+          </p>
+          <CopyableCodeBlock copyLabel="复制通用 MCP 配置">{`{
+  "mcpServers": {
+    "ai-task-board": {
+      "type": "http",
+      "url": "https://task.neilx.online/api/mcp",
+      "headers": {
+        "Authorization": "Bearer atb_REPLACE_ME",
+        "X-AI-Session-ID": "REPLACE_WITH_SESSION_ID"
+      }
+    }
+  }
+}`}</CopyableCodeBlock>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">工具清单（16 个，与 REST 一一对应）</h3>
+          <ul className="flex flex-col gap-3 text-sm leading-relaxed text-muted-foreground">
+            <li>
+              <Badge variant="secondary" className="mb-1">会话</Badge>
+              <p>
+                <code className="mx-1 rounded bg-muted px-1 text-xs">register_session</code>
+                注册或刷新会话（无需会话 ID）；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat_session</code>
+                空闲会话存活心跳。
+              </p>
+            </li>
+            <li>
+              <Badge variant="secondary" className="mb-1">领取与查询</Badge>
+              <p>
+                <code className="mx-1 rounded bg-muted px-1 text-xs">claim_next_task</code>
+                领取本会话预留队列的下一项；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">claim_task</code>
+                领取指定任务；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">get_task</code>
+                读取任务详情；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">get_task_updates</code>
+                按事件游标读取更新（这两个只读工具无需幂等键）。
+              </p>
+            </li>
+            <li>
+              <Badge variant="secondary" className="mb-1">执行与沟通</Badge>
+              <p>
+                <code className="mx-1 rounded bg-muted px-1 text-xs">report_current_task</code>
+                同步外部已开始的工作；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">create_subtasks</code>
+                原子拆分子任务；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">report_progress</code>
+                回传进度；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">post_task_message</code>
+                发送任务消息；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">request_user_input</code>
+                向用户提问；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
+                延长任务租约。
+              </p>
+            </li>
+            <li>
+              <Badge variant="secondary" className="mb-1">收尾</Badge>
+              <p>
+                <code className="mx-1 rounded bg-muted px-1 text-xs">complete_task</code>
+                完成并提交结果；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">complete_task_and_claim_next</code>
+                完成并原子领取下一项；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">fail_task</code>
+                标记失败；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">release_task</code>
+                释放回队列。完整字段约束以 tools/list 返回为准。
+              </p>
+            </li>
+          </ul>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">推荐主循环</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat_session</code>
+            保持会话存活 →
+            <code className="mx-1 rounded bg-muted px-1 text-xs">claim_next_task</code>
+            领取预留任务 → 执行中用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">report_progress</code>
+            回传进度或
+            <code className="mx-1 rounded bg-muted px-1 text-xs">post_task_message</code>
+            发消息 → 用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
+            续租 → 完成后调用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">complete_task_and_claim_next</code>
+            进入下一项。
+          </p>
+          <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              调用 request_user_input 后任务进入「等我回复」并结束当前租约，
+              <strong>旧 claim token 立即失效</strong>
+              ；用户回复后必须重新 claim 才能继续执行。
+            </span>
+          </p>
+        </div>
       </Section>
 
       <Section id="attachments" title="附件">
