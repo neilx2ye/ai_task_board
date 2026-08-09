@@ -21,6 +21,13 @@ export type ConnectionInput = {
 
 const CONNECTIONS_KEY = ["connections"] as const;
 
+/** 防御性过滤：列表只保留未被撤销的连接（revoked_at 为 null）。 */
+export function activeConnections(
+  connections: PublicConnection[],
+): PublicConnection[] {
+  return connections.filter((connection) => connection.revoked_at === null);
+}
+
 export function useConnections() {
   return useQuery({
     queryKey: CONNECTIONS_KEY,
@@ -28,7 +35,7 @@ export function useConnections() {
       const data = await apiFetch<{ connections?: PublicConnection[] }>(
         "/api/user/connections",
       );
-      return data.connections ?? [];
+      return activeConnections(data.connections ?? []);
     },
   });
 }
@@ -64,10 +71,19 @@ export function useRotateConnection(connectionId: string) {
 }
 
 export function useRevokeConnection(connectionId: string) {
-  return useConnectionMutation(() =>
-    apiFetch<unknown>(`/api/user/connections/${connectionId}/revoke`, {
-      method: "POST",
-      json: {},
-    }),
-  );
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<unknown>(`/api/user/connections/${connectionId}/revoke`, {
+        method: "POST",
+        json: {},
+      }),
+    onSuccess: () => {
+      // 立即把被撤销的连接移出缓存，再 invalidate 与服务端对齐。
+      queryClient.setQueryData<PublicConnection[]>(CONNECTIONS_KEY, (old) =>
+        old?.filter((connection) => connection.id !== connectionId),
+      );
+      void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
+    },
+  });
 }

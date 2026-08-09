@@ -256,10 +256,17 @@ test("shows a connection token once and revokes the connection", async ({ page }
   const revokeDialog = page.getByRole("dialog", { name: "撤销该连接？" });
   await revokeDialog.getByRole("button", { name: "确认撤销", exact: true }).click();
 
-  await expect(connectionCard.getByText("已撤销", { exact: true })).toBeVisible({
+  // 撤销成功后整张连接卡立即消失（mutation 会同步移除缓存项并 invalidate）。
+  await expect(page.getByText(connectionName, { exact: true })).toHaveCount(0, {
     timeout: 15_000,
   });
-  await expect(connectionCard.getByRole("button", { name: "撤销", exact: true })).toHaveCount(0);
+  await expect(page.getByText("已撤销", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(token, { exact: true })).toHaveCount(0);
+
+  // 刷新后被撤销的连接依然不出现——服务端数据同样被前端防御性过滤。
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "AI 连接" })).toBeVisible();
+  await expect(page.getByText(connectionName, { exact: true })).toHaveCount(0);
   await expect(page.getByText(token, { exact: true })).toHaveCount(0);
 
   const revokedRequest = await page.request.post("/api/ai/sessions/register", {

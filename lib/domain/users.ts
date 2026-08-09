@@ -248,6 +248,7 @@ export async function listConnections(context: UserWorkspaceContext) {
       "id, workspace_id, name, platform, created_by_user_id, last_used_at, created_at, revoked_at",
     )
     .eq("workspace_id", context.workspaceId)
+    .is("revoked_at", null)
     .order("created_at", { ascending: false });
   if (error) throw mapDatabaseError(error);
   return { connections: data ?? [] };

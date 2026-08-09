@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  activeConnections,
   useConnections,
   useCreateConnection,
   useRevokeConnection,
@@ -144,7 +145,6 @@ function ConnectionCard({
   const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const revoked = connection.revoked_at !== null;
   const pending = rotateConnection.isPending || revokeConnection.isPending;
 
   const run = async (action: () => Promise<unknown>) => {
@@ -157,7 +157,7 @@ function ConnectionCard({
   };
 
   return (
-    <Card className={revoked ? "opacity-70" : undefined}>
+    <Card>
       <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
         <div className="flex min-w-0 flex-col gap-1">
           <span className="truncate text-sm font-semibold">
@@ -167,13 +167,9 @@ function ConnectionCard({
             {connection.platform}
           </span>
         </div>
-        {revoked ? (
-          <Badge variant="secondary">已撤销</Badge>
-        ) : (
-          <Badge className="border border-teal-200 bg-teal-50 text-teal-700">
-            有效
-          </Badge>
-        )}
+        <Badge className="border border-teal-200 bg-teal-50 text-teal-700">
+          有效
+        </Badge>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <dl className="flex flex-col gap-1.5 text-xs text-muted-foreground">
@@ -201,28 +197,26 @@ function ConnectionCard({
           </p>
         ) : null}
 
-        {!revoked ? (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={() => setConfirm("rotate")}
-            >
-              <RefreshCwIcon />
-              轮换令牌
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={pending}
-              onClick={() => setConfirm("revoke")}
-            >
-              <Trash2Icon />
-              撤销
-            </Button>
-          </div>
-        ) : null}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={() => setConfirm("rotate")}
+          >
+            <RefreshCwIcon />
+            轮换令牌
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={pending}
+            onClick={() => setConfirm("revoke")}
+          >
+            <Trash2Icon />
+            撤销
+          </Button>
+        </div>
       </CardContent>
 
       <ConfirmDialog
@@ -267,6 +261,8 @@ export default function ConnectionsPage() {
   const [tokenResult, setTokenResult] = useState<ConnectionWithToken | null>(
     null,
   );
+  // 防御性过滤：即使缓存中残留已撤销连接也不渲染。
+  const connections = activeConnections(connectionsQuery.data ?? []);
 
   return (
     <div className="flex flex-col gap-5">
@@ -290,7 +286,7 @@ export default function ConnectionsPage() {
         />
       ) : connectionsQuery.isLoading ? (
         <LoadingBlock label="加载 AI 连接…" />
-      ) : (connectionsQuery.data ?? []).length === 0 ? (
+      ) : connections.length === 0 ? (
         <EmptyState
           icon={<CableIcon className="size-6" />}
           title="还没有 AI 连接"
@@ -304,7 +300,7 @@ export default function ConnectionsPage() {
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {(connectionsQuery.data ?? []).map((connection) => (
+          {connections.map((connection) => (
             <ConnectionCard
               key={connection.id}
               connection={connection}
