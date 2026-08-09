@@ -1,0 +1,62 @@
+[Unit]
+Description=AI Task Board (Next.js production server)
+Documentation=https://github.com/neilx2ye/ai_task_board
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=ai-task-board
+Group=ai-task-board
+WorkingDirectory=/home/ubuntu/AI Task Board
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=/etc/ai-task-board.env
+ExecStartPre=/usr/bin/test -s "/home/ubuntu/AI Task Board/.next/BUILD_ID"
+ExecStart=/usr/local/bin/node "/home/ubuntu/AI Task Board/node_modules/next/dist/bin/next" start -H 127.0.0.1 -p 3200
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+KillMode=mixed
+SuccessExitStatus=0 143
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-task-board
+
+# The application needs outbound HTTPS access to Supabase and write access only
+# to Next.js' local runtime cache. Runtime secrets are injected from the
+# root-owned /etc/ai-task-board.env file.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths="/home/ubuntu/AI Task Board"
+BindPaths="/home/ubuntu/AI Task Board/.next/cache"
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65535
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

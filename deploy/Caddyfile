@@ -1,0 +1,26 @@
+task.neilx.online {
+	encode zstd gzip
+
+	header {
+		-Server
+		-X-Powered-By
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	reverse_proxy 127.0.0.1:3200 {
+		header_up -X-Middleware-Subrequest
+
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 300s
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

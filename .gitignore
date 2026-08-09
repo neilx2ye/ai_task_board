@@ -10,4 +10,5 @@ supabase/.temp/
 .env.*.local
 !.env.example
 *.tsbuildinfo
+next-env.d.ts
 .DS_Store
