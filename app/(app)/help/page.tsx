@@ -1,0 +1,338 @@
+import Link from "next/link";
+import type { ReactNode } from "react";
+import {
+  ArrowRightIcon,
+  CableIcon,
+  CircleHelpIcon,
+  KanbanSquareIcon,
+  BotIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+
+import { HELP_ACTIONS, HELP_SECTIONS } from "@/components/help-content";
+import { TASK_STATUS_META } from "@/components/task-meta";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/components/utils";
+import type { TaskStatus } from "@/lib/types/database";
+
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-6">
+      <Card>
+        <CardHeader>
+          <CardTitle id={`${id}-title`} className="text-base">
+            {title}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">{children}</CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function CodeBlock({ children }: { children: string }) {
+  return (
+    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs leading-relaxed">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+function Step({
+  index,
+  title,
+  children,
+}: {
+  index: number;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <li className="flex gap-3">
+      <span
+        aria-hidden
+        className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground tabular-nums"
+      >
+        {index}
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <h3 className="text-sm font-medium">{title}</h3>
+        <div className="text-sm leading-relaxed text-muted-foreground">
+          {children}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function StatusRow({
+  status,
+  label,
+  description,
+}: {
+  status: TaskStatus;
+  label?: string;
+  description: string;
+}) {
+  const meta = TASK_STATUS_META[status];
+  return (
+    <li className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+      <Badge className={cn("w-fit shrink-0", meta.badgeClass)}>
+        {label ?? meta.label}
+      </Badge>
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        {description}
+      </p>
+    </li>
+  );
+}
+
+function FaqItem({ question, children }: { question: string; children: ReactNode }) {
+  return (
+    <details className="group rounded-md border border-border">
+      <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+        <span className="inline-flex w-full items-center justify-between gap-2">
+          {question}
+          <span
+            aria-hidden
+            className="text-muted-foreground transition-transform group-open:rotate-90"
+          >
+            ›
+          </span>
+        </span>
+      </summary>
+      <div className="px-3 pb-3 text-sm leading-relaxed text-muted-foreground">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+const ACTION_ICONS = [BotIcon, CableIcon, KanbanSquareIcon] as const;
+
+export default function HelpPage() {
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+      <header className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <CircleHelpIcon className="size-5 text-primary" />
+          <h1 className="text-xl font-semibold tracking-tight">帮助中心</h1>
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          AI Task Board 是会话优先的任务控制台：外部 AI 会话（ChatGPT、Claude、
+          Codex、Gemini 或自定义 Agent）先在 CLI / APP 中建立上下文，再通过 REST
+          API 或 MCP 同步工作；Web Console 只向指定的存活会话预留任务、查看结果和回复问题。
+        </p>
+      </header>
+
+      <nav aria-label="帮助目录" className="flex flex-wrap gap-2">
+        {HELP_SECTIONS.map((section) => (
+          <a
+            key={section.id}
+            href={`#${section.id}`}
+            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition-colors outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            {section.label}
+          </a>
+        ))}
+      </nav>
+
+      <Section id="getting-started" title="快速上手">
+        <ol className="flex flex-col gap-4">
+          <Step index={1} title="创建 AI 连接并保存一次性令牌">
+            在「AI 连接」页创建连接。连接令牌
+            <strong className="text-foreground">只显示一次</strong>
+            ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
+          </Step>
+          <Step index={2} title="在 CLI / APP 建立上下文并注册会话">
+            先把任务背景和约束交给 AI，再用稳定的对话引用注册会话。空闲时也要持续
+            发送心跳；两分钟没有活动的会话不会被视为存活。
+          </Step>
+          <Step index={3} title="同步当前任务或定向预留">
+            CLI / APP 已开始的工作用 report-current 同步；如果从 Web 创建任务，请在
+            会话卡片点击「预留任务」。新任务必须绑定具体存活会话，不进入公共池。
+          </Step>
+          <Step index={4} title="执行与回复">
+            会话读取自己的预留队列并持续回传进度；当它请求补充信息时，任务进入
+            「等我回复」，你的回复会让任务回到原会话的队列。
+          </Step>
+        </ol>
+      </Section>
+
+      <Section id="task-status" title="任务状态说明">
+        <ul className="flex flex-col gap-3">
+          <StatusRow
+            status="inbox"
+            description="迁移前留下的未绑定任务。它不会被 AI 自主认领，需要人工指定会话。"
+          />
+          <StatusRow
+            status="ready"
+            description="依赖已全部完成，正在等待指定会话接收。"
+          />
+          <StatusRow
+            status="running"
+            label="执行中"
+            description="目标会话已接收（claimed）或正在执行（running）。任务与会话租约绑定。"
+          />
+          <StatusRow
+            status="waiting_user"
+            description="AI 提出了一个需要你回答的问题。在任务详情页回复后，任务回到原会话的预留队列。"
+          />
+          <StatusRow
+            status="completed"
+            description="已完成。父任务在全部有效子任务完成后自动完成。"
+          />
+        </ul>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          其他状态不占用固定列，通过任务流顶部的筛选器显示：
+          <Badge className={cn("mx-1", TASK_STATUS_META.blocked.badgeClass)}>
+            已阻塞
+          </Badge>
+          表示存在未完成依赖；
+          <Badge className={cn("mx-1", TASK_STATUS_META.failed.badgeClass)}>
+            已失败
+          </Badge>
+          表示执行失败、需要处理；
+          <Badge className={cn("mx-1", TASK_STATUS_META.cancelled.badgeClass)}>
+            已取消
+          </Badge>
+          表示已取消且不可恢复。
+        </p>
+      </Section>
+
+      <Section id="ai-integration" title="AI 接入最小示例">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          AI 客户端通过 REST API 接入。所有请求都需要连接令牌；除注册会话外的
+          任务操作还需要会话 ID；所有写请求必须使用唯一幂等键。
+        </p>
+        <CodeBlock>{`# 1) 注册会话（幂等）
+POST /api/ai/sessions/register
+Authorization: Bearer atb_...        # 连接令牌（只显示一次）
+Idempotency-Key: <唯一键>
+
+{ "name": "Claude Research", "platform": "claude",
+  "model": "...", "capabilities": ["web_search"] }
+
+# 2) 空闲时持续发送会话心跳
+POST /api/ai/sessions/presence
+Authorization: Bearer atb_...
+X-AI-Session-ID: <session_id>
+Idempotency-Key: <每次心跳的唯一键>
+
+{}
+
+# 3) 读取这个会话的下一项预留任务
+POST /api/ai/tasks/claim-next
+Authorization: Bearer atb_...
+X-AI-Session-ID: <session_id>        # 注册返回的会话 ID
+Idempotency-Key: <唯一键>
+
+{ "lease_seconds": 900 }             # 不会扫描其他会话或未绑定任务`}</CodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          执行过程中用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">report-progress</code>
+          回传进度，用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">request-user-input</code>
+          向你提问，完成后调用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">complete</code> 或
+          <code className="mx-1 rounded bg-muted px-1 text-xs">complete-and-claim-next</code>
+          。心跳接口可延长租约；租约过期后仍只有原目标会话可以重新接收，改派需要用户明确操作。
+        </p>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          使用 MCP 的客户端可将入口指向
+          <code className="mx-1 rounded bg-muted px-1 text-xs">/api/mcp</code>
+          ，它提供与 REST 一致的工具集（register_session、claim_next_task、
+          report_progress、request_user_input、complete_task 等）。
+        </p>
+        <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+          连接令牌只在创建或轮换时显示一次，服务端只保存其哈希。请勿把令牌、
+          SUPABASE_SECRET_KEY 提交到仓库或发送到公开渠道。
+        </p>
+      </Section>
+
+      <Section id="attachments" title="附件">
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            任务详情页的「结果与附件」区可以上传文件，单个文件最大
+            <strong className="text-foreground"> 50 MiB</strong>
+            ，存储在私有 Bucket 中。
+          </li>
+          <li>
+            下载通过短期签名 URL 完成，有效期
+            <strong className="text-foreground"> 60 秒</strong>
+            ，点击「下载」时自动获取并打开。
+          </li>
+          <li>
+            已取消的任务不能上传新附件，但仍可查看和下载已有附件。
+          </li>
+        </ul>
+      </Section>
+
+      <Section id="faq" title="常见问题">
+        <div className="flex flex-col gap-2">
+          <FaqItem question="看板为什么是空的？">
+            先在 CLI / APP 注册一个持续心跳的会话，再从会话卡片预留任务；或者让会话
+            用 report-current 同步已开始的工作。如果任务存在但看不到，检查顶部的其他状态筛选器。
+          </FaqItem>
+          <FaqItem question="无法登录或收不到验证邮件？">
+            请确认使用注册时的邮箱和密码。当前开发项目已在 Supabase 中关闭邮箱
+            验证，注册后可直接登录；如果你连接的是自己开启邮箱验证的项目，则需要
+            先完成邮件验证。
+          </FaqItem>
+          <FaqItem question="AI 为什么接收不到预留任务？">
+            常见原因：任务没有分配给当前会话；还有未完成依赖；任务要求的能力不在会话
+            能力列表中；该会话已持有一个进行中的任务；或者任务是只作聚合展示的父任务。
+          </FaqItem>
+          <FaqItem question="什么是租约过期？">
+            会话接收任务时会生成 60~3600 秒的租约（默认 900 秒），AI 通过心跳续期。
+            租约过期说明会话可能已失联；任务不会被别的 AI 抢走。你可以手动释放后再明确改派。
+          </FaqItem>
+          <FaqItem question="看板会自动刷新吗？">
+            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话和附件的
+            变化并自动更新；断线重连后会补拉遗漏事件，另有 30 秒低频轮询兜底，
+            不需要手动刷新。
+          </FaqItem>
+          <FaqItem question="密钥和令牌应该如何保管？">
+            SUPABASE_SECRET_KEY 只存在于服务端环境，浏览器永远不会接触；
+            连接令牌和领取令牌只在创建时显示一次，服务端只保存哈希。任何令牌
+            都不要写入代码、日志或公开渠道，泄露后立即在「AI 连接」页轮换或撤销。
+          </FaqItem>
+        </div>
+      </Section>
+
+      <nav aria-label="快速操作" className="grid gap-3 sm:grid-cols-3">
+        {HELP_ACTIONS.map((action, index) => {
+          const Icon = ACTION_ICONS[index] ?? ArrowRightIcon;
+          return (
+            <Card key={action.href} className="flex flex-col">
+              <CardContent className="flex flex-1 flex-col gap-2 p-4">
+                <Icon className="size-5 text-primary" />
+                <p className="text-sm font-medium">{action.label}</p>
+                <p className="flex-1 text-xs leading-relaxed text-muted-foreground">
+                  {action.description}
+                </p>
+                <Button variant="outline" size="sm" className="w-fit" asChild>
+                  <Link href={action.href}>
+                    打开
+                    <ArrowRightIcon />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
