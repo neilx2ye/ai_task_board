@@ -50,9 +50,14 @@ the existing demo workspace to the first development user.
 
 ## RPC response shapes
 
-All commands return `jsonb` and cache that JSON for 24 hours by
+Business commands return `jsonb` and cache that JSON for 24 hours by
 `(workspace_id, actor_key, idempotency_key)`. Reusing a key with another
-operation or request hash raises `IDEMPOTENCY_CONFLICT`.
+operation or request hash raises `IDEMPOTENCY_CONFLICT`. High-frequency
+Session/claim heartbeats are naturally idempotent state refreshes: they validate
+the request-key contract but do not cache responses or append heartbeat events.
+An empty `claim_next_task` poll also takes a no-write fast path; a real claim is
+still cached and replayable after completion. Supabase Cron removes expired
+cache rows every ten minutes in bounded batches.
 
 - `register_ai_session` → `{ "session": ... }`
 - `report_current_task`, `claim_next_task`, `claim_task`, `heartbeat_claim`,

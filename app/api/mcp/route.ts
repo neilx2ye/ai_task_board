@@ -22,6 +22,7 @@ import {
   releaseTask,
   reportCurrentTask,
   reportProgress,
+  reportSessionActivity,
   requestUserInput,
 } from "@/lib/domain/tasks";
 import type { AIAuthContext } from "@/lib/types/domain";
@@ -38,6 +39,7 @@ import {
   releaseTaskSchema,
   reportCurrentTaskSchema,
   reportProgressSchema,
+  reportSessionActivitySchema,
   requestUserInputSchema,
   sessionHeartbeatSchema,
 } from "@/lib/validation/ai";
@@ -81,7 +83,7 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Per conversation or agent context, call register_session once and retain its session.id only there. Every 60s call heartbeat_session with session_id and a fresh idempotency_key; continue while idle or waiting for user input. While holding a task claim, also call heartbeat before lease expiry with task_id, current claim_token, and a fresh key; session heartbeat does not renew task leases. Stop session heartbeats only on explicit user request, MCP host/client close, or conversation end.",
   "Use a stable, unique external_conversation_ref when registering or resuming a conversation. Pass the returned session.id as arguments.session_id; never set a shared global X-AI-Session-ID for multiple conversations.",
   "Stop the task heartbeat when its claim ends through request_user_input, complete_task, complete_task_and_claim_next, fail_task, release_task, LEASE_EXPIRED, or INVALID_CLAIM_TOKEN, but keep heartbeat_session running while the conversation remains active. Before intentionally ending a conversation with unfinished claimed work, call release_task.",
-  "If the host suspends execution and cannot call tools in the background, do not start an external daemon that outlives the conversation. When reactivated, call register_session with the same external_conversation_ref to restore the session and resume heartbeats. Reuse an idempotency_key only when retrying that same heartbeat tick.",
+  "If the host suspends execution and cannot call tools in the background, do not start an external daemon from the model turn. The supported Codex Bridge is a separate, user-launched companion that explicitly owns a local thread. Without that companion, wait until reactivation, then call register_session with the same external_conversation_ref and resume heartbeats. Reuse an idempotency_key only when retrying that same heartbeat tick.",
 ].join("\n\n");
 
 type ToolDefinition = {
@@ -101,6 +103,7 @@ const tools: ToolDefinition[] = [
   { name: "create_subtasks", description: "Atomically decompose a claimed task into dependent subtasks.", schema: createSubtasksSchema },
   { name: "report_progress", description: "Report an estimate and progress note for a claimed task.", schema: reportProgressSchema },
   { name: "post_task_message", description: "Add a message to a task conversation.", schema: postTaskMessageSchema },
+  { name: "report_session_activity", description: "Append a provider-exposed reasoning summary, tool/process item, assistant message, usage, or status from the Harness to the session timeline.", schema: reportSessionActivitySchema },
   { name: "request_user_input", description: "Ask the user a question and end the current lease.", schema: requestUserInputSchema },
   { name: "heartbeat_session", description: "Refresh AI session presence. Call at least every 60 seconds while the conversation is active, including while idle; this does not renew task claims.", schema: sessionHeartbeatSchema },
   { name: "heartbeat", description: "Extend a claimed task lease before expiry. Call this in addition to heartbeat_session while a task is held.", schema: heartbeatClaimSchema },
@@ -112,7 +115,12 @@ const tools: ToolDefinition[] = [
 ];
 
 function advertisedInputSchema(tool: ToolDefinition): Record<string, unknown> {
-  const generated = z.toJSONSchema(tool.schema) as Record<string, unknown>;
+  // MCP advertises what callers send, not the post-validation output. Some
+  // runtime schemas normalize accepted input (for example completed activity
+  // text), and Zod cannot represent those transforms in an output JSON Schema.
+  const generated = z.toJSONSchema(tool.schema, {
+    io: "input",
+  }) as Record<string, unknown>;
   const baseProperties =
     generated.properties && typeof generated.properties === "object"
       ? (generated.properties as Record<string, unknown>)
@@ -240,6 +248,8 @@ async function executeTool(
       return reportProgress(session, reportProgressSchema.parse(payload), key);
     case "post_task_message":
       return postTaskMessage(session, postTaskMessageSchema.parse(payload), key);
+    case "report_session_activity":
+      return reportSessionActivity(session, reportSessionActivitySchema.parse(payload), key);
     case "request_user_input":
       return requestUserInput(session, requestUserInputSchema.parse(payload), key);
     case "heartbeat_session":

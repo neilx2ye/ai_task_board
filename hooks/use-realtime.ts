@@ -1,19 +1,165 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  type QueryClient,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { catchUpEventCursor } from "@/hooks/realtime-catchup";
 import { useSupabase } from "@/hooks/use-supabase";
-import type { TaskRow } from "@/lib/types/database";
+import type {
+  SessionActivityItem,
+  SessionConversation,
+  SessionListItem,
+} from "@/lib/types/domain";
+import type {
+  AISessionRow,
+  SessionActivityRow,
+  TaskRow,
+} from "@/lib/types/database";
 
-const REALTIME_TABLES = [
+export const REALTIME_TABLES = [
   "tasks",
   "task_messages",
   "task_events",
+  "session_activities",
   "ai_sessions",
   "artifacts",
 ] as const;
+
+export type RealtimeTable = (typeof REALTIME_TABLES)[number];
+export type RealtimeInvalidation = {
+  queryKey: readonly string[];
+  exact: boolean;
+};
+
+type RealtimePayloadRow = Record<string, unknown>;
+
+function payloadRows(payload: unknown): RealtimePayloadRow[] {
+  if (!payload || typeof payload !== "object") return [];
+  const candidate = payload as { new?: unknown; old?: unknown };
+  const rows: RealtimePayloadRow[] = [];
+  for (const row of [candidate.new, candidate.old]) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    rows.push(row as RealtimePayloadRow);
+  }
+  return rows;
+}
+
+function nonEmptyString(row: RealtimePayloadRow, key: string): string | null {
+  const value = row[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function dedupeInvalidations(
+  invalidations: readonly RealtimeInvalidation[],
+): RealtimeInvalidation[] {
+  return [
+    ...new Map(
+      invalidations.map((invalidation) => [
+        `${invalidation.exact ? "exact" : "prefix"}:${JSON.stringify(invalidation.queryKey)}`,
+        invalidation,
+      ]),
+    ).values(),
+  ];
+}
+
+/** Map a Realtime row to only the caches that can contain that row. */
+export function realtimeInvalidations(
+  table: RealtimeTable,
+  payload: unknown,
+): RealtimeInvalidation[] {
+  const rows = payloadRows(payload);
+  const invalidations: RealtimeInvalidation[] = [];
+  const exact = (queryKey: readonly string[]) => {
+    invalidations.push({ queryKey, exact: true });
+  };
+
+  if (table === "tasks") {
+    exact(["tasks"]);
+    exact(["sessions"]);
+    for (const row of rows) {
+      const taskId = nonEmptyString(row, "id");
+      if (taskId) exact(["tasks", taskId]);
+    }
+  } else if (table === "task_messages") {
+    // The board list embeds each waiting task's latest AI message.
+    exact(["tasks"]);
+    for (const row of rows) {
+      const taskId = nonEmptyString(row, "task_id");
+      if (taskId) exact(["tasks", taskId]);
+    }
+  } else if (table === "task_events") {
+    for (const row of rows) {
+      const taskId = nonEmptyString(row, "task_id");
+      if (taskId) exact(["tasks", taskId]);
+      // Session conversation activity is delivered by session_activities and
+      // merged directly. task_events is a compatibility/audit mirror and must
+      // not refetch every loaded infinite-history page for each completed item.
+    }
+  } else if (table === "artifacts") {
+    for (const row of rows) {
+      const taskId = nonEmptyString(row, "task_id");
+      if (taskId) exact(["tasks", taskId]);
+    }
+  } else if (table === "ai_sessions") {
+    exact(["sessions"]);
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "id");
+      if (sessionId) exact(["sessions", sessionId]);
+    }
+  } else {
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "session_id");
+      if (sessionId) exact(["sessions", sessionId]);
+    }
+  }
+
+  return dedupeInvalidations(invalidations);
+}
+
+export function createRealtimeInvalidationBatcher(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  delayMs = 150,
+) {
+  const pending = new Map<string, RealtimeInvalidation>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const invalidations = [...pending.values()];
+    pending.clear();
+    for (const invalidation of invalidations) {
+      void queryClient.invalidateQueries(invalidation);
+    }
+  };
+
+  return {
+    schedule(invalidations: readonly RealtimeInvalidation[]) {
+      for (const invalidation of invalidations) {
+        pending.set(
+          `${invalidation.exact ? "exact" : "prefix"}:${JSON.stringify(invalidation.queryKey)}`,
+          invalidation,
+        );
+      }
+      if (pending.size && timer === null) timer = setTimeout(flush, delayMs);
+    },
+    flush,
+    cancel() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pending.clear();
+    },
+  };
+}
+
+const RECOVERY_INVALIDATIONS: readonly RealtimeInvalidation[] = [
+  { queryKey: ["tasks"], exact: false },
+  { queryKey: ["sessions"], exact: false },
+];
 
 /**
  * tasks 表的 Realtime 订阅必须显式限制安全列：
@@ -60,9 +206,134 @@ function extractEventId(payload: unknown): number | null {
   return typeof id === "number" ? id : null;
 }
 
+function extractSessionId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const candidate = payload as { new?: unknown; old?: unknown };
+  for (const row of [candidate.new, candidate.old]) {
+    if (!row || typeof row !== "object") continue;
+    const sessionId = (row as { session_id?: unknown }).session_id;
+    if (typeof sessionId === "string" && sessionId) return sessionId;
+  }
+  return null;
+}
+
+export function sessionActivityFromRealtime(
+  payload: unknown,
+): SessionActivityItem | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = (payload as { new?: unknown }).new;
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const candidate = row as Partial<SessionActivityRow> & { id?: unknown };
+  if (
+    candidate.id === undefined ||
+    typeof candidate.session_id !== "string" ||
+    typeof candidate.workspace_id !== "string" ||
+    typeof candidate.kind !== "string" ||
+    typeof candidate.actor_type !== "string" ||
+    typeof candidate.created_at !== "string"
+  ) {
+    return null;
+  }
+  return { ...candidate, id: String(candidate.id) } as SessionActivityItem;
+}
+
+export function appendRealtimeSessionActivity(
+  current: InfiniteData<SessionConversation, string | null> | undefined,
+  activity: SessionActivityItem,
+): InfiniteData<SessionConversation, string | null> | undefined {
+  if (!current?.pages.length) return current;
+  if (
+    current.pages.some((page) =>
+      page.activities.some((candidate) => candidate.id === activity.id),
+    )
+  ) {
+    return current;
+  }
+
+  const pages = [...current.pages];
+  const first = pages[0];
+  const activities = [...first.activities, activity].sort((left, right) => {
+    try {
+      const leftId = BigInt(left.id);
+      const rightId = BigInt(right.id);
+      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+    } catch {
+      return left.created_at.localeCompare(right.created_at);
+    }
+  });
+  pages[0] = {
+    ...first,
+    activities,
+    pagination: {
+      ...first.pagination,
+      activities: {
+        ...first.pagination.activities,
+        oldest_cursor: activities[0]?.id ?? null,
+        newest_cursor: activities.at(-1)?.id ?? null,
+      },
+    },
+  };
+  return { ...current, pages };
+}
+
+export type RealtimeSessionUpdate = Partial<AISessionRow> & { id: string };
+
+export function sessionUpdateFromRealtime(
+  payload: unknown,
+): RealtimeSessionUpdate | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = (payload as { new?: unknown }).new;
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const candidate = row as Partial<AISessionRow>;
+  return typeof candidate.id === "string" && candidate.id
+    ? (candidate as RealtimeSessionUpdate)
+    : null;
+}
+
+export function patchRealtimeSessionList(
+  current: readonly SessionListItem[],
+  update: RealtimeSessionUpdate,
+): SessionListItem[] {
+  return current.map((session) =>
+    session.id === update.id
+      ? {
+          ...session,
+          ...update,
+          connection: session.connection,
+          current_task: session.current_task,
+          queued_task_count: session.queued_task_count,
+        }
+      : session,
+  );
+}
+
+export function patchRealtimeSessionConversation(
+  current: InfiniteData<SessionConversation, string | null>,
+  update: RealtimeSessionUpdate,
+): InfiniteData<SessionConversation, string | null> {
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      session:
+        page.session.id === update.id
+          ? {
+              ...page.session,
+              ...update,
+              connection: page.session.connection,
+              current_task: page.session.current_task,
+              queued_task_count: page.session.queued_task_count,
+            }
+          : page.session,
+    })),
+  };
+}
+
 /**
  * 订阅当前 Workspace 的 Supabase Realtime 数据库变更。
- * - 任何变化都会失效本地查询缓存，由 TanStack Query 重新拉取权威数据。
+ * - 按表和行 id 只失效可能受影响的列表、任务详情或会话，并在 150ms 内合并；
+ *   session_activities insert 直接并入对应会话缓存，task message/event
+ *   镜像不会再次重拉会话的所有历史页。
  * - 维护内存中的最新 TaskEvent id 游标：实时 payload 单调推进；
  *   每次 SUBSCRIBED（含断线重连）按 id > cursor 分页补拉遗漏事件，
  *   发现遗漏即失效查询，全量重拉仍是权威状态恢复手段。
@@ -80,8 +351,7 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
     // null 表示基线尚未建立；仅在闭包内使用，workspace 切换即重置。
     let cursor: number | null = null;
     let catchUpInFlight = false;
-
-    const invalidateAll = () => queryClient.invalidateQueries();
+    const invalidationBatcher = createRealtimeInvalidationBatcher(queryClient);
 
     const advanceCursor = (id: number) => {
       if (cursor === null || id > cursor) cursor = id;
@@ -128,7 +398,9 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
         });
         // 补拉期间实时回调可能已推进游标，只取更大值。
         advanceCursor(result.cursor);
-        if (result.missed > 0 && !cancelled) await invalidateAll();
+        if (result.missed > 0 && !cancelled) {
+          invalidationBatcher.schedule(RECOVERY_INVALIDATIONS);
+        }
       } finally {
         catchUpInFlight = false;
       }
@@ -154,7 +426,63 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
             const id = extractEventId(payload);
             if (id !== null) advanceCursor(id);
           }
-          void invalidateAll();
+          if (table === "session_activities") {
+            const activity = sessionActivityFromRealtime(payload);
+            const sessionId = activity?.session_id ?? extractSessionId(payload);
+            if (activity && sessionId) {
+              const updated = queryClient.setQueryData<
+                InfiniteData<SessionConversation, string | null>
+              >(["sessions", sessionId], (current) =>
+                appendRealtimeSessionActivity(current, activity),
+              );
+              if (!updated) {
+                invalidationBatcher.schedule(
+                  realtimeInvalidations(table, payload),
+                );
+              }
+            } else if (sessionId) {
+              invalidationBatcher.schedule(
+                realtimeInvalidations(table, payload),
+              );
+            }
+          } else if (table === "ai_sessions") {
+            const update = sessionUpdateFromRealtime(payload);
+            if (!update) {
+              invalidationBatcher.schedule(
+                realtimeInvalidations(table, payload),
+              );
+              return;
+            }
+
+            const sessionList = queryClient.getQueryData<SessionListItem[]>([
+              "sessions",
+            ]);
+            if (sessionList?.some((session) => session.id === update.id)) {
+              queryClient.setQueryData<SessionListItem[]>(
+                ["sessions"],
+                (current) =>
+                  current
+                    ? patchRealtimeSessionList(current, update)
+                    : current,
+              );
+            } else {
+              invalidationBatcher.schedule([
+                { queryKey: ["sessions"], exact: true },
+              ]);
+            }
+
+            queryClient.setQueryData<
+              InfiniteData<SessionConversation, string | null>
+            >(["sessions", update.id], (current) =>
+              current
+                ? patchRealtimeSessionConversation(current, update)
+                : current,
+            );
+          } else {
+            invalidationBatcher.schedule(
+              realtimeInvalidations(table, payload),
+            );
+          }
         },
       );
     }
@@ -167,12 +495,13 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
         } catch {
           // 补拉失败不破坏订阅；权威状态由全量失效与轮询兜底恢复。
         }
-        if (!cancelled) void invalidateAll();
+        if (!cancelled) invalidationBatcher.schedule(RECOVERY_INVALIDATIONS);
       })();
     });
 
     return () => {
       cancelled = true;
+      invalidationBatcher.cancel();
       void supabase.removeChannel(channel);
     };
   }, [supabase, workspaceId, queryClient]);

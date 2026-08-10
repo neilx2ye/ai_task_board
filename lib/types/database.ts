@@ -20,6 +20,18 @@ export type TaskStatus =
 export type MemberRole = "owner" | "member";
 export type ActorType = "user" | "ai" | "system";
 export type SessionStatus = "online" | "busy" | "waiting" | "offline";
+export type SessionActivityKind =
+  | "user_message"
+  | "assistant_message"
+  | "reasoning"
+  | "command"
+  | "file_change"
+  | "mcp_tool"
+  | "web_search"
+  | "plan"
+  | "error"
+  | "usage"
+  | "status";
 
 type Relationship = {
   foreignKeyName: string;
@@ -77,6 +89,8 @@ export type AIConnectionRow = {
   api_token_hash: string;
   created_by_user_id: string | null;
   last_used_at: string | null;
+  last_seen_at: string | null;
+  bridge_version: string | null;
   created_at: string;
   revoked_at: string | null;
 };
@@ -89,6 +103,8 @@ export type AIConnectionInsert = {
   api_token_hash: string;
   created_by_user_id?: string | null;
   last_used_at?: string | null;
+  last_seen_at?: string | null;
+  bridge_version?: string | null;
   created_at?: string;
   revoked_at?: string | null;
 };
@@ -105,6 +121,9 @@ export type AISessionRow = {
   status: SessionStatus;
   current_task_id: string | null;
   last_seen_at: string;
+  working_directory: string | null;
+  archived_at: string | null;
+  inventory_active: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -121,6 +140,9 @@ export type AISessionInsert = {
   status?: SessionStatus;
   current_task_id?: string | null;
   last_seen_at?: string;
+  working_directory?: string | null;
+  archived_at?: string | null;
+  inventory_active?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -251,6 +273,39 @@ export type TaskEventInsert = {
   created_at?: string;
 };
 
+/**
+ * Append-only, session-scoped history reported by a Harness adapter.
+ * `reasoning` contains only provider/SDK supplied reasoning summaries, never
+ * hidden chain-of-thought. Large tool output belongs in an artifact instead.
+ */
+export type SessionActivityRow = {
+  id: number;
+  workspace_id: string;
+  session_id: string;
+  task_id: string | null;
+  task_message_id: string | null;
+  kind: SessionActivityKind;
+  actor_type: ActorType;
+  content: string | null;
+  data: Json;
+  external_ref: string | null;
+  created_at: string;
+};
+
+export type SessionActivityInsert = {
+  id?: never;
+  workspace_id: string;
+  session_id: string;
+  task_id?: string | null;
+  task_message_id?: string | null;
+  kind: SessionActivityKind;
+  actor_type: ActorType;
+  content?: string | null;
+  data?: Json;
+  external_ref?: string | null;
+  created_at?: string;
+};
+
 export type ArtifactRow = {
   id: string;
   workspace_id: string;
@@ -311,6 +366,10 @@ export type PublicAIConnectionRow = Omit<AIConnectionRow, "api_token_hash">;
 type TaskResponse = { task: TaskRpcPayload };
 type NullableTaskResponse = { task: TaskRpcPayload | null };
 type SessionResponse = { session: AISessionRow };
+type SessionSyncResponse = {
+  connection: PublicAIConnectionRow;
+  sessions: AISessionRow[];
+};
 type SubtasksResponse = {
   parent_task: TaskRpcPayload;
   subtasks: TaskRpcPayload[];
@@ -318,6 +377,14 @@ type SubtasksResponse = {
 type MessageResponse = {
   task: TaskRpcPayload;
   message: TaskMessageRow;
+};
+type SessionTurnResponse = MessageResponse & {
+  activity: SessionActivityRow;
+};
+type SessionActivityResponse = {
+  task: TaskRpcPayload | Pick<TaskRpcPayload, "id">;
+  message: TaskMessageRow | null;
+  activity: SessionActivityRow;
 };
 type CompleteResponse = {
   task: TaskRpcPayload;
@@ -547,6 +614,41 @@ export interface Database {
           },
         ]
       >;
+      session_activities: TableDefinition<
+        SessionActivityRow,
+        SessionActivityInsert,
+        Omit<Partial<SessionActivityRow>, "id"> & { id?: never },
+        [
+          {
+            foreignKeyName: "session_activities_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "session_activities_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_activities_task_fk";
+            columns: ["workspace_id", "task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_activities_message_fk";
+            columns: ["workspace_id", "task_message_id"];
+            isOneToOne: false;
+            referencedRelation: "task_messages";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
       artifacts: TableDefinition<
         ArtifactRow,
         ArtifactInsert,
@@ -602,6 +704,14 @@ export interface Database {
             p_capabilities: string[];
           };
         Returns: SessionResponse;
+      };
+      sync_ai_sessions: {
+        Args: AIConnectionArgs &
+          IdempotencyArgs & {
+            p_bridge_version: string;
+            p_threads: Json;
+          };
+        Returns: SessionSyncResponse;
       };
       report_current_task: {
         Args: AISessionArgs &
@@ -703,6 +813,18 @@ export interface Database {
           };
         Returns: MessageResponse;
       };
+      report_session_activity: {
+        Args: AISessionArgs &
+          IdempotencyArgs & {
+            p_task_id: string;
+            p_claim_token_hash: string;
+            p_kind: SessionActivityKind;
+            p_content: string | null;
+            p_data: Json;
+            p_external_ref: string;
+          };
+        Returns: SessionActivityResponse;
+      };
       complete_task: {
         Args: AISessionArgs &
           IdempotencyArgs & {
@@ -747,6 +869,16 @@ export interface Database {
             p_required_capabilities: string[];
           };
         Returns: TaskResponse;
+      };
+      create_session_turn: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_title: string;
+            p_content: string;
+            p_priority: number;
+          };
+        Returns: SessionTurnResponse;
       };
       update_user_task: {
         Args: UserArgs &

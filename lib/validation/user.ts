@@ -10,6 +10,29 @@ import {
 
 export const workspaceQuerySchema = z.object({ workspace_id: uuidSchema.optional() }).strict();
 
+export const sessionParamsSchema = z.object({ sessionId: uuidSchema }).strict();
+
+const bigintCursorSchema = z
+  .string()
+  .regex(/^[1-9][0-9]{0,18}$/, "Expected a positive decimal cursor")
+  .refine(
+    (value) =>
+      value.length < 19 || value <= "9223372036854775807",
+    "Cursor exceeds bigint range",
+  );
+
+export const sessionConversationQuerySchema = z
+  .object({
+    workspace_id: uuidSchema.optional(),
+    before_activity_id: bigintCursorSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(100),
+  })
+  .strict();
+
+export const createSessionTurnSchema = z
+  .object({ content: nonEmptyText.max(100_000) })
+  .strict();
+
 export const createTaskSchema = z
   .object({
     workspace_id: uuidSchema.optional(),
@@ -124,3 +147,4 @@ export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type ReplyToTaskInput = z.infer<typeof replyToTaskSchema>;
 export type CreateConnectionInput = z.infer<typeof createConnectionSchema>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
+export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;

@@ -48,18 +48,19 @@ async function parseError(res: Response): Promise<ApiError> {
 
 export async function apiFetch<T>(
   path: string,
-  init?: RequestInit & { json?: unknown },
+  init?: RequestInit & { json?: unknown; idempotencyKey?: string },
 ): Promise<T> {
-  const { json, headers, ...rest } = init ?? {};
+  const { json, headers, idempotencyKey, ...rest } = init ?? {};
   const method = (rest.method ?? "GET").toUpperCase();
   const res = await fetch(path, {
     ...rest,
     credentials: "same-origin",
     headers: {
       ...(json !== undefined ? { "Content-Type": "application/json" } : null),
-      // 服务端要求所有写操作携带幂等键；每次请求生成一个新键。
+      // Most writes are one-shot and get a fresh key. Retryable callers can
+      // pin a key until the response is confirmed (for example session turns).
       ...(["POST", "PATCH", "PUT", "DELETE"].includes(method)
-        ? { "Idempotency-Key": crypto.randomUUID() }
+        ? { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() }
         : null),
       ...headers,
     },

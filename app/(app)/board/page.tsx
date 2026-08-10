@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { ArrowRightIcon, BotIcon, PlusIcon } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
+import { SessionConversationDialog } from "@/components/session-conversation-dialog";
 import { TaskCard } from "@/components/task-card";
 import { TaskFormDialog } from "@/components/task-form-dialog";
 import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
@@ -14,13 +15,14 @@ import { useSessions } from "@/hooks/use-sessions";
 import { useTasks } from "@/hooks/use-tasks";
 import { calculateLeafProgress } from "@/lib/domain/task-rules";
 import { isSessionAlive } from "@/lib/domain/session-presence";
-import { cn, formatRelativeTime } from "@/components/utils";
+import { cn } from "@/components/utils";
 import type {
   AISessionRow,
   TaskMessageRow,
   TaskRow,
   TaskStatus,
 } from "@/lib/types/database";
+import type { SessionListItem } from "@/lib/types/domain";
 
 type ColumnDef = {
   id: string;
@@ -125,6 +127,8 @@ export default function BoardPage() {
   const tasksQuery = useTasks();
   const sessionsQuery = useSessions();
   const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
+  const [conversationSession, setConversationSession] =
+    useState<SessionListItem | null>(null);
   const [visibleFilters, setVisibleFilters] = useState<Set<TaskStatus>>(
     () => new Set(),
   );
@@ -198,18 +202,24 @@ export default function BoardPage() {
         ) : liveSessions.length > 0 ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {liveSessions.map((session) => {
-              const queuedCount = tasks.filter(
-                (task) =>
-                  task.assigned_session_id === session.id &&
-                  task.status === "ready",
-              ).length;
               const statusMeta = SESSION_STATUS_META[session.status];
+              const currentTask = session.current_task;
+              const taskStatusMeta = currentTask
+                ? TASK_STATUS_META[currentTask.status]
+                : null;
               return (
                 <article
                   key={session.id}
-                  className="flex min-w-0 flex-col gap-3 rounded-md border border-border bg-background p-3"
+                  className="relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-md border border-border bg-background p-3 transition-shadow hover:shadow-md focus-within:shadow-md"
                 >
-                  <div className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-label={`打开会话「${session.name}」`}
+                    onClick={() => setConversationSession(session)}
+                    className="absolute inset-0 z-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                  />
+                  <div className="pointer-events-none relative z-10 flex items-start gap-2">
                     <span className="mt-0.5 rounded-md bg-indigo-50 p-1.5 text-indigo-700">
                       <BotIcon className="size-4" />
                     </span>
@@ -220,25 +230,65 @@ export default function BoardPage() {
                           {statusMeta.label}
                         </Badge>
                       </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {session.platform}
-                        {session.model ? ` · ${session.model}` : ""}
-                        {` · ${formatRelativeTime(session.last_seen_at)}`}
-                      </p>
-                      {session.external_conversation_ref ? (
-                        <p className="mt-1 truncate text-xs text-muted-foreground">
-                          上下文：{session.external_conversation_ref}
-                        </p>
-                      ) : null}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
+
+                  <div className="pointer-events-none relative z-10 flex min-h-14 flex-col gap-1.5 border-t border-border pt-3">
+                    <span className="text-xs text-muted-foreground">当前 / 下一任务</span>
+                    {currentTask ? (
+                      <>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0 flex-1 text-sm leading-snug font-medium break-words">
+                            {currentTask.title}
+                          </span>
+                          {taskStatusMeta ? (
+                            <Badge className={cn("shrink-0", taskStatusMeta.badgeClass)}>
+                              {taskStatusMeta.label}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        {currentTask.progress_percent_estimate != null ? (
+                          <div className="flex items-center gap-2">
+                            <div
+                              role="progressbar"
+                              aria-label={`${currentTask.title} 的 AI 估计进度`}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-valuenow={currentTask.progress_percent_estimate}
+                              className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+                            >
+                              <div
+                                className="h-full rounded-full bg-indigo-500"
+                                style={{ width: `${currentTask.progress_percent_estimate}%` }}
+                              />
+                            </div>
+                            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                              {currentTask.progress_percent_estimate}%
+                            </span>
+                          </div>
+                        ) : null}
+                        {currentTask.progress_note ? (
+                          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                            {currentTask.progress_note}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">当前空闲</span>
+                    )}
+                  </div>
+
+                  <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
                     <span className="text-xs text-muted-foreground">
-                      已预留 {queuedCount} 项
+                      已预留 {session.queued_task_count} 项
                     </span>
                     <Button
                       size="sm"
-                      onClick={() => setTargetSessionId(session.id)}
+                      className="pointer-events-auto"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setTargetSessionId(session.id);
+                      }}
                       aria-label={`给 ${session.name} 预留任务`}
                     >
                       <PlusIcon />
@@ -407,6 +457,14 @@ export default function BoardPage() {
           ) : null}
         </>
       )}
+
+      <SessionConversationDialog
+        session={conversationSession}
+        open={conversationSession !== null}
+        onOpenChange={(open) => {
+          if (!open) setConversationSession(null);
+        }}
+      />
 
       <TaskFormDialog
         open={targetSessionId !== null}

@@ -110,6 +110,7 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   task_claimed: "会话接收任务",
   task_started: "开始执行",
   progress_reported: "回传进度",
+  session_activity_reported: "同步会话活动",
   subtasks_created: "拆分任务",
   user_input_requested: "请求用户输入",
   user_replied: "用户已回复",

@@ -24,6 +24,7 @@ const connectionTokenHashes = new Map<string, string>();
 
 const AI_RPC_NAMES = new Set([
   "register_ai_session",
+  "sync_ai_sessions",
   "report_current_task",
   "claim_next_task",
   "claim_task",

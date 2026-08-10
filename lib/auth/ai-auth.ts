@@ -6,6 +6,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { AIAuthContext, AISessionContext } from "@/lib/types/domain";
 import { uuidSchema } from "@/lib/validation/common";
 
+const CONNECTION_USAGE_REFRESH_MS = 5 * 60 * 1_000;
+
+export function shouldRefreshConnectionUsage(
+  lastUsedAt: string | null,
+  nowMs: number,
+): boolean {
+  if (!lastUsedAt) return true;
+  const lastUsedMs = Date.parse(lastUsedAt);
+  return !Number.isFinite(lastUsedMs) || nowMs - lastUsedMs >= CONNECTION_USAGE_REFRESH_MS;
+}
+
 function bearerToken(request: Request): string {
   const authorization = request.headers.get("authorization") ?? "";
   const match = authorization.match(/^Bearer\s+([^\s]+)$/i);
@@ -20,7 +31,7 @@ export async function authenticateAIRequest(request: Request): Promise<AIAuthCon
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("ai_connections")
-    .select("id, workspace_id")
+    .select("id, workspace_id, last_used_at")
     .eq("api_token_hash", tokenHash)
     .is("revoked_at", null)
     .maybeSingle();
@@ -30,11 +41,16 @@ export async function authenticateAIRequest(request: Request): Promise<AIAuthCon
     throw new AppError("AUTHENTICATION_REQUIRED", "The connection token is invalid or revoked");
   }
 
-  const { error: updateError } = await admin
-    .from("ai_connections")
-    .update({ last_used_at: new Date().toISOString() })
-    .eq("id", data.id);
-  if (updateError) throw mapDatabaseError(updateError);
+  const nowMs = Date.now();
+  if (shouldRefreshConnectionUsage(data.last_used_at, nowMs)) {
+    const staleBefore = new Date(nowMs - CONNECTION_USAGE_REFRESH_MS).toISOString();
+    const { error: updateError } = await admin
+      .from("ai_connections")
+      .update({ last_used_at: new Date(nowMs).toISOString() })
+      .eq("id", data.id)
+      .or(`last_used_at.is.null,last_used_at.lt.${staleBefore}`);
+    if (updateError) throw mapDatabaseError(updateError);
+  }
 
   return { connectionId: data.id, workspaceId: data.workspace_id, tokenHash };
 }

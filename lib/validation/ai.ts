@@ -20,6 +20,52 @@ export const registerSessionSchema = z
   })
   .strict();
 
+const syncedThreadSchema = z
+  .object({
+    external_conversation_ref: z.string().trim().min(1).max(500),
+    name: nonEmptyText.max(200),
+    platform: nonEmptyText.max(100).default("codex"),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    working_directory: z.string().trim().min(1).max(4096).nullable().optional(),
+    capabilities: capabilitiesSchema,
+    archived: z.boolean().default(false),
+  })
+  .strict();
+
+export const syncSessionsSchema = z
+  .object({
+    bridge_version: nonEmptyText.max(100),
+    threads: z.array(syncedThreadSchema).max(500),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const references = new Set<string>();
+    value.threads.forEach((thread, index) => {
+      if (references.has(thread.external_conversation_ref)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate external_conversation_ref: ${thread.external_conversation_ref}`,
+          path: ["threads", index, "external_conversation_ref"],
+        });
+      }
+      references.add(thread.external_conversation_ref);
+    });
+
+    if (
+      new TextEncoder().encode(JSON.stringify(value.threads)).byteLength >
+      1024 * 1024
+    ) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 1024 * 1024,
+        origin: "value",
+        inclusive: true,
+        message: "Thread inventory must not exceed 1 MiB",
+        path: ["threads"],
+      });
+    }
+  });
+
 export const claimOptionsSchema = z
   .object({
     lease_seconds: z.number().int().min(60).max(3_600).optional(),
@@ -133,6 +179,82 @@ export const postTaskMessageSchema = z
   })
   .strict();
 
+export const sessionActivityKindSchema = z.enum([
+  "assistant_message",
+  "reasoning",
+  "command",
+  "file_change",
+  "mcp_tool",
+  "web_search",
+  "plan",
+  "error",
+  "usage",
+  "status",
+]);
+
+function isCodexStreamDelta(data: Record<string, unknown>) {
+  return (
+    data.protocol === "codex-app-server/v1" && data.phase === "delta"
+  );
+}
+
+export const reportSessionActivitySchema = claimedTaskCommand
+  .extend({
+    kind: sessionActivityKindSchema,
+    content: z.string().nullable().optional(),
+    data: z.record(z.string(), z.unknown()).default({}),
+    external_ref: nonEmptyText.max(500),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const content =
+      typeof value.content === "string"
+        ? isCodexStreamDelta(value.data)
+          ? value.content
+          : value.content.trim()
+        : null;
+    if (
+      content !== null &&
+      (content.length < 1 || content.length > 100_000)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Activity content must contain between 1 and 100000 characters",
+        path: ["content"],
+      });
+    }
+    if (
+      ["assistant_message", "reasoning"].includes(value.kind) &&
+      !content
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: `${value.kind} requires content`,
+        path: ["content"],
+      });
+    }
+    const encoded = JSON.stringify(value.data);
+    if (new TextEncoder().encode(encoded).byteLength > 256 * 1024) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 256 * 1024,
+        origin: "value",
+        inclusive: true,
+        message: "Activity data must not exceed 256 KiB",
+        path: ["data"],
+      });
+    }
+  })
+  .transform((value) => {
+    if (
+      typeof value.content !== "string" ||
+      isCodexStreamDelta(value.data)
+    ) {
+      return value;
+    }
+    return { ...value, content: value.content.trim() };
+  });
+
 export const completeTaskSchema = claimedTaskCommand
   .extend({
     result_summary: optionalText,
@@ -167,6 +289,7 @@ export const taskUpdatesQuerySchema = z
   .strict();
 
 export type RegisterSessionInput = z.infer<typeof registerSessionSchema>;
+export type SyncSessionsInput = z.infer<typeof syncSessionsSchema>;
 export type ReportCurrentTaskInput = z.infer<typeof reportCurrentTaskSchema>;
 export type ClaimOptionsInput = z.infer<typeof claimOptionsSchema>;
 export type ClaimTaskInput = z.infer<typeof claimTaskSchema>;
@@ -175,6 +298,7 @@ export type CreateSubtasksInput = z.infer<typeof createSubtasksSchema>;
 export type ReportProgressInput = z.infer<typeof reportProgressSchema>;
 export type RequestUserInputInput = z.infer<typeof requestUserInputSchema>;
 export type PostTaskMessageInput = z.infer<typeof postTaskMessageSchema>;
+export type ReportSessionActivityInput = z.infer<typeof reportSessionActivitySchema>;
 export type CompleteTaskInput = z.infer<typeof completeTaskSchema>;
 export type FailTaskInput = z.infer<typeof failTaskSchema>;
 export type ReleaseTaskInput = z.infer<typeof releaseTaskSchema>;

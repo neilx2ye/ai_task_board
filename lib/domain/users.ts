@@ -10,17 +10,35 @@ import {
 } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
+import {
+  chunkValues,
+  collectChunkedRows,
+  collectRangePages,
+} from "@/lib/domain/postgrest-pagination";
 import { callDomainRpc, type DomainFunctionArgs } from "@/lib/domain/rpc";
 import {
   loadTaskRelations,
   SAFE_TASK_COLUMNS,
   sanitizeTask,
 } from "@/lib/domain/tasks";
+import { taskTitleFromPrompt } from "@/lib/domain/task-title";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { TaskStatus } from "@/lib/types/database";
+import type {
+  SessionActivityItem,
+  SessionCurrentTaskSummary,
+  SessionListItem,
+} from "@/lib/types/domain";
+import type {
+  AISessionRow,
+  TaskEventRow,
+  TaskMessageRow,
+  TaskRow,
+  TaskStatus,
+} from "@/lib/types/database";
 import { safeFilename, safeMimeType } from "@/lib/validation/artifacts";
 import type {
   CreateConnectionInput,
+  CreateSessionTurnInput,
   CreateTaskInput,
   CreateUserSubtasksInput,
   ReplyToTaskInput,
@@ -36,6 +54,133 @@ type UserContextParameters = Pick<
   DomainFunctionArgs<"create_user_task">,
   "p_workspace_id" | "p_user_id"
 >;
+
+const SESSION_CARD_TASK_COLUMNS =
+  "id, title, status, progress_note, progress_percent_estimate, updated_at, assigned_session_id" as const;
+
+function sessionTaskSummary(
+  task: Pick<
+    TaskRow,
+    | "id"
+    | "title"
+    | "status"
+    | "progress_note"
+    | "progress_percent_estimate"
+    | "updated_at"
+  >,
+): SessionCurrentTaskSummary {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    progress_note: task.progress_note,
+    progress_percent_estimate: task.progress_percent_estimate,
+    updated_at: task.updated_at,
+  };
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+async function loadSessionListItems(
+  admin: AdminClient,
+  workspaceId: string,
+  sessions: AISessionRow[],
+): Promise<SessionListItem[]> {
+  if (!sessions.length) return [];
+
+  const connectionIds = [...new Set(sessions.map((session) => session.connection_id))];
+  const currentTaskIds = [
+    ...new Set(
+      sessions
+        .map((session) => session.current_task_id)
+        .filter((taskId): taskId is string => Boolean(taskId)),
+    ),
+  ];
+  const sessionIds = sessions.map((session) => session.id);
+  const [connections, currentTasks, pendingTasks] = await Promise.all([
+    collectChunkedRows(connectionIds, async (ids) => {
+      const { data, error } = await admin
+        .from("ai_connections")
+        .select("id, name, platform, last_seen_at, bridge_version, revoked_at")
+        .eq("workspace_id", workspaceId)
+        .in("id", [...ids]);
+      if (error) throw mapDatabaseError(error);
+      return data ?? [];
+    }),
+    collectChunkedRows(currentTaskIds, async (ids) => {
+      const { data, error } = await admin
+        .from("tasks")
+        .select(SESSION_CARD_TASK_COLUMNS)
+        .eq("workspace_id", workspaceId)
+        .in("id", [...ids]);
+      if (error) throw mapDatabaseError(error);
+      return data ?? [];
+    }),
+    collectChunkedRows(sessionIds, (ids) =>
+      collectRangePages(async (from, to) => {
+        const { data, error } = await admin
+          .from("tasks")
+          .select(SESSION_CARD_TASK_COLUMNS)
+          .eq("workspace_id", workspaceId)
+          .in("status", ["ready", "waiting_user"])
+          .in("assigned_session_id", [...ids])
+          .order("priority", { ascending: false })
+          .order("created_at")
+          .order("id")
+          .range(from, to);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      }),
+    ),
+  ]);
+
+  const connectionById = new Map(
+    connections.map((connection) => [connection.id, connection]),
+  );
+  const currentTaskById = new Map(
+    currentTasks.map((task) => [task.id, sessionTaskSummary(task)]),
+  );
+  const queuedCountBySession = new Map<string, number>();
+  const waitingTaskBySession = new Map<string, SessionCurrentTaskSummary>();
+  const nextTaskBySession = new Map<string, SessionCurrentTaskSummary>();
+  for (const row of pendingTasks) {
+    if (!row.assigned_session_id) continue;
+    if (row.status === "ready") {
+      queuedCountBySession.set(
+        row.assigned_session_id,
+        (queuedCountBySession.get(row.assigned_session_id) ?? 0) + 1,
+      );
+      if (!nextTaskBySession.has(row.assigned_session_id)) {
+        nextTaskBySession.set(row.assigned_session_id, sessionTaskSummary(row));
+      }
+    } else if (!waitingTaskBySession.has(row.assigned_session_id)) {
+      waitingTaskBySession.set(row.assigned_session_id, sessionTaskSummary(row));
+    }
+  }
+
+  return sessions.map((session): SessionListItem => {
+    const connection = connectionById.get(session.connection_id);
+    return {
+      ...session,
+      connection: connection ?? {
+        id: session.connection_id,
+        name: "已撤销的连接",
+        platform: session.platform,
+        last_seen_at: null,
+        bridge_version: null,
+        revoked_at: new Date(0).toISOString(),
+      },
+      current_task:
+        (session.current_task_id
+          ? currentTaskById.get(session.current_task_id)
+          : null) ??
+        waitingTaskBySession.get(session.id) ??
+        nextTaskBySession.get(session.id) ??
+        null,
+      queued_task_count: queuedCountBySession.get(session.id) ?? 0,
+    };
+  });
+}
 
 function commandMetadata(
   operation: string,
@@ -245,7 +390,7 @@ export async function listConnections(context: UserWorkspaceContext) {
   const { data, error } = await admin
     .from("ai_connections")
     .select(
-      "id, workspace_id, name, platform, created_by_user_id, last_used_at, created_at, revoked_at",
+      "id, workspace_id, name, platform, created_by_user_id, last_used_at, last_seen_at, bridge_version, created_at, revoked_at",
     )
     .eq("workspace_id", context.workspaceId)
     .is("revoked_at", null)
@@ -311,13 +456,286 @@ export async function rotateConnection(
 
 export async function listSessions(context: UserWorkspaceContext) {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  const sessions = await collectRangePages(async (from, to) => {
+    const { data, error } = await admin
+      .from("ai_sessions")
+      .select("*")
+      .eq("workspace_id", context.workspaceId)
+      // Offset pagination must use immutable ordering columns. Heartbeats
+      // continuously update last_seen_at and would otherwise move rows across
+      // page boundaries while a multi-page snapshot is being collected.
+      .order("created_at")
+      .order("id")
+      .range(from, to);
+    if (error) throw mapDatabaseError(error);
+    return data ?? [];
+  });
+  const items = await loadSessionListItems(
+    admin,
+    context.workspaceId,
+    sessions,
+  );
+  items.sort((left, right) => {
+    const byLastSeen = (right.last_seen_at ?? "").localeCompare(
+      left.last_seen_at ?? "",
+    );
+    if (byLastSeen) return byLastSeen;
+    const byCreated = right.created_at.localeCompare(left.created_at);
+    return byCreated || right.id.localeCompare(left.id);
+  });
+  return { sessions: items };
+}
+
+export async function getSessionConversation(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  page: { beforeActivityId?: string; limit: number } = { limit: 100 },
+) {
+  const admin = createAdminClient();
+  const { data: sessionRow, error: sessionError } = await admin
     .from("ai_sessions")
     .select("*")
     .eq("workspace_id", context.workspaceId)
-    .order("last_seen_at", { ascending: false });
-  if (error) throw mapDatabaseError(error);
-  return { sessions: data ?? [] };
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (sessionError) throw mapDatabaseError(sessionError);
+  if (!sessionRow) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+  const [session] = await loadSessionListItems(admin, context.workspaceId, [sessionRow]);
+  if (!session) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+
+  const activityQuery = admin
+    .from("session_activities")
+    .select("*")
+    .eq("workspace_id", context.workspaceId)
+    .eq("session_id", sessionId)
+    .order("id", { ascending: false })
+    .limit(page.limit + 1);
+  if (page.beforeActivityId) {
+    activityQuery.lt("id", page.beforeActivityId);
+  }
+
+  // Legacy task/message/event context is a compatibility bootstrap, not part
+  // of every backwards activity page. Repeating it for each page multiplies
+  // payload and database work while adding no new history.
+  const includeLegacy = page.beforeActivityId === undefined;
+  // Legacy rows bootstrap conversations created before session_activities.
+  // Keep this compatibility payload deliberately bounded; new App Server
+  // history is independently cursor-paginated above.
+  const legacyLimit = 250;
+  const [activitiesResult, rawOwnedTasks, rawActorEvents] = await Promise.all([
+    activityQuery,
+    includeLegacy
+      ? collectRangePages(
+          async (from, to) => {
+            const { data, error } = await admin
+              .from("tasks")
+              .select(SAFE_TASK_COLUMNS)
+              .eq("workspace_id", context.workspaceId)
+              .or(
+                `assigned_session_id.eq.${sessionId},claimed_by_session_id.eq.${sessionId},and(created_by_type.eq.ai,created_by_id.eq.${sessionId})`,
+              )
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false })
+              .range(from, to);
+            if (error) throw mapDatabaseError(error);
+            return data ?? [];
+          },
+          { maxRows: legacyLimit + 1 },
+        )
+      : Promise.resolve([] as TaskRow[]),
+    includeLegacy
+      ? collectRangePages(
+          async (from, to) => {
+            const { data, error } = await admin
+              .from("task_events")
+              .select("task_id")
+              .eq("workspace_id", context.workspaceId)
+              .eq("actor_type", "ai")
+              .eq("actor_id", sessionId)
+              .order("id", { ascending: false })
+              .range(from, to);
+            if (error) throw mapDatabaseError(error);
+            return data ?? [];
+          },
+          { maxRows: legacyLimit + 1 },
+        )
+      : Promise.resolve([] as Array<{ task_id: string }>),
+  ]);
+  if (activitiesResult.error) throw mapDatabaseError(activitiesResult.error);
+
+  const rawActivities = activitiesResult.data ?? [];
+  const hasMoreOlder = rawActivities.length > page.limit;
+  const activities = rawActivities
+    .slice(0, page.limit)
+    .reverse()
+    .map(
+      (activity): SessionActivityItem => ({
+        ...activity,
+        id: String(activity.id),
+      }),
+    );
+  let tasksTruncated =
+    rawOwnedTasks.length > legacyLimit || rawActorEvents.length > legacyLimit;
+  const tasksById = new Map<string, TaskRow>();
+  for (const task of rawOwnedTasks.slice(0, legacyLimit)) {
+    tasksById.set(task.id, sanitizeTask(task));
+  }
+  const historicalTaskIds = new Set([
+    ...activities.flatMap((activity) =>
+      activity.task_id ? [activity.task_id] : [],
+    ),
+    ...rawActorEvents.slice(0, legacyLimit).map((event) => event.task_id),
+  ]);
+  const missingTaskIds = [...historicalTaskIds].filter((taskId) => !tasksById.has(taskId));
+  if (missingTaskIds.length) {
+    const historicalTasks = await collectChunkedRows(
+      missingTaskIds,
+      async (taskIds) => {
+        const { data, error } = await admin
+          .from("tasks")
+          .select(SAFE_TASK_COLUMNS)
+          .eq("workspace_id", context.workspaceId)
+          .in("id", [...taskIds]);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      },
+    );
+    for (const task of historicalTasks) {
+      tasksById.set(task.id, sanitizeTask(task));
+    }
+  }
+
+  const newestTasks = [...tasksById.values()].sort((left, right) => {
+    const byTime = right.created_at.localeCompare(left.created_at);
+    return byTime || right.id.localeCompare(left.id);
+  });
+  tasksTruncated ||= newestTasks.length > legacyLimit;
+  const legacyTasks = newestTasks.slice(0, legacyLimit);
+  const taskIds = legacyTasks.map((task) => task.id);
+  if (!taskIds.length) {
+    return {
+      session,
+      tasks: [],
+      messages: [],
+      events: [],
+      activities,
+      pagination: {
+        activities: {
+          limit: page.limit,
+          oldest_cursor: activities[0]?.id ?? null,
+          newest_cursor: activities.at(-1)?.id ?? null,
+          has_more_older: hasMoreOlder,
+        },
+        legacy: {
+          limit: legacyLimit,
+          tasks_truncated: tasksTruncated,
+          messages_truncated: false,
+          events_truncated: false,
+        },
+      },
+    };
+  }
+  let newestMessages: TaskMessageRow[] = [];
+  let newestEvents: TaskEventRow[] = [];
+  if (includeLegacy) {
+    for (const taskIdBatch of chunkValues(taskIds)) {
+      const [batchMessages, batchEvents] = await Promise.all([
+        collectRangePages(
+          async (from, to) => {
+            const { data, error } = await admin
+              .from("task_messages")
+              .select("*")
+              .eq("workspace_id", context.workspaceId)
+              .in("task_id", taskIdBatch)
+              .or(`sender_type.neq.ai,sender_id.eq.${sessionId}`)
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false })
+              .range(from, to);
+            if (error) throw mapDatabaseError(error);
+            return data ?? [];
+          },
+          { maxRows: legacyLimit + 1 },
+        ),
+        collectRangePages(
+          async (from, to) => {
+            const { data, error } = await admin
+              .from("task_events")
+              .select("*")
+              .eq("workspace_id", context.workspaceId)
+              .in("task_id", taskIdBatch)
+              .or(`actor_type.neq.ai,actor_id.eq.${sessionId}`)
+              .order("id", { ascending: false })
+              .range(from, to);
+            if (error) throw mapDatabaseError(error);
+            return data ?? [];
+          },
+          { maxRows: legacyLimit + 1 },
+        ),
+      ]);
+      // Each .in() batch has its own ordered range. Merge and prune after every
+      // batch so memory stays bounded while retaining the global newest rows.
+      newestMessages = [...newestMessages, ...batchMessages]
+        .sort((left, right) => {
+          const byTime = right.created_at.localeCompare(left.created_at);
+          return byTime || right.id.localeCompare(left.id);
+        })
+        .slice(0, legacyLimit + 1);
+      newestEvents = [...newestEvents, ...batchEvents]
+        .sort((left, right) => right.id - left.id)
+        .slice(0, legacyLimit + 1);
+    }
+  }
+  return {
+    session,
+    tasks: legacyTasks.sort((a, b) =>
+      a.created_at.localeCompare(b.created_at),
+    ),
+    // Legacy task rows are not intrinsically session-scoped. Keep user/system
+    // context, but do not attribute another AI session's output to this one.
+    messages: newestMessages.slice(0, legacyLimit).reverse(),
+    events: newestEvents.slice(0, legacyLimit).reverse(),
+    activities,
+    pagination: {
+      activities: {
+        limit: page.limit,
+        oldest_cursor: activities[0]?.id ?? null,
+        newest_cursor: activities.at(-1)?.id ?? null,
+        has_more_older: hasMoreOlder,
+      },
+      legacy: {
+        limit: legacyLimit,
+        tasks_truncated: tasksTruncated,
+        messages_truncated: newestMessages.length > legacyLimit,
+        events_truncated: newestEvents.length > legacyLimit,
+      },
+    },
+  };
+}
+
+export async function createSessionTurn(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  input: CreateSessionTurnInput,
+  idempotencyKey: string,
+) {
+  const title = taskTitleFromPrompt(input.content);
+  const requestInput = { sessionId, title, content: input.content };
+  const result = await callDomainRpc("create_session_turn", {
+    ...userContext(context),
+    p_session_id: sessionId,
+    p_title: title,
+    p_content: input.content,
+    p_priority: 50,
+    ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
+  });
+  if (!result.task || !result.message || !result.activity) {
+    throw new AppError("INTERNAL_ERROR", "Session turn creation returned incomplete data");
+  }
+  return result;
 }
 
 export async function createArtifactDownload(

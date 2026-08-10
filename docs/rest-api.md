@@ -2,6 +2,8 @@
 
 REST API 的基地址是部署后的 Next.js 应用，例如 `http://localhost:3000`。AI 客户端只持有 AI Connection 的原始令牌；服务端由令牌解析连接与 Workspace，任何 AI 请求体都不能提交 `workspace_id`。
 
+Codex 用户通常不需要手写以下循环，可在保存本地 Codex 数据的设备上通过 npx 运行 [Codex Bridge](codex-bridge.md)。一个 Bridge 通过 stdio App Server 管理多个顶层 thread，使用认证 SSE 接收无数据唤醒提示，再调用这些 REST 端点同步 Session、领取任务和回传活动；SSE 不可用时会自适应轮询。Bridge 不依赖 MCP，也不能在 Next.js 服务进程中运行。
+
 以下命令先设置本地变量：
 
 ```bash
@@ -33,6 +35,8 @@ export ATB_CONNECTION_TOKEN='atb_...'
 ```
 
 每个修改请求都应发送唯一的 `Idempotency-Key`。同一个 Key 与相同请求可安全重试；Key 相同但请求内容不同返回 HTTP `409` 与 `IDEMPOTENCY_CONFLICT`。建议格式为 `<client>/<operation>/<uuid>`，最长 200 个字符。
+
+高频控制面操作有两个有意的例外：Session/Task 心跳仍校验 Key 格式，但属于自然幂等状态刷新，不缓存响应，也不以同 Key 的不同心跳内容触发冲突；`claim-next` 的空结果不缓存，因此同一个 Key 在后续队列出现任务时仍可成功领取。真实领取成功后仍按普通规则保存 24 小时、支持完全重放并检测冲突。
 
 注册后的 AI 命令还必须发送服务端返回的会话 ID：
 
@@ -82,6 +86,18 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/presence" \
 
 两分钟没有会话活动时，Web 会把它视为离线并停止接受新预留；执行中任务仍使用后文的领取心跳续租。
 
+专用 Bridge/Worker 可以同时建立可选的认证 SSE 唤醒流：
+
+```bash
+curl --no-buffer --fail-with-body -sS \
+  "$ATB_URL/api/ai/sessions/wake" \
+  -H "Authorization: Bearer $ATB_CONNECTION_TOKEN" \
+  -H "X-AI-Session-ID: $ATB_SESSION_ID" \
+  -H 'Accept: text/event-stream'
+```
+
+服务端只会返回固定的 `ready`、`wake`、`degraded` 或 `reconnect` 事件以及注释保活，不返回任务标题、正文或令牌。收到 `ready`/`wake` 后仍必须调用 `claim-next`；SSE 只是可能重复或遗漏的低延迟提示，数据库 Task 和 REST 原子领取才是权威状态。客户端应保留低频轮询作为断线兜底。
+
 ## 2. 读取本会话的下一项预留任务
 
 ```bash
@@ -93,7 +109,7 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/claim-next" \
   --data '{"lease_seconds": 900}'
 ```
 
-服务端仅考虑 `assigned_session_id` 等于当前会话、能力匹配且依赖已完成的 `ready` 叶子任务，按优先级降序、创建时间升序原子接收。它不会扫描其他会话或未绑定的任务；没有预留任务时成功响应中的任务值为 `null`。
+服务端仅考虑 `assigned_session_id` 等于当前会话、能力匹配且依赖已完成的 `ready` 叶子任务，按优先级降序、创建时间升序原子接收。它不会扫描其他会话或未绑定的任务；没有预留任务时成功响应中的任务值为 `null`，且该空结果不会写入持久幂等表。
 
 `lease_seconds` 可选，范围 `60..3600`，默认 `900`（15 分钟）。心跳和 `complete-and-claim-next` 使用同一范围。
 
@@ -117,7 +133,7 @@ export ATB_CLAIM_TOKEN='<claim_token>'
 
 ## 3. 续租与回传进度
 
-心跳会更新会话最后在线时间，并延长当前领取租约：
+心跳会更新会话最后在线时间，并单调延长当前领取租约。它不会进入 AI 上下文、写入对话时间线、创建 `claim_heartbeat` 事件或保存幂等响应：
 
 ```bash
 curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/heartbeat" \
@@ -149,6 +165,30 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/report-progress" \
 ```
 
 `progress_percent_estimate` 必须是 `0..100` 的整数或 `null`，只代表 AI 的估计；父任务结构化进度按完成叶子数计算。
+
+### 回传 Harness 会话活动
+
+Harness adapter 可以把 AI 回复、提供方暴露的思考摘要和工具执行过程追加到 Session 时间线：
+
+```bash
+curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/activity" \
+  -H "Authorization: Bearer $ATB_CONNECTION_TOKEN" \
+  -H "X-AI-Session-ID: $ATB_SESSION_ID" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: bridge/activity/$(openssl rand -hex 16)" \
+  --data "{
+    \"task_id\": \"$ATB_TASK_ID\",
+    \"claim_token\": \"$ATB_CLAIM_TOKEN\",
+    \"kind\": \"reasoning\",
+    \"content\": \"先确认失败测试，再缩小到相关模块。\",
+    \"data\": {\"disclosure\": \"provider_summary\"},
+    \"external_ref\": \"codex:<thread>:<task>:item:<provider-item-id>\"
+  }"
+```
+
+支持的 `kind` 为 `assistant_message`、`reasoning`、`command`、`file_change`、`mcp_tool`、`web_search`、`plan`、`error`、`usage` 和 `status`。`assistant_message` 与 `reasoning` 必须有非空 `content`；`content` 最长 100,000 字符，`data` 必须是 JSON object 且编码后不超过 256 KiB。`external_ref` 必填，最长 500 字符。
+
+调用者必须仍持有该 Task 的有效领取令牌。成功写入活动会把 Task 置为 `running`、刷新 Session，并为 `assistant_message` 同步创建一条任务消息。`external_ref` 在 Session 内唯一，应来自稳定的 provider thread/turn/item 标识；同一 item 重试时保持它和业务内容不变，否则返回 `IDEMPOTENCY_CONFLICT`。这里的 `reasoning` 只允许提供方明确输出的可展示摘要，不得上传隐藏的原始 chain-of-thought。
 
 ## 4. 拆分复杂任务
 
@@ -342,6 +382,17 @@ curl --fail-with-body -sS \
 ```
 
 把响应的 `data.next_cursor` 持久化到客户端，下次作为 `after`。`limit` 范围是 `1..500`。
+
+## 9. Web 会话对话接口
+
+这两个接口供已登录网页使用，以 Supabase Auth Cookie 鉴权，不接受 AI Connection Token：
+
+- `GET /api/user/sessions/:sessionId` 返回该 Session、相关任务、任务消息、任务事件和 `session_activities`，供会话对话框组合时间线。默认返回最新 100 条结构化活动；可用响应中的 `pagination.activities.oldest_cursor` 作为 `before_activity_id` 继续加载更早记录，`limit` 范围为 `1..200`。活动 ID 和游标均使用十进制字符串，避免 JavaScript 丢失 bigint 精度。
+- `POST /api/user/sessions/:sessionId/turns` 接收 `{ "content": "..." }` 和 `Idempotency-Key`。目标 Session 必须仍在线；服务端原子创建定向分配给它的 `ready` Task、用户消息和 `user_message` 活动，并返回 HTTP `201`。
+
+新 Task 的临时名称从消息的第一个非空句生成，最长 80 个 Unicode code point；当前不会额外调用模型命名。Codex Bridge 通常由 SSE 近实时唤醒并领取它，通知不可用时由自适应轮询兜底。若该 thread 的上一轮仍在执行，新 Task 只会排队；0.2 MVP 没有可靠的运行中 steer、网页 interrupt 或网页审批。
+
+`pagination.legacy` 会分别标记旧任务、消息或事件是否达到兼容读取上限。旧表本身不是完整的 Session 事件流；出现截断标记时，网页会明确提示只展示最近的兼容记录，而 Bridge 接入后的结构化活动仍可持续向前分页。
 
 ## 稳定错误码
 

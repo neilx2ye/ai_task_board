@@ -6,6 +6,8 @@ import {
   registerSessionSchema,
   reportCurrentTaskSchema,
   reportProgressSchema,
+  reportSessionActivitySchema,
+  syncSessionsSchema,
 } from "@/lib/validation/ai";
 import { artifactReferenceSchema } from "@/lib/validation/common";
 import { createTaskSchema, updateTaskSchema } from "@/lib/validation/user";
@@ -26,6 +28,48 @@ describe("AI command validation", () => {
       platform: "claude",
       capabilities: [],
     });
+  });
+
+  it("normalizes a complete Bridge thread inventory", () => {
+    const parsed = syncSessionsSchema.parse({
+      bridge_version: "  0.2.0  ",
+      threads: [
+        {
+          external_conversation_ref: "  thread-1  ",
+          name: "  Main repository  ",
+          working_directory: "  /srv/main  ",
+        },
+      ],
+    });
+
+    expect(parsed).toEqual({
+      bridge_version: "0.2.0",
+      threads: [
+        {
+          archived: false,
+          capabilities: [],
+          external_conversation_ref: "thread-1",
+          name: "Main repository",
+          platform: "codex",
+          working_directory: "/srv/main",
+        },
+      ],
+    });
+    expect(
+      syncSessionsSchema.parse({ bridge_version: "0.2.0", threads: [] }),
+    ).toMatchObject({ threads: [] });
+  });
+
+  it("rejects duplicate local thread references in one snapshot", () => {
+    expect(
+      syncSessionsSchema.safeParse({
+        bridge_version: "0.2.0",
+        threads: [
+          { external_conversation_ref: "same", name: "First" },
+          { external_conversation_ref: "same", name: "Second" },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects unrecognized fields instead of silently accepting workspace scope", () => {
@@ -58,6 +102,81 @@ describe("AI command validation", () => {
       }).success,
     ).toBe(true);
     expect(heartbeatClaimSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("accepts Harness summaries but rejects missing summary content", () => {
+    expect(
+      reportSessionActivitySchema.parse({
+        task_id: taskId,
+        claim_token: "claim_secret",
+        kind: "reasoning",
+        content: "Checked the failing tests",
+        external_ref: "codex:item:reasoning-1",
+      }),
+    ).toMatchObject({ kind: "reasoning", data: {} });
+    expect(
+      reportSessionActivitySchema.safeParse({
+        task_id: taskId,
+        claim_token: "claim_secret",
+        kind: "reasoning",
+        external_ref: "codex:item:reasoning-2",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("preserves streamed delta whitespace while trimming completed and legacy content", () => {
+    const activity = {
+      task_id: taskId,
+      claim_token: "claim_secret",
+      kind: "assistant_message" as const,
+      external_ref: "codex:item:message-1",
+    };
+    const deltaData = {
+      protocol: "codex-app-server/v1",
+      phase: "delta",
+    };
+
+    expect(
+      reportSessionActivitySchema.parse({
+        ...activity,
+        content: "Hello ",
+        data: deltaData,
+      }).content,
+    ).toBe("Hello ");
+    expect(
+      reportSessionActivitySchema.parse({
+        ...activity,
+        content: " \n  ",
+        data: deltaData,
+      }).content,
+    ).toBe(" \n  ");
+    expect(
+      reportSessionActivitySchema.parse({
+        ...activity,
+        content: "  completed answer  ",
+        data: { ...deltaData, phase: "completed" },
+      }).content,
+    ).toBe("completed answer");
+    expect(
+      reportSessionActivitySchema.parse({
+        ...activity,
+        content: "  legacy answer  ",
+      }).content,
+    ).toBe("legacy answer");
+    expect(
+      reportSessionActivitySchema.safeParse({
+        ...activity,
+        content: "",
+        data: deltaData,
+      }).success,
+    ).toBe(false);
+    expect(
+      reportSessionActivitySchema.safeParse({
+        ...activity,
+        content: " ".repeat(100_001),
+        data: deltaData,
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts a complete subtask batch with client-reference dependencies", () => {

@@ -21,6 +21,7 @@ import type {
   ReleaseTaskInput,
   ReportCurrentTaskInput,
   ReportProgressInput,
+  ReportSessionActivityInput,
   RequestUserInputInput,
 } from "@/lib/validation/ai";
 
@@ -223,6 +224,23 @@ export async function postTaskMessage(
     p_content: input.content,
     p_reply_to_message_id: input.reply_to_message_id ?? null,
     ...requestMetadata("post_task_message", input, idempotencyKey),
+  });
+}
+
+export async function reportSessionActivity(
+  context: AISessionContext,
+  input: ReportSessionActivityInput,
+  idempotencyKey: string,
+): Promise<unknown> {
+  return callDomainRpc("report_session_activity", {
+    ...aiContext(context),
+    p_task_id: input.task_id,
+    p_claim_token_hash: hashToken(input.claim_token, "claim"),
+    p_kind: input.kind,
+    p_content: input.content ?? null,
+    p_data: asJson(input.data) ?? {},
+    p_external_ref: input.external_ref,
+    ...requestMetadata("report_session_activity", input, idempotencyKey),
   });
 }
 

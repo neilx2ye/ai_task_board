@@ -100,6 +100,7 @@ describe("stateless MCP endpoint", () => {
       "create_subtasks",
       "report_progress",
       "post_task_message",
+      "report_session_activity",
       "request_user_input",
       "heartbeat_session",
       "heartbeat",
@@ -164,6 +165,21 @@ describe("stateless MCP endpoint", () => {
     );
     expect(taskHeartbeatSchema.properties).toHaveProperty("session_id");
     expect(taskHeartbeatSchema.properties).toHaveProperty("lease_seconds");
+
+    const activitySchema = byName.get("report_session_activity")?.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(activitySchema.required).toEqual(
+      expect.arrayContaining([
+        "task_id",
+        "claim_token",
+        "kind",
+        "external_ref",
+        "idempotency_key",
+      ]),
+    );
+    expect(activitySchema.properties).toHaveProperty("session_id");
   });
 
   it("acknowledges initialized notifications without JSON state", async () => {

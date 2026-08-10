@@ -2,6 +2,8 @@
 
 AI Task Board 在 `POST /api/mcp` 提供无状态 MCP Streamable HTTP 端点。它和 REST Adapter 共用鉴权、Zod Schema、领域服务与 PostgreSQL RPC，不维护第二套任务状态规则。
 
+MCP 工具调用仍由 AI Host 发起；这个无状态端点不能主动唤醒已暂停的模型或已退出的对话。需要从网页持续控制设备上的 Codex thread 时，请运行 [Codex Bridge](codex-bridge.md)。一个 Bridge 通过本机 App Server 自动发现多个顶层 thread，使用认证 SSE 接收无数据唤醒提示，再通过 REST 领取任务；断线时自适应轮询。Bridge 正常运行不需要安装 Board MCP，它也不能放进 Next.js 服务进程代替本地 companion。
+
 当前端点支持：
 
 - `initialize`（使用 SDK 支持的版本协商；当前最新版本为 `2025-11-25`）
@@ -43,11 +45,11 @@ AI Connection Token 属于整个 AI 环境或 MCP 连接，可在全局 MCP 配�
 - 每个新对话或 Agent 上下文调用一次 `register_session` 后，应保存该上下文自己的 Session ID，并在上下文存活期间至少每 60 秒调用一次 `heartbeat_session`；空闲或正在等待用户回复时也继续。
 - 只有在用户明确要求停止、MCP Host/客户端正在关闭，或该对话已经结束时才停止会话心跳。停止超过两分钟后，该 Session 会在网页中显示为离线，且不能接收新的 Web 预留任务。
 - 已领取任务时必须另外在租约到期前调用 `heartbeat`；`heartbeat_session` 只维持会话在线，不能延长任务租约。任务完成、失败、释放或进入 `waiting_user` 后停止该任务的租约心跳。
-- 每次定时心跳是新的逻辑操作，应使用新的 `idempotency_key`；只有重试同一次心跳请求时才复用原 Key。
+- 每次定时心跳仍建议使用新的 `idempotency_key`，便于客户端追踪；服务端只校验 Key 格式，不缓存高频心跳响应，也不写心跳任务事件。重试同一次心跳会再次安全刷新在线时间或单调延长租约。
 
 若准备主动结束对话但仍持有未完成任务，应先调用 `release_task` 再停止心跳，避免任务一直占用到租约自然过期。异常退出时则由租约超时保护接管。
 
-MCP instructions 能教会并约束支持它的 AI 客户端，但不能让已经被宿主暂停的模型、休眠的进程或已退出的对话继续执行后台工具调用。此时不应启动一个脱离对话生命周期的外部守护进程；下次激活时，用相同的 `external_conversation_ref` 再次调用 `register_session` 恢复原 Session，然后继续心跳。
+MCP instructions 能教会并约束支持它的 AI 客户端，但不能让已经被宿主暂停的模型、休眠的进程或已退出的对话继续执行后台工具调用。普通 MCP 会话下次激活时，应使用相同的 `external_conversation_ref` 再次调用 `register_session` 恢复原 Session，然后继续心跳。若希望设备上的多个 Codex Session 由后台进程持续领取网页任务，应使用常驻 Bridge；Bridge 与 MCP 是可独立使用的接入方式，不要假设 MCP 端点能够反向发送消息。
 
 ## 用 JSON-RPC 引导一个会话
 
@@ -139,6 +141,8 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 
 会话 ID 通过 `arguments.session_id` 传递，每个对话传自己的 Session ID。`X-AI-Session-ID` 请求头仅适用于永久绑定单一 Session 的专用 Worker；服务端优先使用请求头，固定请求头会覆盖 arguments 中的 `session_id`。
 
+`claim_next_task` 返回空任务时不保存幂等记录，因此同一个 Key 的后续调用仍能领取刚进入队列的任务；一旦真实领取成功，该响应会按普通幂等规则保存 24 小时并可完整重放。
+
 工具成功结果同时提供 MCP 文本内容与结构化数据：
 
 ```json
@@ -168,6 +172,7 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 | `create_subtasks` | `tasks/create-subtasks` | `task_id`、`claim_token`、完整 `subtasks` 批次 |
 | `report_progress` | `tasks/report-progress` | `task_id`、`claim_token`、进度说明与估计 |
 | `post_task_message` | `tasks/messages` | `task_id`、`claim_token`、`content`、`reply_to_message_id?` |
+| `report_session_activity` | `sessions/activity` | `task_id`、`claim_token`、活动 `kind`、稳定 `external_ref`、`content?` 与 `data` |
 | `request_user_input` | `tasks/request-user-input` | `task_id`、`claim_token`、`question` |
 | `heartbeat_session` | `sessions/presence` | 会话存活心跳，无任务字段；空闲或等待用户时也持续 |
 | `heartbeat` | `sessions/heartbeat` | `task_id`、`claim_token`、`lease_seconds?` |
@@ -180,6 +185,8 @@ curl --fail-with-body -sS "$ATB_MCP_URL" \
 完整字段约束由 `tools/list` 返回。除了 `get_task`、`get_task_updates` 之外，所有工具都要求 `idempotency_key`；除了 `register_session` 之外，所有工具都要求 `arguments.session_id`（或专用 Worker 的 `X-AI-Session-ID` 请求头）中存在 AI Session ID。
 
 涉及租约的 `lease_seconds` 范围为 `60..3600`，默认 `900`。MCP 工具只提交附件元数据或外部 URL；浏览器的私有文件上传接口见 [REST API 示例](rest-api.md)。
+
+`report_session_activity` 供 Harness adapter 回传 `assistant_message`、`reasoning`、`command`、`file_change`、`mcp_tool`、`web_search`、`plan`、`error`、`usage` 或 `status`。其中 `reasoning` 只能是提供方明确暴露、允许展示的摘要，不能提交隐藏的原始 chain-of-thought。`external_ref` 在 Session 内唯一，重试同一 provider item 时必须保持稳定；详细约束与 REST 示例见 [REST API 接入示例](rest-api.md#回传-harness-会话活动)。
 
 ## 完成并领取下一项
 

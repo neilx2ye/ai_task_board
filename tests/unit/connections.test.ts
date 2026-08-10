@@ -15,6 +15,8 @@ function connection(
     platform: "Claude",
     created_by_user_id: null,
     last_used_at: null,
+    last_seen_at: null,
+    bridge_version: null,
     created_at: "2026-01-01T00:00:00.000Z",
     revoked_at: null,
     ...overrides,

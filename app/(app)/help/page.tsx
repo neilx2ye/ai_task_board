@@ -149,7 +149,8 @@ export default function HelpPage() {
         <p className="text-sm leading-relaxed text-muted-foreground">
           AI Task Board 是会话优先的任务控制台：外部 AI 会话（ChatGPT、Claude、
           Codex、Gemini 或自定义 Agent）先在 CLI / APP 中建立上下文，再通过 REST
-          API 或 MCP 同步工作；Web Console 只向指定的存活会话预留任务、查看结果和回复问题。
+          API、MCP 或本机 Bridge 同步工作；Web Console 可以向指定的存活会话发送
+          下一任务，并查看回复、思考摘要与工具过程。
         </p>
       </header>
 
@@ -172,19 +173,68 @@ export default function HelpPage() {
             <strong className="text-foreground">只显示一次</strong>
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
-          <Step index={2} title="在 CLI / APP 建立上下文并注册会话">
-            先把任务背景和约束交给 AI，再用稳定的对话引用注册会话。所有仍存活的
-            会话（包含等待回复的）都要持续发送心跳；两分钟没有活动的会话不会被视为存活。
+          <Step index={2} title="在会话所在机器启动 Bridge 或手动注册">
+            Codex 推荐运行本机 Bridge，它会发现允许范围内的本地 thread、同步会话并维持心跳；
+            其他 Harness 也可以通过 REST / MCP 手动注册。两分钟没有活动的会话不会被视为存活。
           </Step>
-          <Step index={3} title="同步当前任务或定向预留">
-            CLI / APP 已开始的工作用 report-current 同步；如果从 Web 创建任务，请在
-            会话卡片点击「预留任务」。新任务必须绑定具体存活会话，不进入公共池。
+          <Step index={3} title="从会话对话框发送下一任务">
+            点击会话卡片即可查看历史并发送消息。系统会自动生成任务名称，将它作为
+            下一项任务预留给此会话；也可以使用「预留任务」填写更完整的任务字段。
           </Step>
           <Step index={4} title="执行与回复">
-            会话读取自己的预留队列并持续回传进度；当它请求补充信息时，任务进入
-            「等我回复」，你的回复会让任务回到原会话的队列。
+            会话读取自己的预留队列并持续回传进度。忙碌时发送的新消息会排成该
+            thread 的下一项任务；支持交互状态的 Harness 也可把任务转入「等我回复」。
           </Step>
         </ol>
+      </Section>
+
+      <Section id="codex-bridge" title="Codex Bridge（自动执行通道）">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Bridge 是运行在 Codex 设备上的常驻 companion。一个进程代表一台设备和一个
+          AI Connection，通过 stdio 启动本机 Codex App Server，并为每个允许的本地
+          thread 同步独立会话；AI 回复、提供方公开的思考摘要、命令、文件变更、工具
+          与搜索过程会近实时显示在网页控制台。Bridge 本身不依赖 Board MCP。
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Bridge 启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
+CODEX_THREAD_SCOPE='cwd' \\
+npx --yes ai-task-board-codex-bridge@0.2.0`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
+            不要在 Next.js 看板服务进程里启动 App Server。
+          </li>
+          <li>
+            同一设备/Connection 只运行一个 Bridge。不同 thread 可以并行，但不要同时用
+            Codex TUI、IDE 或另一 Bridge 写入同一个 thread。
+          </li>
+          <li>
+            npm 包不会自动安装系统服务；长期运行时请固定包版本，并使用 systemd、
+            launchd 或其他进程管理器负责开机启动和异常重启。
+          </li>
+          <li>
+            Bridge 通过认证 SSE 接收不含任务数据的近实时唤醒，再用 REST
+            原子领取；SSE 断线时从默认 5 秒逐步退避到 60 秒轮询，并持续尝试重连。
+          </li>
+          <li>
+            SSE 保活和任务心跳属于控制面，不会发送给 Codex 或占用模型上下文；
+            心跳只刷新在线时间或租约，也不会写入对话与任务事件。
+          </li>
+          <li>
+            看板只展示 Harness 明确提供的思考摘要，不读取或伪造模型隐藏思维链；
+            启用 Bridge 前未上报的外部对话也无法追溯补录。
+          </li>
+          <li>
+            0.2 暂不支持网页逐次审批、可靠的运行中 steer/interrupt 或网页创建 thread；
+            默认安全权限模式会限制 sandbox，并拒绝 App Server 发来的审批请求。
+          </li>
+        </ul>
+        <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+          请通过受保护的环境变量或 Secret 管理器注入连接令牌，不要把真实令牌写入命令、
+          仓库或共享日志。示例中的值都是占位符。
+        </p>
       </Section>
 
       <Section id="task-status" title="任务状态说明">
@@ -267,6 +317,11 @@ Idempotency-Key: <唯一键>
           。心跳接口可延长租约；租约过期后仍只有原目标会话可以重新接收，改派需要用户明确操作。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
+          高频心跳仍校验幂等键格式，但不会保存幂等响应或生成心跳事件；空的
+          <code className="mx-1 rounded bg-muted px-1 text-xs">claim-next</code>
+          也不会落幂等记录。只有真实领取和其他业务写操作保留可重放结果。
+        </p>
+        <p className="text-sm leading-relaxed text-muted-foreground">
           使用 MCP 的客户端（如 Codex）请直接阅读下方
           <a
             href="#mcp-integration"
@@ -287,9 +342,9 @@ Idempotency-Key: <唯一键>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            <strong>看板不会自动启动或唤醒 Codex 子 Agent。</strong>
-            MCP 客户端必须主动连接端点并调用或轮询工具；仅在看板上创建或预留任务，
-            不会有任何 AI 自动开始工作。
+            <strong>单独配置 MCP 不会唤醒已暂停的 Codex。</strong>
+            MCP 客户端仍须主动调用工具；如果需要网页发出任务后自动开始执行，请运行
+            上一节的本机 Codex Bridge。
           </span>
         </p>
 
@@ -435,7 +490,7 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
         </div>
 
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">工具清单（16 个，与 REST 一一对应）</h3>
+          <h3 className="text-sm font-medium">工具清单（17 个，与 REST 一一对应）</h3>
           <ul className="flex flex-col gap-3 text-sm leading-relaxed text-muted-foreground">
             <li>
               <Badge variant="secondary" className="mb-1">会话</Badge>
@@ -470,6 +525,8 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
                 回传进度；
                 <code className="mx-1 rounded bg-muted px-1 text-xs">post_task_message</code>
                 发送任务消息；
+                <code className="mx-1 rounded bg-muted px-1 text-xs">report_session_activity</code>
+                回传 AI 回复、思考摘要和工具过程；
                 <code className="mx-1 rounded bg-muted px-1 text-xs">request_user_input</code>
                 向用户提问；
                 <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
@@ -500,7 +557,9 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
             <code className="mx-1 rounded bg-muted px-1 text-xs">claim_next_task</code>
             领取预留任务 → 执行中用
             <code className="mx-1 rounded bg-muted px-1 text-xs">report_progress</code>
-            回传进度或
+            回传进度、用
+            <code className="mx-1 rounded bg-muted px-1 text-xs">report_session_activity</code>
+            同步可展示的执行过程，或用
             <code className="mx-1 rounded bg-muted px-1 text-xs">post_task_message</code>
             发消息 → 用
             <code className="mx-1 rounded bg-muted px-1 text-xs">heartbeat</code>
@@ -550,6 +609,10 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
               必须停止（此时租约已随提问结束）。
             </li>
             <li>
+              心跳是看板控制面请求，不进入模型对话；服务端只更新在线时间或任务租约，
+              不把心跳写成会话消息、思考过程或任务事件。
+            </li>
+            <li>
               仅在三种情况下停止心跳：用户明确要求停止、MCP host/client 关闭、
               对话结束。若对话准备主动结束且仍持有未完成的 claim，先调用
               <code className="mx-1 rounded bg-muted px-1 text-xs">release_task</code>
@@ -562,7 +625,8 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
             <span>
               坦诚说明：如果宿主暂停了模型（进程休眠或已退出），模型
               <strong>无法真正在后台调用工具</strong>
-              ；重新激活时应先恢复或重新 register_session，再继续定时心跳。
+              ；手动 MCP 接入需要重新激活后恢复或重新注册，本机 Bridge 则会在它持续
+              运行期间代为领取和执行。
             </span>
           </p>
         </div>
@@ -613,14 +677,15 @@ bearer_token_env_var = "ATB_CONNECTION_TOKEN"
           </FaqItem>
           <FaqItem question="AI 为什么接收不到预留任务？">
             常见原因：任务没有分配给当前会话；还有未完成依赖；任务要求的能力不在会话
-            能力列表中；该会话已持有一个进行中的任务；或者任务是只作聚合展示的父任务。
+            能力列表中；该会话已持有一个进行中的任务；任务是只作聚合展示的父任务；
+            或者本机 Bridge / 手动 MCP 主循环没有运行。
           </FaqItem>
           <FaqItem question="什么是租约过期？">
             会话接收任务时会生成 60~3600 秒的租约（默认 900 秒），AI 通过心跳续期。
             租约过期说明会话可能已失联；任务不会被别的 AI 抢走。你可以手动释放后再明确改派。
           </FaqItem>
           <FaqItem question="看板会自动刷新吗？">
-            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话和附件的
+            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话活动、会话和附件的
             变化并自动更新；断线重连后会补拉遗漏事件，另有 30 秒低频轮询兜底，
             不需要手动刷新。
           </FaqItem>

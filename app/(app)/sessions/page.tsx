@@ -1,56 +1,170 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BotIcon, PlusIcon } from "lucide-react";
 
+import { SessionConversationPanel } from "@/components/session-conversation-dialog";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
-import { SESSION_STATUS_META } from "@/components/task-meta";
+import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/components/utils";
 import { useSessions } from "@/hooks/use-sessions";
-import { useTasks } from "@/hooks/use-tasks";
-import { cn, formatDateTime, formatRelativeTime } from "@/components/utils";
 import {
   effectiveSessionStatus,
+  isConnectionAlive,
   isSessionAlive,
 } from "@/lib/domain/session-presence";
+import type {
+  SessionConnectionSummary,
+  SessionListItem,
+} from "@/lib/types/domain";
+
+type ConnectionGroup = {
+  connection: SessionConnectionSummary;
+  sessions: SessionListItem[];
+};
+
+function groupSessionsByConnection(
+  sessions: SessionListItem[],
+): ConnectionGroup[] {
+  const groups = new Map<string, ConnectionGroup>();
+
+  for (const session of sessions) {
+    const existing = groups.get(session.connection.id);
+    if (existing) {
+      existing.sessions.push(session);
+    } else {
+      groups.set(session.connection.id, {
+        connection: session.connection,
+        sessions: [session],
+      });
+    }
+  }
+
+  return [...groups.values()];
+}
+
+function SessionListRow({
+  session,
+  selected,
+  onSelect,
+  onReserve,
+}: {
+  session: SessionListItem;
+  selected: boolean;
+  onSelect: () => void;
+  onReserve: () => void;
+}) {
+  const alive = isSessionAlive(session);
+  const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
+  const task = session.current_task;
+  const taskStatusMeta = task ? TASK_STATUS_META[task.status] : null;
+
+  return (
+    <div
+      className={cn(
+        "flex items-stretch border-b border-border transition-colors last:border-b-0",
+        selected ? "bg-indigo-50/80" : "hover:bg-secondary/50",
+      )}
+    >
+      <button
+        type="button"
+        aria-current={selected ? "page" : undefined}
+        aria-label={`打开 Thread「${session.name}」`}
+        onClick={onSelect}
+        className="min-w-0 flex-1 cursor-pointer px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {session.name}
+          </span>
+          <Badge className={cn("shrink-0", statusMeta.badgeClass)}>
+            {statusMeta.label}
+          </Badge>
+        </div>
+
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {session.working_directory ?? session.platform}
+          {session.model ? ` · ${session.model}` : ""}
+        </p>
+
+        <div className="mt-2 flex flex-col gap-1">
+          {task ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {task.title}
+              </span>
+              {taskStatusMeta ? (
+                <Badge className={cn("shrink-0", taskStatusMeta.badgeClass)}>
+                  {taskStatusMeta.label}
+                </Badge>
+              ) : null}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">当前空闲</span>
+          )}
+        </div>
+
+        <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+          已预留 {session.queued_task_count} 项
+        </p>
+      </button>
+
+      {alive ? (
+        <div className="flex shrink-0 items-start px-2 py-2.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onReserve}
+            aria-label={`给 ${session.name} 预留任务`}
+            title="预留任务"
+          >
+            <PlusIcon />
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function SessionsPage() {
   const sessionsQuery = useSessions();
-  const tasksQuery = useTasks();
   const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
-
-  const taskById = useMemo(
-    () =>
-      new Map((tasksQuery.data?.tasks ?? []).map((task) => [task.id, task])),
-    [tasksQuery.data],
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    null,
   );
 
-  const error = sessionsQuery.error ?? null;
-  const sessions = sessionsQuery.data ?? [];
-  const liveSessions = sessions.filter((session) => isSessionAlive(session));
-  const inactiveSessions = sessions.filter((session) => !isSessionAlive(session));
+  const sessions = useMemo(
+    () => sessionsQuery.data ?? [],
+    [sessionsQuery.data],
+  );
+  const connectionGroups = useMemo(
+    () => groupSessionsByConnection(sessions),
+    [sessions],
+  );
+  const selectedSession = useMemo(
+    () =>
+      selectedSessionId
+        ? (sessions.find((session) => session.id === selectedSessionId) ?? null)
+        : (sessions[0] ?? null),
+    [selectedSessionId, sessions],
+  );
 
   return (
-    <div className="flex flex-col gap-5">
-      <div>
+    <div className="flex flex-col gap-5 lg:h-[calc(100dvh-3rem)]">
+      <div className="shrink-0">
         <h1 className="text-xl font-semibold tracking-tight">AI 会话</h1>
         <p className="text-sm text-muted-foreground">
-          会话是任务的上下文边界。先在 CLI 或 APP 中建立对话，再从这里向该会话预留任务。
+          按设备切换 Thread，在同一控制台查看上下文、执行过程并继续发送任务。
         </p>
       </div>
 
-      <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-indigo-950">
-        Web Console 不创建等待 AI 自行挑选的公共任务。只有两分钟内持续心跳的会话可接收新任务；
-        CLI 或 APP 已开始执行的任务则由会话直接同步到这里。
-      </div>
-
-      {error ? (
+      {sessionsQuery.error ? (
         <ErrorState
-          message={error.message}
+          message={sessionsQuery.error.message}
           onRetry={() => void sessionsQuery.refetch()}
         />
       ) : sessionsQuery.isLoading ? (
@@ -59,170 +173,88 @@ export default function SessionsPage() {
         <EmptyState
           icon={<BotIcon className="size-6" />}
           title="还没有 AI 会话"
-          description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端调用注册接口即可出现在这里。"
+          description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端注册的会话会显示在这里。"
         />
       ) : (
-        <div className="flex flex-col gap-6">
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold">存活会话</h2>
-              <Badge variant="secondary">{liveSessions.length}</Badge>
-            </div>
-            {liveSessions.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                暂无近期心跳。请保持 CLI 或 APP 会话在线。
-              </p>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {liveSessions.map((session) => {
-                  const statusMeta = SESSION_STATUS_META[session.status];
-                  const currentTask = session.current_task_id
-                    ? taskById.get(session.current_task_id)
-                    : undefined;
-                  const reservedCount = (tasksQuery.data?.tasks ?? []).filter(
-                    (task) =>
-                      task.assigned_session_id === session.id &&
-                      task.status === "ready",
-                  ).length;
+        <div className="grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm lg:grid-cols-[20rem_minmax(0,1fr)]">
+          <aside className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0">
+            <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
+              <div>
+                <h2 className="text-sm font-semibold">设备与 Threads</h2>
+                <p className="text-xs text-muted-foreground">
+                  选择一个上下文继续工作
+                </p>
+              </div>
+              <Badge variant="secondary" className="tabular-nums">
+                {sessions.length}
+              </Badge>
+            </header>
+
+            <nav aria-label="设备与 Thread 列表">
+              {connectionGroups.map(
+                ({ connection, sessions: groupSessions }) => {
+                  const deviceOnline = isConnectionAlive(connection);
                   return (
-                    <Card key={session.id}>
-                      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <span className="truncate text-sm font-semibold">
-                            {session.name}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {session.platform}
-                            {session.model ? ` · ${session.model}` : ""}
-                          </span>
-                        </div>
-                        <Badge className={cn("shrink-0", statusMeta.badgeClass)}>
-                          {statusMeta.label}
-                        </Badge>
-                      </CardHeader>
-                      <CardContent className="flex flex-col gap-3">
-                        {session.external_conversation_ref ? (
-                          <div className="flex flex-col gap-1 text-sm">
-                            <span className="text-xs text-muted-foreground">会话上下文</span>
-                            <span className="truncate" title={session.external_conversation_ref}>
-                              {session.external_conversation_ref}
-                            </span>
-                          </div>
-                        ) : null}
-                        <div className="flex flex-col gap-1 text-sm">
-                          <span className="text-xs text-muted-foreground">当前任务</span>
-                          {currentTask ? (
-                            <Link
-                              href={`/tasks/${currentTask.id}`}
-                              className="truncate text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
-                            >
-                              {currentTask.title}
-                            </Link>
-                          ) : (
-                            <span className="text-muted-foreground">空闲</span>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
-                          <span className="text-xs text-muted-foreground">
-                            已预留 {reservedCount} 项
-                          </span>
-                          <Button
-                            size="sm"
-                            onClick={() => setTargetSessionId(session.id)}
-                            aria-label={`给 ${session.name} 预留任务`}
-                          >
-                            <PlusIcon />
-                            预留任务
-                          </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          最后心跳：
-                          <time
-                            dateTime={session.last_seen_at}
-                            title={formatDateTime(session.last_seen_at)}
-                          >
-                            {formatRelativeTime(session.last_seen_at)}
-                          </time>
-                        </p>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          {inactiveSessions.length > 0 ? (
-            <section className="flex flex-col gap-3">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold">离线会话</h2>
-                <Badge variant="secondary">{inactiveSessions.length}</Badge>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {inactiveSessions.map((session) => {
-                  const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
-            const currentTask = session.current_task_id
-              ? taskById.get(session.current_task_id)
-              : undefined;
-            return (
-              <Card key={session.id}>
-                <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate text-sm font-semibold">
-                      {session.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {session.platform}
-                      {session.model ? ` · ${session.model}` : ""}
-                    </span>
-                  </div>
-                  <Badge className={cn("shrink-0", statusMeta.badgeClass)}>
-                    {statusMeta.label}
-                  </Badge>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-1 text-sm">
-                    <span className="text-xs text-muted-foreground">
-                      当前任务
-                    </span>
-                    {currentTask ? (
-                      <Link
-                        href={`/tasks/${currentTask.id}`}
-                        className="truncate text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
-                      >
-                        {currentTask.title}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">空闲</span>
-                    )}
-                  </div>
-
-                  {session.capabilities.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {session.capabilities.map((capability) => (
-                        <Badge key={capability} variant="secondary">
-                          {capability}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <p className="text-xs text-muted-foreground">
-                    最后心跳：
-                    <time
-                      dateTime={session.last_seen_at}
-                      title={formatDateTime(session.last_seen_at)}
+                    <section
+                      key={connection.id}
+                      aria-labelledby={`connection-${connection.id}`}
+                      className="border-b border-border last:border-b-0"
                     >
-                      {formatRelativeTime(session.last_seen_at)}
-                    </time>
-                  </p>
-                </CardContent>
-              </Card>
-            );
-                })}
-              </div>
-            </section>
-          ) : null}
+                      <header className="bg-muted/40 px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <h3
+                            id={`connection-${connection.id}`}
+                            className="min-w-0 flex-1 truncate text-xs font-semibold"
+                          >
+                            {connection.name}
+                          </h3>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "shrink-0",
+                              deviceOnline
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {deviceOnline ? "设备在线" : "设备离线"}
+                          </Badge>
+                          <Badge variant="outline" className="tabular-nums">
+                            {groupSessions.length}
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {connection.platform}
+                          {connection.bridge_version
+                            ? ` · Bridge ${connection.bridge_version}`
+                            : ""}
+                        </p>
+                      </header>
+
+                      <div>
+                        {groupSessions.map((session) => (
+                          <SessionListRow
+                            key={session.id}
+                            session={session}
+                            selected={session.id === selectedSession?.id}
+                            onSelect={() => setSelectedSessionId(session.id)}
+                            onReserve={() => setTargetSessionId(session.id)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  );
+                },
+              )}
+            </nav>
+          </aside>
+
+          <div id="session-console" className="min-h-0">
+            <SessionConversationPanel
+              key={selectedSession?.id ?? "no-session"}
+              session={selectedSession}
+            />
+          </div>
         </div>
       )}
 

@@ -6,6 +6,7 @@ import type {
   TaskEventRow,
   TaskMessageRow,
   TaskRow,
+  SessionActivityRow,
 } from "@/lib/types/database";
 
 export type AIAuthContext = {
@@ -60,4 +61,57 @@ export type RpcObject = Record<string, Json | undefined>;
 
 export type SessionRegistrationResult = {
   session: AISessionRow;
+};
+
+export type SessionConnectionSummary = Pick<
+  AIConnectionRow,
+  | "id"
+  | "name"
+  | "platform"
+  | "last_seen_at"
+  | "bridge_version"
+  | "revoked_at"
+>;
+
+export type SessionCurrentTaskSummary = Pick<
+  TaskRow,
+  | "id"
+  | "title"
+  | "status"
+  | "progress_note"
+  | "progress_percent_estimate"
+  | "updated_at"
+>;
+
+export type SessionListItem = AISessionRow & {
+  connection: SessionConnectionSummary;
+  current_task: SessionCurrentTaskSummary | null;
+  queued_task_count: number;
+};
+
+export type SessionActivityItem = Omit<SessionActivityRow, "id"> & {
+  /** PostgreSQL bigint serialized losslessly for cursors and client keys. */
+  id: string;
+};
+
+export type SessionConversation = {
+  session: SessionListItem;
+  tasks: TaskRow[];
+  messages: TaskMessageRow[];
+  events: TaskEventRow[];
+  activities: SessionActivityItem[];
+  pagination: {
+    activities: {
+      limit: number;
+      oldest_cursor: string | null;
+      newest_cursor: string | null;
+      has_more_older: boolean;
+    };
+    legacy: {
+      limit: number;
+      tasks_truncated: boolean;
+      messages_truncated: boolean;
+      events_truncated: boolean;
+    };
+  };
 };

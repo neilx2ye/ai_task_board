@@ -2,6 +2,9 @@
   "name": "ai-task-board",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +14,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "bridge:codex": "tsx scripts/codex-bridge.ts",
+    "bridge:build": "npm run build --workspace ai-task-board-codex-bridge",
+    "bridge:pack": "npm pack --workspace ai-task-board-codex-bridge"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

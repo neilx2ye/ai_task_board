@@ -4,6 +4,8 @@ out/
 coverage/
 playwright-report/
 test-results/
+packages/*/dist/
+*.tgz
 supabase/.temp/
 .env
 .env.local

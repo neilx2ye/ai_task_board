@@ -1,20 +1,152 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useRef } from "react";
 
 import { apiFetch } from "@/hooks/api-client";
-import type { AISessionRow } from "@/lib/types/database";
+import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
+import type { SessionConversation, SessionListItem } from "@/lib/types/domain";
+
+const SESSIONS_KEY = ["sessions"] as const;
+const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
+
+export function sessionConversationRecoveryInterval(
+  pageCount: number,
+): 30_000 | false {
+  return pageCount <= 1 ? 30_000 : false;
+}
 
 export function useSessions() {
   return useQuery({
-    queryKey: ["sessions"],
+    queryKey: SESSIONS_KEY,
     queryFn: async () => {
       const data =
-        await apiFetch<{ sessions?: AISessionRow[] }>("/api/user/sessions");
+        await apiFetch<{ sessions?: SessionListItem[] }>("/api/user/sessions");
       return data.sessions ?? [];
     },
     // 会话是否“存活”取决于 last_seen_at；即使没有 Realtime 事件，页面也要
     // 定期重新计算并拉取心跳结果。
     refetchInterval: 30_000,
+  });
+}
+
+export function useSessionConversation(sessionId: string | null) {
+  return useInfiniteQuery({
+    queryKey: sessionKey(sessionId ?? ""),
+    enabled: Boolean(sessionId),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const query = new URLSearchParams({ limit: "100" });
+      if (pageParam) query.set("before_activity_id", pageParam);
+      return apiFetch<SessionConversation>(
+        `/api/user/sessions/${sessionId}?${query.toString()}`,
+      );
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.activities.has_more_older
+        ? (lastPage.pagination.activities.oldest_cursor ?? undefined)
+        : undefined,
+    // SessionActivity Realtime rows are merged directly into this cache. Keep
+    // a recovery poll while only the newest page is loaded; polling a
+    // multi-page infinite query would refetch every historical page in order.
+    // Realtime reconnect catch-up remains the recovery path after pagination.
+    refetchInterval: (query) =>
+      sessionConversationRecoveryInterval(
+        query.state.data?.pages.length ?? 0,
+      ),
+  });
+}
+
+function valuesById<T>(values: readonly T[], id: (value: T) => string) {
+  return [...new Map(values.map((value) => [id(value), value])).values()];
+}
+
+/** Combine newest-first API pages into one chronological conversation. */
+export function mergeSessionConversationPages(
+  pages: readonly SessionConversation[] | undefined,
+): SessionConversation | undefined {
+  if (!pages?.length) return undefined;
+  const first = pages[0];
+  const last = pages.at(-1) ?? first;
+  const activities = valuesById(
+    pages.flatMap((page) => page.activities),
+    (activity) => activity.id,
+  ).sort((left, right) => {
+    const byTime = left.created_at.localeCompare(right.created_at);
+    if (byTime) return byTime;
+    const leftId = BigInt(left.id);
+    const rightId = BigInt(right.id);
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
+  const legacy = pages.map((page) => page.pagination.legacy);
+
+  return {
+    session: first.session,
+    tasks: valuesById(
+      pages.flatMap((page) => page.tasks),
+      (task) => task.id,
+    ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    messages: valuesById(
+      pages.flatMap((page) => page.messages),
+      (message) => message.id,
+    ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    events: valuesById(
+      pages.flatMap((page) => page.events),
+      (event) => String(event.id),
+    ).sort((left, right) => left.id - right.id),
+    activities,
+    pagination: {
+      activities: {
+        ...last.pagination.activities,
+        newest_cursor: first.pagination.activities.newest_cursor,
+        oldest_cursor: activities[0]?.id ?? null,
+      },
+      legacy: {
+        limit: Math.max(...legacy.map((value) => value.limit)),
+        tasks_truncated: legacy.some((value) => value.tasks_truncated),
+        messages_truncated: legacy.some((value) => value.messages_truncated),
+        events_truncated: legacy.some((value) => value.events_truncated),
+      },
+    },
+  };
+}
+
+export function useCreateSessionTurn(sessionId: string) {
+  const queryClient = useQueryClient();
+  const idempotency = useRef<
+    ReturnType<typeof createPendingIdempotencyTracker> | undefined
+  >(undefined);
+  const requestKeys = useRef(
+    new WeakMap<{ content: string }, { fingerprint: string; key: string }>(),
+  );
+  idempotency.current ??= createPendingIdempotencyTracker();
+  return useMutation({
+    mutationFn: (input: { content: string }) => {
+      const fingerprint = `${sessionId}\0${input.content}`;
+      const idempotencyKey = idempotency.current!.keyFor(fingerprint);
+      requestKeys.current.set(input, { fingerprint, key: idempotencyKey });
+      return apiFetch<unknown>(`/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        json: input,
+        idempotencyKey,
+      });
+    },
+    onSuccess: (_result, input) => {
+      const request = requestKeys.current.get(input);
+      if (request) {
+        idempotency.current!.confirm(request.fingerprint, request.key);
+      }
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+    onSettled: (_result, _error, input) => {
+      requestKeys.current.delete(input);
+    },
   });
 }

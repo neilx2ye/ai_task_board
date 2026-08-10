@@ -10,6 +10,7 @@ export type HelpSection = {
 
 export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "getting-started", label: "快速上手" },
+  { id: "codex-bridge", label: "Codex Bridge" },
   { id: "task-status", label: "任务状态" },
   { id: "ai-integration", label: "AI 接入" },
   { id: "mcp-integration", label: "MCP 接入" },
@@ -27,7 +28,7 @@ export const HELP_ACTIONS: ReadonlyArray<HelpAction> = [
   {
     href: "/sessions",
     label: "查看会话与上下文",
-    description: "确认会话心跳并定向预留任务",
+    description: "按连接查看会话、执行历史，并直接发送下一任务",
   },
   {
     href: "/connections",
