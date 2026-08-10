@@ -2,8 +2,10 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createHistoryActivityRefreshBatcher,
   createRealtimeInvalidationBatcher,
   realtimeInvalidations,
+  SAFE_HISTORY_SYNC_REALTIME_COLUMNS,
   type RealtimeInvalidation,
 } from "@/hooks/use-realtime";
 
@@ -19,6 +21,28 @@ afterEach(() => {
 });
 
 describe("Realtime cache invalidation", () => {
+  it("excludes service-only history fencing columns from Realtime", () => {
+    expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).not.toContain(
+      "runtime_instance_id",
+    );
+    expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).not.toContain(
+      "report_sequence",
+    );
+    expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).not.toContain("request_hash");
+    expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).toContain("session_id");
+    expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).toContain("status");
+  });
+
+  it("targets the conversation for a history-only status update", () => {
+    expect(
+      labels(
+        realtimeInvalidations("session_history_syncs", {
+          new: { session_id: "session-1", status: "complete" },
+        }),
+      ),
+    ).toEqual(["exact:sessions/session-1"]);
+  });
+
   it("targets only the task and session referenced by a completion burst", () => {
     const invalidations = [
       ...realtimeInvalidations("tasks", {
@@ -87,5 +111,32 @@ describe("Realtime cache invalidation", () => {
     expect(invalidate).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenCalledWith(taskInvalidation);
     expect(invalidate).toHaveBeenCalledWith(sessionInvalidation);
+  });
+
+  it("refreshes an imported history burst once per affected session", async () => {
+    vi.useFakeTimers();
+    const queryClient = new QueryClient();
+    const invalidate = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockResolvedValue(undefined);
+    const batcher = createHistoryActivityRefreshBatcher(queryClient, 750);
+
+    batcher.schedule("session-1");
+    await vi.advanceTimersByTimeAsync(500);
+    batcher.schedule("session-1");
+    batcher.schedule("session-2");
+    await vi.advanceTimersByTimeAsync(749);
+    expect(invalidate).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["sessions", "session-1"],
+      exact: true,
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["sessions", "session-2"],
+      exact: true,
+    });
   });
 });

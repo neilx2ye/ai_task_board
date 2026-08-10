@@ -11,6 +11,7 @@ import type { AIAuthContext, AISessionContext } from "@/lib/types/domain";
 export const AI_DEFAULT_BODY_LIMIT_BYTES = 512 * 1024;
 export const AI_ACTIVITY_BODY_LIMIT_BYTES = 768 * 1024;
 export const AI_INVENTORY_BODY_LIMIT_BYTES = 1152 * 1024;
+export const AI_HISTORY_BODY_LIMIT_BYTES = 640 * 1024;
 
 type AICommandOptions = {
   maxBodyBytes?: number;

@@ -21,13 +21,31 @@ const bigintCursorSchema = z
     "Cursor exceeds bigint range",
   );
 
+const opaqueActivityCursorSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .regex(/^[A-Za-z0-9_-]+$/, "Expected a base64url activity cursor");
+
 export const sessionConversationQuerySchema = z
   .object({
     workspace_id: uuidSchema.optional(),
+    before_activity_cursor: opaqueActivityCursorSchema.optional(),
+    // Kept for one rolling-deployment window. New clients must use the
+    // compound cursor because an identity-only boundary cannot order a late
+    // import whose occurred_at predates its insertion id.
     before_activity_id: bigintCursorSchema.optional(),
     limit: z.coerce.number().int().min(1).max(200).default(100),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      !(value.before_activity_cursor && value.before_activity_id),
+    {
+      message: "Use only one activity cursor",
+      path: ["before_activity_cursor"],
+    },
+  );
 
 export const createSessionTurnSchema = z
   .object({ content: nonEmptyText.max(100_000) })

@@ -486,10 +486,81 @@ export async function listSessions(context: UserWorkspaceContext) {
   return { sessions: items };
 }
 
+type ActivityCursor = {
+  occurredAt: string;
+  sourceOrder: string;
+  id: string;
+};
+
+const POSITIVE_BIGINT = /^[1-9][0-9]{0,18}$/;
+const NONNEGATIVE_BIGINT = /^(0|[1-9][0-9]{0,18})$/;
+const MAX_BIGINT_TEXT = "9223372036854775807";
+const ISO_TIMESTAMP =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
+
+function validBigintText(value: string, allowZero: boolean) {
+  const expression = allowZero ? NONNEGATIVE_BIGINT : POSITIVE_BIGINT;
+  return (
+    expression.test(value) &&
+    (value.length < 19 || value <= MAX_BIGINT_TEXT)
+  );
+}
+
+/** Opaque, lossless boundary for the timeline's total ordering. */
+export function encodeSessionActivityCursor(
+  activity: Pick<SessionActivityItem, "occurred_at" | "source_order" | "id">,
+): string {
+  return Buffer.from(
+    JSON.stringify({
+      v: 1,
+      t: activity.occurred_at,
+      o: activity.source_order,
+      i: activity.id,
+    }),
+    "utf8",
+  ).toString("base64url");
+}
+
+export function decodeSessionActivityCursor(value: string): ActivityCursor {
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as unknown;
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+      throw new Error("not an object");
+    }
+    const cursor = decoded as Record<string, unknown>;
+    if (
+      Object.keys(cursor).length !== 4 ||
+      cursor.v !== 1 ||
+      typeof cursor.t !== "string" ||
+      !ISO_TIMESTAMP.test(cursor.t) ||
+      !Number.isFinite(Date.parse(cursor.t)) ||
+      typeof cursor.o !== "string" ||
+      !validBigintText(cursor.o, true) ||
+      typeof cursor.i !== "string" ||
+      !validBigintText(cursor.i, false)
+    ) {
+      throw new Error("invalid fields");
+    }
+    return {
+      occurredAt: cursor.t,
+      sourceOrder: cursor.o,
+      id: cursor.i,
+    };
+  } catch {
+    throw new AppError("INVALID_REQUEST", "The activity cursor is invalid");
+  }
+}
+
 export async function getSessionConversation(
   context: UserWorkspaceContext,
   sessionId: string,
-  page: { beforeActivityId?: string; limit: number } = { limit: 100 },
+  page: {
+    beforeActivityCursor?: string;
+    beforeActivityId?: string;
+    limit: number;
+  } = { limit: 100 },
 ) {
   const admin = createAdminClient();
   const { data: sessionRow, error: sessionError } = await admin
@@ -507,27 +578,64 @@ export async function getSessionConversation(
     throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
   }
 
+  let cursor = page.beforeActivityCursor
+    ? decodeSessionActivityCursor(page.beforeActivityCursor)
+    : undefined;
+  if (!cursor && page.beforeActivityId) {
+    const { data: legacyBoundary, error: boundaryError } = await admin
+      .from("session_activities")
+      .select("id, occurred_at, source_order")
+      .eq("workspace_id", context.workspaceId)
+      .eq("session_id", sessionId)
+      .filter("id", "eq", page.beforeActivityId)
+      .maybeSingle();
+    if (boundaryError) throw mapDatabaseError(boundaryError);
+    if (!legacyBoundary) {
+      throw new AppError("INVALID_REQUEST", "The activity cursor is invalid");
+    }
+    cursor = {
+      occurredAt: legacyBoundary.occurred_at,
+      sourceOrder: String(legacyBoundary.source_order),
+      id: String(legacyBoundary.id),
+    };
+  }
+
   const activityQuery = admin
     .from("session_activities")
     .select("*")
     .eq("workspace_id", context.workspaceId)
     .eq("session_id", sessionId)
+    .order("occurred_at", { ascending: false })
+    .order("source_order", { ascending: false })
     .order("id", { ascending: false })
     .limit(page.limit + 1);
-  if (page.beforeActivityId) {
-    activityQuery.lt("id", page.beforeActivityId);
+  if (cursor) {
+    activityQuery.or(
+      `occurred_at.lt.${cursor.occurredAt},and(occurred_at.eq.${cursor.occurredAt},source_order.lt.${cursor.sourceOrder}),and(occurred_at.eq.${cursor.occurredAt},source_order.eq.${cursor.sourceOrder},id.lt.${cursor.id})`,
+    );
   }
 
   // Legacy task/message/event context is a compatibility bootstrap, not part
   // of every backwards activity page. Repeating it for each page multiplies
   // payload and database work while adding no new history.
-  const includeLegacy = page.beforeActivityId === undefined;
+  const includeLegacy = cursor === undefined;
   // Legacy rows bootstrap conversations created before session_activities.
   // Keep this compatibility payload deliberately bounded; new App Server
   // history is independently cursor-paginated above.
   const legacyLimit = 250;
-  const [activitiesResult, rawOwnedTasks, rawActorEvents] = await Promise.all([
+  const [
+    activitiesResult,
+    historySyncResult,
+    rawOwnedTasks,
+    rawActorEvents,
+  ] = await Promise.all([
     activityQuery,
+    admin
+      .from("session_history_syncs")
+      .select("*")
+      .eq("workspace_id", context.workspaceId)
+      .eq("session_id", sessionId)
+      .maybeSingle(),
     includeLegacy
       ? collectRangePages(
           async (from, to) => {
@@ -566,6 +674,7 @@ export async function getSessionConversation(
       : Promise.resolve([] as Array<{ task_id: string }>),
   ]);
   if (activitiesResult.error) throw mapDatabaseError(activitiesResult.error);
+  if (historySyncResult.error) throw mapDatabaseError(historySyncResult.error);
 
   const rawActivities = activitiesResult.data ?? [];
   const hasMoreOlder = rawActivities.length > page.limit;
@@ -576,8 +685,23 @@ export async function getSessionConversation(
       (activity): SessionActivityItem => ({
         ...activity,
         id: String(activity.id),
+        source_order: String(activity.source_order),
       }),
     );
+  const historySync = historySyncResult.data
+    ? {
+        status: historySyncResult.data.status,
+        turn_limit: historySyncResult.data.turn_limit,
+        scanned_turns: historySyncResult.data.scanned_turns,
+        total_turns: historySyncResult.data.total_turns,
+        imported_items: historySyncResult.data.imported_items,
+        next_cursor: historySyncResult.data.next_cursor,
+        error: historySyncResult.data.error,
+        started_at: historySyncResult.data.started_at,
+        completed_at: historySyncResult.data.completed_at,
+        updated_at: historySyncResult.data.updated_at,
+      }
+    : null;
   let tasksTruncated =
     rawOwnedTasks.length > legacyLimit || rawActorEvents.length > legacyLimit;
   const tasksById = new Map<string, TaskRow>();
@@ -623,11 +747,16 @@ export async function getSessionConversation(
       messages: [],
       events: [],
       activities,
+      history_sync: historySync,
       pagination: {
         activities: {
           limit: page.limit,
-          oldest_cursor: activities[0]?.id ?? null,
-          newest_cursor: activities.at(-1)?.id ?? null,
+          oldest_cursor: activities[0]
+            ? encodeSessionActivityCursor(activities[0])
+            : null,
+          newest_cursor: activities.at(-1)
+            ? encodeSessionActivityCursor(activities.at(-1)!)
+            : null,
           has_more_older: hasMoreOlder,
         },
         legacy: {
@@ -699,11 +828,16 @@ export async function getSessionConversation(
     messages: newestMessages.slice(0, legacyLimit).reverse(),
     events: newestEvents.slice(0, legacyLimit).reverse(),
     activities,
+    history_sync: historySync,
     pagination: {
       activities: {
         limit: page.limit,
-        oldest_cursor: activities[0]?.id ?? null,
-        newest_cursor: activities.at(-1)?.id ?? null,
+        oldest_cursor: activities[0]
+          ? encodeSessionActivityCursor(activities[0])
+          : null,
+        newest_cursor: activities.at(-1)
+          ? encodeSessionActivityCursor(activities.at(-1)!)
+          : null,
         has_more_older: hasMoreOlder,
       },
       legacy: {

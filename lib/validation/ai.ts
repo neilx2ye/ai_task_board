@@ -255,6 +255,150 @@ export const reportSessionActivitySchema = claimedTaskCommand
     return { ...value, content: value.content.trim() };
   });
 
+export const HISTORY_IMPORT_MAX_ITEMS = 100;
+export const HISTORY_IMPORT_MAX_CONTENT_LENGTH = 50_000;
+export const HISTORY_IMPORT_MAX_DATA_BYTES = 4 * 1024;
+export const HISTORY_IMPORT_MAX_ITEMS_BYTES = 512 * 1024;
+
+const historyItemDataSchema = z
+  .object({
+    protocol: z.literal("codex-app-server/v1"),
+    thread_id: z.string().trim().min(1).max(500),
+    turn_id: z.string().trim().min(1).max(500),
+    item_id: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+const historyItemSchema = z
+  .object({
+    external_ref: nonEmptyText.max(500),
+    kind: z.enum(["user_message", "assistant_message", "reasoning"]),
+    // Preserve provider text byte-for-byte (notably Markdown fences and final
+    // newlines); trim is used only to reject an all-whitespace payload.
+    content: z
+      .string()
+      .max(HISTORY_IMPORT_MAX_CONTENT_LENGTH)
+      .refine((value) => value.trim().length > 0, {
+        message: "History content must not be blank",
+      }),
+    occurred_at: z.iso.datetime({ offset: true }),
+    source_order: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER),
+    data: historyItemDataSchema,
+  })
+  .strict();
+
+const historySyncReportSchema = z
+  .object({
+    status: z.enum(["syncing", "partial", "complete", "failed"]),
+    turn_limit: z.number().int().min(1).max(500),
+    scanned_turns: z.number().int().min(0).max(500),
+    total_turns: z.number().int().min(0).max(1_000_000).nullable(),
+    next_cursor: z.string().trim().min(1).max(2_000).nullable(),
+    error: z.string().trim().min(1).max(2_000).nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.scanned_turns > value.turn_limit) {
+      context.addIssue({
+        code: "custom",
+        message: "scanned_turns must not exceed turn_limit",
+        path: ["scanned_turns"],
+      });
+    }
+    if (
+      value.total_turns !== null &&
+      value.total_turns < value.scanned_turns
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "total_turns must not be lower than scanned_turns",
+        path: ["total_turns"],
+      });
+    }
+    if (value.status === "complete" && value.next_cursor !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "A complete history sync cannot have a next_cursor",
+        path: ["next_cursor"],
+      });
+    }
+    if (value.status === "failed" && value.error === null) {
+      context.addIssue({
+        code: "custom",
+        message: "A failed history sync requires an error",
+        path: ["error"],
+      });
+    }
+    if (value.status !== "failed" && value.error !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "Only a failed history sync may include an error",
+        path: ["error"],
+      });
+    }
+  });
+
+/** A runtime-fenced, append-only batch of normalized Codex history. */
+export const importSessionHistorySchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    report_sequence: z
+      .number()
+      .int()
+      .min(1)
+      .max(Number.MAX_SAFE_INTEGER),
+    // Empty batches are intentional: a thread with no importable items still
+    // has to publish its terminal sync status.
+    items: z.array(historyItemSchema).max(HISTORY_IMPORT_MAX_ITEMS),
+    sync: historySyncReportSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const externalReferences = new Set<string>();
+    value.items.forEach((item, index) => {
+      if (externalReferences.has(item.external_ref)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate history external_ref: ${item.external_ref}`,
+          path: ["items", index, "external_ref"],
+        });
+      }
+      externalReferences.add(item.external_ref);
+
+      const dataBytes = new TextEncoder().encode(
+        JSON.stringify(item.data),
+      ).byteLength;
+      if (dataBytes > HISTORY_IMPORT_MAX_DATA_BYTES) {
+        context.addIssue({
+          code: "too_big",
+          maximum: HISTORY_IMPORT_MAX_DATA_BYTES,
+          origin: "value",
+          inclusive: true,
+          message: "History item data must not exceed 4 KiB",
+          path: ["items", index, "data"],
+        });
+      }
+    });
+
+    const itemsBytes = new TextEncoder().encode(
+      JSON.stringify(value.items),
+    ).byteLength;
+    if (itemsBytes > HISTORY_IMPORT_MAX_ITEMS_BYTES) {
+      context.addIssue({
+        code: "too_big",
+        maximum: HISTORY_IMPORT_MAX_ITEMS_BYTES,
+        origin: "value",
+        inclusive: true,
+        message: "History items must not exceed 512 KiB",
+        path: ["items"],
+      });
+    }
+  });
+
 export const completeTaskSchema = claimedTaskCommand
   .extend({
     result_summary: optionalText,
@@ -299,6 +443,9 @@ export type ReportProgressInput = z.infer<typeof reportProgressSchema>;
 export type RequestUserInputInput = z.infer<typeof requestUserInputSchema>;
 export type PostTaskMessageInput = z.infer<typeof postTaskMessageSchema>;
 export type ReportSessionActivityInput = z.infer<typeof reportSessionActivitySchema>;
+export type ImportSessionHistoryInput = z.infer<
+  typeof importSessionHistorySchema
+>;
 export type CompleteTaskInput = z.infer<typeof completeTaskSchema>;
 export type FailTaskInput = z.infer<typeof failTaskSchema>;
 export type ReleaseTaskInput = z.infer<typeof releaseTaskSchema>;

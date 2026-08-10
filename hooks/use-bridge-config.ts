@@ -50,7 +50,9 @@ export function bridgeDesiredConfigsEqual(
     left.enabled === right.enabled &&
     left.include_thread_titles === right.include_thread_titles &&
     left.max_threads === right.max_threads &&
-    left.max_concurrent_turns === right.max_concurrent_turns
+    left.max_concurrent_turns === right.max_concurrent_turns &&
+    (left.sync_history ?? false) === (right.sync_history ?? false) &&
+    (left.history_turn_limit ?? 50) === (right.history_turn_limit ?? 50)
   );
 }
 
@@ -66,6 +68,21 @@ export function bridgeSupportsRemoteConfiguration(
     version[0] > 0 ||
     (version[0] === 0 && version[1] > 3) ||
     (version[0] === 0 && version[1] === 3 && version[2] >= 0)
+  );
+}
+
+/** Thread history import was added after the initial 0.3 remote-config API. */
+export function bridgeSupportsHistorySync(
+  bridgeVersion: string | null,
+): boolean {
+  if (!bridgeVersion) return false;
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(bridgeVersion.trim());
+  if (!match) return false;
+  const version = match.slice(1, 4).map(Number);
+  return (
+    version[0] > 0 ||
+    (version[0] === 0 && version[1] > 4) ||
+    (version[0] === 0 && version[1] === 4 && version[2] >= 0)
   );
 }
 
@@ -119,6 +136,8 @@ export function bridgeConfigMutationFingerprint(
     input.include_thread_titles ? 1 : 0,
     input.max_threads,
     input.max_concurrent_turns,
+    input.sync_history ? 1 : 0,
+    input.history_turn_limit,
   ].join("\0");
 }
 

@@ -671,7 +671,7 @@ describe("Codex Bridge Web configuration", () => {
       ]);
       child = null;
       expect(code).not.toBe(0);
-      expect(stderr).toContain("看板缺少 Bridge 0.3 API");
+      expect(stderr).toContain("看板缺少 Bridge 0.4 API");
     } finally {
       await stopChild(child);
       child = null;

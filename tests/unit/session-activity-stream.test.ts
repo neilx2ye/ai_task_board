@@ -43,6 +43,9 @@ function appActivity({
     },
     external_ref: `app-server:${id}`,
     created_at: createdAt,
+    occurred_at: createdAt,
+    source_order: id,
+    source: "live",
   };
 }
 
@@ -59,6 +62,9 @@ function legacyActivity(id: string, data: Json = {}): SessionActivityItem {
     data,
     external_ref: null,
     created_at: "2026-08-10T10:00:00.000Z",
+    occurred_at: "2026-08-10T10:00:00.000Z",
+    source_order: id,
+    source: "live",
   };
 }
 

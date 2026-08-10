@@ -19,6 +19,7 @@ export async function GET(request: Request, route: RouteContext) {
         await userContextForRequest(request),
         sessionId,
         {
+          beforeActivityCursor: query.before_activity_cursor,
           beforeActivityId: query.before_activity_id,
           limit: query.limit,
         },

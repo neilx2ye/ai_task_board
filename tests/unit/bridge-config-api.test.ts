@@ -22,6 +22,8 @@ const configuration = {
       include_thread_titles: false,
       max_threads: 50,
       max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
     },
     applied: null,
     runtime: { online: false, lease_expires_at: null },
@@ -115,6 +117,8 @@ describe("owner Bridge configuration API", () => {
         include_thread_titles: true,
         max_threads: 80,
         max_concurrent_turns: 4,
+        sync_history: true,
+        history_turn_limit: 75,
       },
       {
         method: "PATCH",
@@ -135,6 +139,8 @@ describe("owner Bridge configuration API", () => {
         include_thread_titles: true,
         max_threads: 80,
         max_concurrent_turns: 4,
+        sync_history: true,
+        history_turn_limit: 75,
       },
       "web/bridge-config/3",
     );
@@ -197,6 +203,8 @@ describe("owner Bridge configuration API", () => {
           include_thread_titles: false,
           max_threads: 50,
           max_concurrent_turns: 2,
+          sync_history: false,
+          history_turn_limit: 50,
         },
         {
           method: "PATCH",
@@ -266,7 +274,11 @@ describe("AI Bridge configuration exchange API", () => {
         release_runtime: false,
         applied_version: null,
         effective: null,
-        constraints,
+        constraints: {
+          ...constraints,
+          allow_history_sync: false,
+          max_history_turns: 50,
+        },
         error: null,
       },
     );

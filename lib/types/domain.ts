@@ -7,6 +7,7 @@ import type {
   TaskMessageRow,
   TaskRow,
   SessionActivityRow,
+  SessionHistorySync,
 } from "@/lib/types/database";
 
 export type AIAuthContext = {
@@ -89,9 +90,14 @@ export type SessionListItem = AISessionRow & {
   queued_task_count: number;
 };
 
-export type SessionActivityItem = Omit<SessionActivityRow, "id"> & {
+export type SessionActivityItem = Omit<
+  SessionActivityRow,
+  "id" | "source_order"
+> & {
   /** PostgreSQL bigint serialized losslessly for cursors and client keys. */
   id: string;
+  /** PostgreSQL bigint serialized losslessly for deterministic source order. */
+  source_order: string;
 };
 
 export type SessionConversation = {
@@ -100,6 +106,7 @@ export type SessionConversation = {
   messages: TaskMessageRow[];
   events: TaskEventRow[];
   activities: SessionActivityItem[];
+  history_sync: SessionHistorySync | null;
   pagination: {
     activities: {
       limit: number;

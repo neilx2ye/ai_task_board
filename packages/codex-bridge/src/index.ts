@@ -15,3 +15,4 @@ export {
   WakeLatch,
 } from "./wake-client.js";
 export * from "./app-server-client.js";
+export * from "./history-sync.js";

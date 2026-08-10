@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 
 import { catchUpEventCursor } from "@/hooks/realtime-catchup";
+import { compareSessionActivities } from "@/hooks/use-sessions";
 import { useSupabase } from "@/hooks/use-supabase";
 import type {
   SessionActivityItem,
@@ -25,6 +26,7 @@ export const REALTIME_TABLES = [
   "task_messages",
   "task_events",
   "session_activities",
+  "session_history_syncs",
   "ai_sessions",
   "artifacts",
 ] as const;
@@ -156,6 +158,45 @@ export function createRealtimeInvalidationBatcher(
   };
 }
 
+/**
+ * History imports can insert hundreds of activity rows in one burst. Wait for
+ * the burst to settle, then refetch each affected conversation once instead of
+ * mutating the visible timeline once per row.
+ */
+export function createHistoryActivityRefreshBatcher(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  delayMs = 750,
+) {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const invalidate = (sessionId: string) => {
+    const timer = timers.get(sessionId);
+    if (timer !== undefined) clearTimeout(timer);
+    timers.delete(sessionId);
+    void queryClient.invalidateQueries({
+      queryKey: ["sessions", sessionId],
+      exact: true,
+    });
+  };
+
+  const flush = () => {
+    for (const sessionId of [...timers.keys()]) invalidate(sessionId);
+  };
+
+  return {
+    schedule(sessionId: string) {
+      const existing = timers.get(sessionId);
+      if (existing !== undefined) clearTimeout(existing);
+      timers.set(sessionId, setTimeout(() => invalidate(sessionId), delayMs));
+    },
+    flush,
+    cancel() {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    },
+  };
+}
+
 const RECOVERY_INVALIDATIONS: readonly RealtimeInvalidation[] = [
   { queryKey: ["tasks"], exact: false },
   { queryKey: ["sessions"], exact: false },
@@ -197,6 +238,27 @@ export const SAFE_TASK_REALTIME_COLUMNS = [
   "completed_at",
 ] as const satisfies ReadonlyArray<keyof TaskRow>;
 
+/**
+ * History runtime/sequence fields are service-only fencing state. Authenticated
+ * Workspace clients receive only this public projection, so Realtime must not
+ * request the otherwise ungranted internal columns.
+ */
+export const SAFE_HISTORY_SYNC_REALTIME_COLUMNS = [
+  "workspace_id",
+  "connection_id",
+  "session_id",
+  "status",
+  "turn_limit",
+  "scanned_turns",
+  "total_turns",
+  "imported_items",
+  "next_cursor",
+  "error",
+  "started_at",
+  "completed_at",
+  "updated_at",
+] as const;
+
 /** 从 postgres_changes payload 中提取 task_events 行 id；无法识别时返回 null。 */
 function extractEventId(payload: unknown): number | null {
   if (!payload || typeof payload !== "object") return null;
@@ -234,7 +296,35 @@ export function sessionActivityFromRealtime(
   ) {
     return null;
   }
-  return { ...candidate, id: String(candidate.id) } as SessionActivityItem;
+  const id = String(candidate.id);
+  const occurredAt =
+    typeof candidate.occurred_at === "string"
+      ? candidate.occurred_at
+      : candidate.created_at;
+  const sourceOrder =
+    typeof candidate.source_order === "number" &&
+    Number.isSafeInteger(candidate.source_order)
+      ? String(candidate.source_order)
+      : id;
+  const source =
+    candidate.source === "codex_history" ? "codex_history" : "live";
+  return {
+    ...candidate,
+    id,
+    occurred_at: occurredAt,
+    source_order: sourceOrder,
+    source,
+  } as SessionActivityItem;
+}
+
+export function isHistoryImportActivity(
+  activity: SessionActivityItem,
+): boolean {
+  return (
+    activity.source === "codex_history" ||
+    (activity.task_id === null &&
+      activity.external_ref?.startsWith("codex-history:") === true)
+  );
 }
 
 export function appendRealtimeSessionActivity(
@@ -252,26 +342,12 @@ export function appendRealtimeSessionActivity(
 
   const pages = [...current.pages];
   const first = pages[0];
-  const activities = [...first.activities, activity].sort((left, right) => {
-    try {
-      const leftId = BigInt(left.id);
-      const rightId = BigInt(right.id);
-      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
-    } catch {
-      return left.created_at.localeCompare(right.created_at);
-    }
-  });
+  const activities = [...first.activities, activity].sort(
+    compareSessionActivities,
+  );
   pages[0] = {
     ...first,
     activities,
-    pagination: {
-      ...first.pagination,
-      activities: {
-        ...first.pagination.activities,
-        oldest_cursor: activities[0]?.id ?? null,
-        newest_cursor: activities.at(-1)?.id ?? null,
-      },
-    },
   };
   return { ...current, pages };
 }
@@ -332,8 +408,9 @@ export function patchRealtimeSessionConversation(
 /**
  * 订阅当前 Workspace 的 Supabase Realtime 数据库变更。
  * - 按表和行 id 只失效可能受影响的列表、任务详情或会话，并在 150ms 内合并；
- *   session_activities insert 直接并入对应会话缓存，task message/event
- *   镜像不会再次重拉会话的所有历史页。
+ *   live session_activities insert 直接并入对应会话缓存；历史导入的 burst
+ *   在安静窗口后整批重拉，避免逐行重排时间线。session_history_syncs 让纯状态
+ *   或空批次也能及时刷新；task message/event 镜像不会再次重拉会话的所有历史页。
  * - 维护内存中的最新 TaskEvent id 游标：实时 payload 单调推进；
  *   每次 SUBSCRIBED（含断线重连）按 id > cursor 分页补拉遗漏事件，
  *   发现遗漏即失效查询，全量重拉仍是权威状态恢复手段。
@@ -352,6 +429,8 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
     let cursor: number | null = null;
     let catchUpInFlight = false;
     const invalidationBatcher = createRealtimeInvalidationBatcher(queryClient);
+    const historyRefreshBatcher =
+      createHistoryActivityRefreshBatcher(queryClient);
 
     const advanceCursor = (id: number) => {
       if (cursor === null || id > cursor) cursor = id;
@@ -416,9 +495,11 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
           schema: "public",
           table,
           filter: `workspace_id=eq.${workspaceId}`,
-          // tasks 订阅限制安全列（claim_token_hash 无 SELECT 权限），其他表整行。
+          // 有 service-only 列的表必须显式限制为已授权的公开投影。
           ...(table === "tasks"
             ? { select: [...SAFE_TASK_REALTIME_COLUMNS] }
+            : table === "session_history_syncs"
+              ? { select: [...SAFE_HISTORY_SYNC_REALTIME_COLUMNS] }
             : null),
         },
         (payload) => {
@@ -426,10 +507,23 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
             const id = extractEventId(payload);
             if (id !== null) advanceCursor(id);
           }
-          if (table === "session_activities") {
+          if (table === "session_history_syncs") {
+            const sessionId = extractSessionId(payload);
+            if (sessionId) {
+              historyRefreshBatcher.schedule(sessionId);
+            } else {
+              invalidationBatcher.schedule(
+                realtimeInvalidations(table, payload),
+              );
+            }
+          } else if (table === "session_activities") {
             const activity = sessionActivityFromRealtime(payload);
             const sessionId = activity?.session_id ?? extractSessionId(payload);
             if (activity && sessionId) {
+              if (isHistoryImportActivity(activity)) {
+                historyRefreshBatcher.schedule(sessionId);
+                return;
+              }
               const updated = queryClient.setQueryData<
                 InfiniteData<SessionConversation, string | null>
               >(["sessions", sessionId], (current) =>
@@ -502,6 +596,7 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
     return () => {
       cancelled = true;
       invalidationBatcher.cancel();
+      historyRefreshBatcher.cancel();
       void supabase.removeChannel(channel);
     };
   }, [supabase, workspaceId, queryClient]);

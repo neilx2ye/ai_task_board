@@ -10,6 +10,8 @@ export const bridgeDesiredConfigurationSchema = z
     include_thread_titles: z.boolean(),
     max_threads: z.number().int().min(1).max(500),
     max_concurrent_turns: z.number().int().min(1).max(32),
+    sync_history: z.boolean(),
+    history_turn_limit: z.number().int().min(1).max(500),
   })
   .strict();
 
@@ -35,8 +37,24 @@ export const bridgeConfigurationConstraintsSchema = z
     fixed_thread: z.boolean(),
     permission_mode: z.enum(["safe", "inherit"]),
     approval_mode: z.enum(["decline", "accept", "accept-session"]),
+    allow_history_sync: z.boolean(),
+    max_history_turns: z.number().int().min(1).max(500),
   })
   .strict();
+
+// Bridge 0.3 reports do not contain history fields. Defaults keep that device
+// generation online during a rolling Board/Bridge 0.4 deployment while still
+// failing closed for history upload.
+const bridgeEffectiveReportSchema = bridgeDesiredConfigurationSchema.extend({
+  sync_history: z.boolean().default(false),
+  history_turn_limit: z.number().int().min(1).max(500).default(50),
+});
+
+const bridgeConstraintsReportSchema =
+  bridgeConfigurationConstraintsSchema.extend({
+    allow_history_sync: z.boolean().default(false),
+    max_history_turns: z.number().int().min(1).max(500).default(50),
+  });
 
 export const exchangeBridgeConfigurationSchema = z
   .object({
@@ -54,8 +72,8 @@ export const exchangeBridgeConfigurationSchema = z
       .min(1)
       .max(BRIDGE_CONFIG_MAX_VERSION)
       .nullable(),
-    effective: bridgeDesiredConfigurationSchema.nullable(),
-    constraints: bridgeConfigurationConstraintsSchema,
+    effective: bridgeEffectiveReportSchema.nullable(),
+    constraints: bridgeConstraintsReportSchema,
     error: z.string().max(2000).nullable(),
   })
   .strict()
@@ -87,6 +105,26 @@ export const exchangeBridgeConfigurationSchema = z
         code: "custom",
         message: "Effective thread titles require local title permission",
         path: ["effective", "include_thread_titles"],
+      });
+    }
+    if (
+      value.effective.sync_history &&
+      !value.constraints.allow_history_sync
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Effective history sync requires local history permission",
+        path: ["effective", "sync_history"],
+      });
+    }
+    if (
+      value.effective.history_turn_limit >
+      value.constraints.max_history_turns
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Effective history_turn_limit exceeds the local constraint",
+        path: ["effective", "history_turn_limit"],
       });
     }
   });

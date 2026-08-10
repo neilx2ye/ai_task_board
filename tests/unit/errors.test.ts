@@ -22,6 +22,7 @@ describe("stable API error mapping", () => {
     ["IDEMPOTENCY_CONFLICT", 409],
     ["VERSION_CONFLICT", 409],
     ["BRIDGE_INSTANCE_CONFLICT", 409],
+    ["HISTORY_SYNC_NOT_ALLOWED", 403],
   ] as const)("maps database marker %s to HTTP %s", (code, status) => {
     const error = mapDatabaseError({ message: `rpc rejected: ${code}` });
 
@@ -45,6 +46,7 @@ describe("stable API error mapping", () => {
       "IDEMPOTENCY_CONFLICT",
       "VERSION_CONFLICT",
       "BRIDGE_INSTANCE_CONFLICT",
+      "HISTORY_SYNC_NOT_ALLOWED",
     ]);
   });
 
@@ -52,6 +54,7 @@ describe("stable API error mapping", () => {
     ["23503", "INVALID_REQUEST"],
     ["23514", "INVALID_REQUEST"],
     ["22P02", "INVALID_REQUEST"],
+    ["22007", "INVALID_REQUEST"],
     ["23505", "IDEMPOTENCY_CONFLICT"],
   ] as const)("maps PostgreSQL code %s without leaking internals", (databaseCode, apiCode) => {
     const error = mapDatabaseError({

@@ -89,6 +89,8 @@ describe("Codex Bridge runtime primitives", () => {
       includeThreadTitles: false,
       maxThreads: 5,
       maxConcurrentTurns: 3,
+      syncHistory: false,
+      historyTurnLimit: 50,
     });
     expect(resolved.warnings).toHaveLength(3);
     expect(bridgeConfigurationConstraints(configuration)).toMatchObject({
@@ -96,6 +98,8 @@ describe("Codex Bridge runtime primitives", () => {
       allow_thread_titles: false,
       max_threads: 5,
       max_concurrent_turns: 3,
+      allow_history_sync: false,
+      max_history_turns: 50,
       thread_scope: "cwd",
       working_directory: "/workspace/safe",
       permission_mode: "safe",
@@ -108,6 +112,49 @@ describe("Codex Bridge runtime primitives", () => {
     expect(configuration.threadScope).toBe("cwd");
     expect(configuration.permissionMode).toBe("safe");
     expect(configuration.approvalMode).toBe("decline");
+    expect(configuration.syncHistory).toBe(false);
+    expect(configuration.localMaxHistoryTurns).toBe(50);
+  });
+
+  it("keeps history sync opt-in local and clamps the remote turn budget", () => {
+    const denied = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_BRIDGE_MAX_HISTORY_TURNS: "25",
+    });
+    const deniedResult = resolveRemoteConfiguration(denied, {
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 1,
+      max_concurrent_turns: 1,
+      sync_history: true,
+      history_turn_limit: 500,
+    });
+    expect(deniedResult.effective).toMatchObject({
+      syncHistory: false,
+      historyTurnLimit: 25,
+    });
+    expect(deniedResult.warnings).toEqual([
+      expect.stringContaining("CODEX_BRIDGE_ALLOW_HISTORY_SYNC"),
+      expect.stringContaining("history_turn_limit=500"),
+    ]);
+
+    const allowed = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_BRIDGE_ALLOW_HISTORY_SYNC: "true",
+      CODEX_BRIDGE_MAX_HISTORY_TURNS: "200",
+    });
+    expect(
+      resolveRemoteConfiguration(allowed, {
+        enabled: true,
+        include_thread_titles: false,
+        max_threads: 1,
+        max_concurrent_turns: 1,
+        sync_history: true,
+        history_turn_limit: 80,
+      }).effective,
+    ).toMatchObject({ syncHistory: true, historyTurnLimit: 80 });
   });
 
   it("treats an existing local title opt-in as permission for Web titles", () => {

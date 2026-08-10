@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/hooks/api-client";
 import {
   bridgeConfigSyncState,
+  bridgeSupportsHistorySync,
   bridgeSupportsRemoteConfiguration,
   useBridgeConfig,
   useUpdateBridgeConfig,
@@ -32,6 +33,9 @@ type BridgeConnection = {
   name: string;
   bridge_version: string | null;
 };
+
+export const BRIDGE_HISTORY_RETENTION_NOTICE =
+  "关闭历史同步或降低 Turn 上限，只会停止或收窄后续导入，不会删除已经上传的历史。";
 
 const STATUS_COPY: Record<
   BridgeConfigSyncState,
@@ -174,6 +178,16 @@ function EffectiveValues({
       String(desired.max_concurrent_turns),
       effective ? String(effective.max_concurrent_turns) : "等待上报",
     ],
+    [
+      "Codex 历史同步",
+      yesNo(desired.sync_history ?? false),
+      effective ? yesNo(effective.sync_history ?? false) : "等待上报",
+    ],
+    [
+      "最近历史 Turn",
+      String(desired.history_turn_limit ?? 50),
+      effective ? String(effective.history_turn_limit ?? 50) : "等待上报",
+    ],
   ];
 
   return (
@@ -242,6 +256,14 @@ function LocalConstraints({
         </dd>
       </div>
       <div>
+        <dt className="text-muted-foreground">历史同步上限</dt>
+        <dd className="mt-0.5 font-medium">
+          {constraints.allow_history_sync
+            ? `本机允许 · 最多 ${constraints.max_history_turns} turns`
+            : "本机未授权"}
+        </dd>
+      </div>
+      <div>
         <dt className="text-muted-foreground">工具权限（只读）</dt>
         <dd className="mt-0.5 font-medium">
           {permissionLabel(constraints.permission_mode)}
@@ -280,6 +302,12 @@ function BridgeConfigForm({
   const [maxConcurrentTurns, setMaxConcurrentTurns] = useState(
     String(configuration.desired.max_concurrent_turns),
   );
+  const [syncHistory, setSyncHistory] = useState(
+    configuration.desired.sync_history ?? false,
+  );
+  const [historyTurnLimit, setHistoryTurnLimit] = useState(
+    String(configuration.desired.history_turn_limit ?? 50),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const constraints = configuration.applied?.constraints ?? null;
@@ -287,6 +315,12 @@ function BridgeConfigForm({
   // A locally blocked device must still let the Owner turn an already-saved
   // desired value off; only enabling the disclosure is forbidden.
   const titleToggleDisabled = titleUploadBlocked && !includeTitles;
+  const historySupported = bridgeSupportsHistorySync(connection.bridge_version);
+  const historySyncBlocked = constraints?.allow_history_sync !== true;
+  // Keep an already-saved opt-in reversible even after a device removes its
+  // local authorization or temporarily reports from an older Bridge.
+  const historyToggleDisabled =
+    (!historySupported || historySyncBlocked) && !syncHistory;
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -295,12 +329,21 @@ function BridgeConfigForm({
 
     const parsedMaxThreads = Number(maxThreads);
     const parsedMaxConcurrentTurns = Number(maxConcurrentTurns);
+    const parsedHistoryTurnLimit = Number(historyTurnLimit);
     if (
       !Number.isInteger(parsedMaxThreads) ||
       parsedMaxThreads < 1 ||
       parsedMaxThreads > 500
     ) {
       setError("最大 Thread 数必须是 1 到 500 之间的整数");
+      return;
+    }
+    if (
+      !Number.isInteger(parsedHistoryTurnLimit) ||
+      parsedHistoryTurnLimit < 1 ||
+      parsedHistoryTurnLimit > 500
+    ) {
+      setError("最近历史 Turn 数必须是 1 到 500 之间的整数");
       return;
     }
     if (
@@ -319,6 +362,8 @@ function BridgeConfigForm({
         include_thread_titles: includeTitles,
         max_threads: parsedMaxThreads,
         max_concurrent_turns: parsedMaxConcurrentTurns,
+        sync_history: syncHistory,
+        history_turn_limit: parsedHistoryTurnLimit,
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -368,6 +413,46 @@ function BridgeConfigForm({
             role="switch"
             checked={enabled}
             onChange={(event) => setEnabled(event.target.checked)}
+            className="mt-0.5 size-4 shrink-0 accent-indigo-600"
+          />
+        </label>
+
+        <label
+          htmlFor={`${fieldId}-history`}
+          className={`flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5 ${
+            historyToggleDisabled
+              ? "cursor-not-allowed opacity-60"
+              : "cursor-pointer"
+          }`}
+        >
+          <span>
+            <span className="block text-sm font-medium">同步 Codex Thread 历史</span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
+              会上传最近的用户消息、AI 回复和可展示思考摘要；当前 Workspace
+              的所有成员都可以查看，且必须先在设备上明确授权。
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+              {BRIDGE_HISTORY_RETENTION_NOTICE}
+            </span>
+            {!historySupported ? (
+              <span className="mt-1 block text-xs text-muted-foreground">
+                需要 Bridge 0.4.0 或更高版本。
+              </span>
+            ) : historySyncBlocked ? (
+              <span className="mt-1 block text-xs text-muted-foreground">
+                {constraints
+                  ? "本机尚未允许历史同步；需在设备设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"
+                  : "等待设备上报本机历史同步授权；需先设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"}
+              </span>
+            ) : null}
+          </span>
+          <input
+            id={`${fieldId}-history`}
+            type="checkbox"
+            role="switch"
+            checked={syncHistory}
+            disabled={historyToggleDisabled}
+            onChange={(event) => setSyncHistory(event.target.checked)}
             className="mt-0.5 size-4 shrink-0 accent-indigo-600"
           />
         </label>
@@ -432,6 +517,29 @@ function BridgeConfigForm({
               {constraints ? ` ${constraints.max_concurrent_turns}` : "尚未上报"}。
             </p>
           </div>
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
+            <Label htmlFor={`${fieldId}-history-turns`}>
+              同步最近 Turn 数
+            </Label>
+            <Input
+              id={`${fieldId}-history-turns`}
+              type="number"
+              inputMode="numeric"
+              required
+              min={1}
+              max={500}
+              step={1}
+              value={historyTurnLimit}
+              onChange={(event) => setHistoryTurnLimit(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Web 最多请求最近 500 个 Turn；本机上限
+              {constraints
+                ? ` ${constraints.max_history_turns}`
+                : "尚未上报"}
+              。关闭历史同步时保留此期望值。
+            </p>
+          </div>
         </div>
       </fieldset>
 
@@ -485,7 +593,7 @@ export function BridgeConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Bridge 设置 · {connection.name}</DialogTitle>
           <DialogDescription>

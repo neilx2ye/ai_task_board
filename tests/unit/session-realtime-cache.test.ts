@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendRealtimeSessionActivity,
+  isHistoryImportActivity,
   patchRealtimeSessionConversation,
   patchRealtimeSessionList,
   sessionActivityFromRealtime,
@@ -26,12 +27,16 @@ function activity(id: string): SessionActivityItem {
     data: {},
     external_ref: `external-${id}`,
     created_at: `2026-08-10T00:00:${id.padStart(2, "0")}.000Z`,
+    occurred_at: `2026-08-10T00:00:${id.padStart(2, "0")}.000Z`,
+    source_order: id,
+    source: "live",
   };
 }
 
 function page(ids: string[]): SessionConversation {
   return {
     session: { id: "session-1" } as SessionConversation["session"],
+    history_sync: null,
     tasks: [],
     messages: [],
     events: [],
@@ -39,8 +44,8 @@ function page(ids: string[]): SessionConversation {
     pagination: {
       activities: {
         limit: 100,
-        oldest_cursor: ids[0] ?? null,
-        newest_cursor: ids.at(-1) ?? null,
+        oldest_cursor: "opaque:oldest",
+        newest_cursor: "opaque:newest",
         has_more_older: false,
       },
       legacy: {
@@ -76,9 +81,22 @@ describe("session activity Realtime cache", () => {
     ]);
     expect(updated?.pages[1].activities.map((item) => item.id)).toEqual(["1"]);
     expect(updated?.pages[0].pagination.activities).toMatchObject({
-      oldest_cursor: "2",
-      newest_cursor: "4",
+      oldest_cursor: "opaque:oldest",
+      newest_cursor: "opaque:newest",
     });
+  });
+
+  it("identifies imported history by source with an external-ref fallback", () => {
+    expect(
+      isHistoryImportActivity({ ...activity("1"), source: "codex_history" }),
+    ).toBe(true);
+    expect(
+      isHistoryImportActivity({
+        ...activity("2"),
+        external_ref: "codex-history:thread:turn:item",
+      }),
+    ).toBe(true);
+    expect(isHistoryImportActivity(activity("3"))).toBe(false);
   });
 
   it("ignores a duplicate already present on an older page", () => {

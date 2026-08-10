@@ -9,7 +9,7 @@ streams supported progress back to the Board.
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Run the 0.3 CLI
+## Run the 0.4 CLI
 
 Node.js 18 or newer and a compatible, logged-in `codex` CLI are required. Run
 the Bridge as the same OS user that owns the local Codex data and workspaces:
@@ -18,7 +18,7 @@ the Bridge as the same OS user that owns the local Codex data and workspaces:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.3.0
+npx --yes ai-task-board-codex-bridge@0.4.0
 ```
 
 `CODEX_THREAD_ID` is optional. By default, `CODEX_THREAD_SCOPE=cwd` manages only
@@ -29,7 +29,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.3.0
+npx --yes ai-task-board-codex-bridge@0.4.0
 ```
 
 `CODEX_MAX_THREADS` controls the inventory limit, while
@@ -49,7 +49,8 @@ interval can be set with `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` from `1000` to
 `600000` milliseconds.
 
 The Web console may enable or pause this Bridge, hide or show thread titles,
-and lower the thread and concurrency limits. `enabled=false` stops all Session
+enable bounded history sync, and lower the thread, concurrency, and history
+limits. `enabled=false` stops all Session
 workers, releases their work, and uploads an authoritative empty inventory,
 while keeping the device Bridge process alive so it can be re-enabled. A
 concurrency reduction lets active turns finish and only delays new turns.
@@ -61,6 +62,9 @@ The device environment remains the immutable security boundary:
 - Web title upload is denied unless
   `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` or the device already opted in
   with `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`.
+- Web history sync is denied unless the device explicitly sets
+  `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`. The requested recent-turn count is
+  clamped to `CODEX_BRIDGE_MAX_HISTORY_TURNS` (default `50`, maximum `200`).
 - The Board cannot change the URL/token, Codex executable, working directory,
   thread scope/fixed thread, permission mode, or approval mode.
 
@@ -79,6 +83,35 @@ still valid. Lease renewal runs independently from inventory/config application,
 at least every 10 seconds, and a local safety deadline stops workers before a
 lease can expire during a prolonged Board outage. The deprecated-Board 404
 fallback cannot provide this single-runtime fence.
+
+## Optional bounded history sync
+
+History upload is off by default and requires both
+`CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` on the device and `sync_history=true` in
+Web configuration. Bridge 0.4 scans at most the configured number of recent
+completed turns for ordinary CLI/VS Code threads in a separate, cancellable,
+bounded background loop. Runtime-lease renewal, inventory, and live turns do
+not wait for this scan.
+
+Only text from `userMessage`, the final `agentMessage`, and provider-supplied
+`reasoning.summary` are imported. A turn carrying a non-empty persisted
+`clientUserMessageId` is skipped because it came from Board live execution.
+Images, local-image/skill paths, raw `reasoning.content`, commands and their
+output, diffs, MCP arguments/results, and every other tool item are discarded
+locally. Text passes through the Bridge redactor and a UTF-safe 50,000-character
+limit before upload. Stable thread/turn/item references make any rescan
+idempotent. An unchanged `thread.updatedAt` plus turn-limit signature is scanned
+only once per Bridge process; a changed thread, changed limit, or process restart
+can enqueue another idempotent scan. Batches contain at most 100 items and 512
+KiB. A `partial` status means a local safety cap stopped that bounded snapshot;
+it is not an unbounded continuation cursor. Scan/import failures use bounded
+backoff, update only the per-Session history status, and do not stop the main
+Bridge.
+
+Imported history is append-only on the Board. Turning history sync off or
+lowering the recent-turn limit stops later imports but does not delete content
+that was already uploaded. Remove that data through the Board's applicable
+Workspace/data deletion flow when required.
 
 The Bridge forwards agent-message, displayable reasoning-summary, and command
 output deltas, plus completed tool/file/plan events. Stream chunks are batched
@@ -104,12 +137,12 @@ not pass it as a command-line argument. The Bridge removes that token from the
 App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
-upgraded before starting 0.3; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.3.0`
+upgraded before starting 0.4; there is no 404 fallback to the old registration
+API. For persistent use, pin version `0.4.0`
 in systemd, launchd, or another process manager; the npm CLI does not install or
 enable a service itself. Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.3.0 --help` for the complete
+Use `npx --yes ai-task-board-codex-bridge@0.4.0 --help` for the complete
 environment-variable list.

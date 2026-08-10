@@ -8,6 +8,12 @@ import {
   CodexAppServerClient,
 } from "./app-server-client.js";
 import {
+  type HistoryImportRequest,
+  type HistoryImportResponse,
+  HistorySynchronizer,
+  isInteractiveHistoryThread,
+} from "./history-sync.js";
+import {
   boundActivityData,
   redactHarnessText,
   sanitizeHarnessValue,
@@ -22,7 +28,7 @@ import {
   WakeLatch,
 } from "./wake-client.js";
 
-const BRIDGE_VERSION = "0.3.0";
+const BRIDGE_VERSION = "0.4.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -88,6 +94,8 @@ export type EffectiveBridgeConfiguration = {
   includeThreadTitles: boolean;
   maxThreads: number;
   maxConcurrentTurns: number;
+  syncHistory: boolean;
+  historyTurnLimit: number;
 };
 
 export type RemoteBridgeConfigurationDesired = {
@@ -95,13 +103,19 @@ export type RemoteBridgeConfigurationDesired = {
   include_thread_titles: boolean;
   max_threads: number;
   max_concurrent_turns: number;
+  /** Optional only for compatibility with a Board that has not initialized 0.4 defaults yet. */
+  sync_history?: boolean;
+  /** Optional only for compatibility with a Board that has not initialized 0.4 defaults yet. */
+  history_turn_limit?: number;
 };
 
 export type RemoteBridgeConfigurationConstraints = {
   remote_configuration_enabled: boolean;
   allow_thread_titles: boolean;
+  allow_history_sync: boolean;
   max_threads: number;
   max_concurrent_turns: number;
+  max_history_turns: number;
   thread_scope: ThreadScope;
   working_directory: string;
   fixed_thread: boolean;
@@ -134,10 +148,14 @@ export type BridgeConfiguration = {
   threadScope: ThreadScope;
   enabled: boolean;
   includeThreadTitles: boolean;
+  syncHistory: boolean;
+  historyTurnLimit: number;
   localIncludeThreadTitles: boolean;
   allowRemoteThreadTitles: boolean;
+  allowHistorySync: boolean;
   localMaxThreads: number;
   localMaxConcurrentTurns: number;
+  localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
   codexBinary: string;
 };
@@ -341,6 +359,12 @@ export function loadConfiguration(
     1,
     32,
   );
+  const localMaxHistoryTurns = boundedInteger(
+    environment.CODEX_BRIDGE_MAX_HISTORY_TURNS,
+    50,
+    1,
+    200,
+  );
   const localIncludeThreadTitles = parseBoolean(
     environment.CODEX_BRIDGE_INCLUDE_THREAD_TITLES,
   );
@@ -396,12 +420,18 @@ export function loadConfiguration(
     threadScope: parseThreadScope(environment.CODEX_THREAD_SCOPE),
     enabled: true,
     includeThreadTitles: localIncludeThreadTitles,
+    syncHistory: false,
+    historyTurnLimit: localMaxHistoryTurns,
     localIncludeThreadTitles,
     allowRemoteThreadTitles:
       localIncludeThreadTitles ||
       parseBoolean(environment.CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
+    allowHistorySync: parseBoolean(
+      environment.CODEX_BRIDGE_ALLOW_HISTORY_SYNC,
+    ),
     localMaxThreads,
     localMaxConcurrentTurns,
+    localMaxHistoryTurns,
     webConfigurationEnabled: parseBoolean(
       environment.CODEX_BRIDGE_WEB_CONFIG,
     ),
@@ -417,6 +447,8 @@ export function effectiveBridgeConfiguration(
     includeThreadTitles: configuration.includeThreadTitles,
     maxThreads: configuration.maxThreads,
     maxConcurrentTurns: configuration.maxConcurrentTurns,
+    syncHistory: configuration.syncHistory,
+    historyTurnLimit: configuration.historyTurnLimit,
   };
 }
 
@@ -426,8 +458,10 @@ export function bridgeConfigurationConstraints(
   return {
     remote_configuration_enabled: configuration.webConfigurationEnabled,
     allow_thread_titles: configuration.allowRemoteThreadTitles,
+    allow_history_sync: configuration.allowHistorySync,
     max_threads: configuration.localMaxThreads,
     max_concurrent_turns: configuration.localMaxConcurrentTurns,
+    max_history_turns: configuration.localMaxHistoryTurns,
     thread_scope: configuration.threadScope,
     working_directory: configuration.workingDirectory,
     fixed_thread: configuration.threadIdFilter !== null,
@@ -472,6 +506,25 @@ export function resolveRemoteConfiguration(
       "看板请求上传 thread 标题，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
     );
   }
+  if (
+    desired.sync_history !== undefined &&
+    typeof desired.sync_history !== "boolean"
+  ) {
+    throw new Error("看板配置 sync_history 必须是布尔值");
+  }
+  if (
+    desired.history_turn_limit !== undefined &&
+    !Number.isInteger(desired.history_turn_limit)
+  ) {
+    throw new Error("看板配置 history_turn_limit 必须是整数");
+  }
+  const syncHistory =
+    desired.sync_history === true && configuration.allowHistorySync;
+  if (desired.sync_history === true && !syncHistory) {
+    warnings.push(
+      "看板请求同步历史，但设备未启用 CODEX_BRIDGE_ALLOW_HISTORY_SYNC",
+    );
+  }
   return {
     effective: {
       enabled: desired.enabled,
@@ -486,6 +539,13 @@ export function resolveRemoteConfiguration(
         desired.max_concurrent_turns,
         configuration.localMaxConcurrentTurns,
         "max_concurrent_turns",
+        warnings,
+      ),
+      syncHistory,
+      historyTurnLimit: clampedRemoteInteger(
+        desired.history_turn_limit ?? Math.min(50, configuration.localMaxHistoryTurns),
+        configuration.localMaxHistoryTurns,
+        "history_turn_limit",
         warnings,
       ),
     },
@@ -577,7 +637,7 @@ function actionableBoardError(error: unknown): Error {
   }
   if (status === 404) {
     return new Error(
-      `看板缺少 Bridge 0.3 API（HTTP 404）：请先升级 Board schema/API，再启动 Bridge。${detail ? ` ${detail}` : ""}`,
+      `看板缺少 Bridge 0.4 API（HTTP 404）：请先升级 Board schema/API，再启动 Bridge。${detail ? ` ${detail}` : ""}`,
       { cause: error },
     );
   }
@@ -601,6 +661,8 @@ function remoteDesiredFromEffective(
     include_thread_titles: effective.includeThreadTitles,
     max_threads: effective.maxThreads,
     max_concurrent_turns: effective.maxConcurrentTurns,
+    sync_history: effective.syncHistory,
+    history_turn_limit: effective.historyTurnLimit,
   };
 }
 
@@ -630,6 +692,14 @@ function parseRemoteConfigurationResponse(
         include_thread_titles: desired.include_thread_titles as boolean,
         max_threads: desired.max_threads as number,
         max_concurrent_turns: desired.max_concurrent_turns as number,
+        sync_history:
+          desired.sync_history === undefined
+            ? false
+            : (desired.sync_history as boolean),
+        history_turn_limit:
+          desired.history_turn_limit === undefined
+            ? 50
+            : (desired.history_turn_limit as number),
       },
       applied: configuration.applied,
       updated_at: stringValue(configuration.updated_at) ?? "",
@@ -834,6 +904,22 @@ class BoardClient {
       body: status,
     });
     return parseRemoteConfigurationResponse(result);
+  }
+
+  async importHistory(
+    sessionId: string,
+    body: HistoryImportRequest,
+    signal: AbortSignal,
+  ): Promise<HistoryImportResponse> {
+    return this.request<HistoryImportResponse>("/api/ai/sessions/history", {
+      method: "POST",
+      sessionId,
+      idempotencyKey: idempotencyKey("sync-history"),
+      maxAttempts: 1,
+      timeoutMs: 15_000,
+      signal,
+      body,
+    });
   }
 }
 
@@ -2096,6 +2182,9 @@ class DeviceBridge {
   private readonly limiter: TurnLimiter;
   private readonly workers = new Map<string, SessionWorker>();
   private readonly workerRuns = new Map<string, Promise<void>>();
+  private readonly historySynchronizer: HistorySynchronizer;
+  private historySyncPromise: Promise<void> | null = null;
+  private historyConfigurationReady = false;
   private stopping = false;
   private fatalError: Error | null = null;
   private stopPromise: Promise<void> | null = null;
@@ -2116,6 +2205,20 @@ class DeviceBridge {
   ) {
     this.board = new BoardClient(configuration, () => this.stopping);
     this.limiter = new TurnLimiter(configuration.maxConcurrentTurns);
+    this.historySynchronizer = new HistorySynchronizer({
+      appServer,
+      runtimeInstanceId: this.runtimeInstanceId,
+      configuration: () => ({
+        enabled:
+          this.historyConfigurationReady &&
+          this.configuration.enabled &&
+          this.configuration.syncHistory,
+        turnLimit: this.configuration.historyTurnLimit,
+      }),
+      importHistory: (sessionId, request, signal) =>
+        this.board.importHistory(sessionId, request, signal),
+      log: (message) => process.stderr.write(`${message}\n`),
+    });
     appServer.onNotification((notification) => {
       const params = isRecord(notification.params) ? notification.params : null;
       const threadId = threadIdFromMessage(params);
@@ -2156,6 +2259,15 @@ class DeviceBridge {
       return;
     }
     this.leaseRenewalPromise = this.runRemoteConfigurationLeaseRenewal();
+    this.historySyncPromise = this.historySynchronizer
+      .start(this.stopController.signal)
+      .catch((error) => {
+        if (!this.stopping) {
+          process.stderr.write(
+            `Codex 历史后台同步器已停止：${errorMessage(error)}\n`,
+          );
+        }
+      });
     let nextInventorySyncAt = 0;
     do {
       let reconciledConfiguration = false;
@@ -2227,6 +2339,7 @@ class DeviceBridge {
 
   private async stopBridge(): Promise<void> {
     this.stopping = true;
+    this.historySynchronizer.stop();
     this.stopController.abort(new Error("Codex Bridge 正在停止"));
     const workerStops = [...this.workers.values()].map((worker) =>
         worker.stop("Codex Bridge 正在停止"),
@@ -2237,6 +2350,7 @@ class DeviceBridge {
     ]);
     await this.appServer.close();
     await Promise.allSettled(workerStops);
+    await (this.historySyncPromise ?? Promise.resolve()).catch(() => undefined);
     await (this.leaseRenewalPromise ?? Promise.resolve()).catch(() => undefined);
     await this.releaseRemoteConfigurationLease();
   }
@@ -2474,12 +2588,16 @@ class DeviceBridge {
       );
       const previousEffective = effectiveBridgeConfiguration(this.configuration);
       const previousEffectiveKnown = this.effectiveConfigurationKnown;
+      this.historyConfigurationReady = false;
+      this.historySynchronizer.configurationChanged();
       this.configuration.enabled = resolved.effective.enabled;
       this.configuration.includeThreadTitles =
         resolved.effective.includeThreadTitles;
       this.configuration.maxThreads = resolved.effective.maxThreads;
       this.configuration.maxConcurrentTurns =
         resolved.effective.maxConcurrentTurns;
+      this.configuration.syncHistory = resolved.effective.syncHistory;
+      this.configuration.historyTurnLimit = resolved.effective.historyTurnLimit;
       this.limiter.resize(resolved.effective.maxConcurrentTurns);
       this.configurationError = resolved.warnings.length
         ? resolved.warnings.join("；")
@@ -2502,8 +2620,12 @@ class DeviceBridge {
           this.configuration.maxThreads = previousEffective.maxThreads;
           this.configuration.maxConcurrentTurns =
             previousEffective.maxConcurrentTurns;
+          this.configuration.syncHistory = previousEffective.syncHistory;
+          this.configuration.historyTurnLimit = previousEffective.historyTurnLimit;
           this.limiter.resize(previousEffective.maxConcurrentTurns);
           this.effectiveConfigurationKnown = previousEffectiveKnown;
+          this.historyConfigurationReady =
+            previousEffectiveKnown && this.appliedConfigurationVersion !== null;
         } else {
           // A later failure may happen after workers were stopped. Do not claim
           // a precise effective state until a full reconciliation succeeds.
@@ -2531,6 +2653,8 @@ class DeviceBridge {
       );
 
       response = await this.exchangeRemoteConfiguration();
+      this.historyConfigurationReady = true;
+      this.historySynchronizer.configurationChanged();
     }
     return reconciled;
   }
@@ -2569,6 +2693,14 @@ class DeviceBridge {
       this.stopController.signal,
     );
     if (this.stopping) return;
+    this.historySynchronizer.updateTargets(
+      threads.flatMap((thread) => {
+        const session = sessions.get(thread.id);
+        return session && isInteractiveHistoryThread(thread)
+          ? [{ thread, sessionId: session.id }]
+          : [];
+      }),
+    );
 
     for (const thread of threads) {
       if (this.workers.has(thread.id)) continue;

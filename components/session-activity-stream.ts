@@ -62,10 +62,15 @@ function compareActivityOrder(
   left: SessionActivityItem,
   right: SessionActivityItem,
 ): number {
-  const byTime = left.created_at.localeCompare(right.created_at);
+  const byTime = left.occurred_at.localeCompare(right.occurred_at);
   if (byTime) return byTime;
 
   try {
+    const leftSourceOrder = BigInt(left.source_order);
+    const rightSourceOrder = BigInt(right.source_order);
+    if (leftSourceOrder !== rightSourceOrder) {
+      return leftSourceOrder < rightSourceOrder ? -1 : 1;
+    }
     const leftId = BigInt(left.id);
     const rightId = BigInt(right.id);
     return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;

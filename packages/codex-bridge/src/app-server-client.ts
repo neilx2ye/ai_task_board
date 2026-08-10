@@ -35,11 +35,33 @@ export interface AppServerInitializeResponse {
 
 export interface AppServerThread {
   id: string;
+  source?: unknown;
+  /** Unix timestamp in seconds. */
+  createdAt?: number | null;
+  /** Unix timestamp in seconds; changes when a turn mutates the thread. */
+  updatedAt?: number | null;
+  [key: string]: unknown;
+}
+
+export type AppServerSortDirection = "asc" | "desc";
+export type AppServerTurnItemsView = "notLoaded" | "summary" | "full";
+
+export interface AppServerThreadItem {
+  type: string;
+  id?: string;
   [key: string]: unknown;
 }
 
 export interface AppServerTurn {
   id: string;
+  items?: AppServerThreadItem[];
+  itemsView?: AppServerTurnItemsView;
+  status?: "completed" | "interrupted" | "failed" | "inProgress" | string;
+  error?: unknown;
+  /** Unix timestamp in seconds. */
+  startedAt?: number | null;
+  /** Unix timestamp in seconds. */
+  completedAt?: number | null;
   [key: string]: unknown;
 }
 
@@ -56,6 +78,55 @@ export interface AppServerThreadListParams {
 
 export interface AppServerThreadListResponse {
   data: AppServerThread[];
+  nextCursor: string | null;
+  backwardsCursor?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadReadParams {
+  threadId: string;
+  includeTurns?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadReadResponse {
+  thread: AppServerThread & { turns?: AppServerTurn[] };
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadTurnsListParams {
+  threadId: string;
+  cursor?: string | null;
+  limit?: number | null;
+  sortDirection?: AppServerSortDirection | null;
+  itemsView?: AppServerTurnItemsView | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadTurnsListResponse {
+  data: AppServerTurn[];
+  nextCursor: string | null;
+  backwardsCursor?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadItemEntry {
+  turnId: string;
+  item: AppServerThreadItem;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadItemsListParams {
+  threadId: string;
+  turnId?: string | null;
+  cursor?: string | null;
+  limit?: number | null;
+  sortDirection?: AppServerSortDirection | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadItemsListResponse {
+  data: AppServerThreadItemEntry[];
   nextCursor: string | null;
   backwardsCursor?: string | null;
   [key: string]: unknown;
@@ -287,7 +358,7 @@ export class CodexAppServerClient {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
         title: "AI Task Board Codex Bridge",
-        version: "0.3.0",
+        version: "0.4.0",
       },
       capabilities: options.capabilities ?? null,
     };
@@ -480,6 +551,27 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerThreadListResponse> {
     return this.initializedRequest("thread/list", params, options);
+  }
+
+  async threadRead(
+    params: AppServerThreadReadParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadReadResponse> {
+    return this.initializedRequest("thread/read", params, options);
+  }
+
+  async threadTurnsList(
+    params: AppServerThreadTurnsListParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadTurnsListResponse> {
+    return this.initializedRequest("thread/turns/list", params, options);
+  }
+
+  async threadItemsList(
+    params: AppServerThreadItemsListParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadItemsListResponse> {
+    return this.initializedRequest("thread/items/list", params, options);
   }
 
   async threadStart(

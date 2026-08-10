@@ -13,6 +13,7 @@ export const BUSINESS_ERROR_CODES = [
   "IDEMPOTENCY_CONFLICT",
   "VERSION_CONFLICT",
   "BRIDGE_INSTANCE_CONFLICT",
+  "HISTORY_SYNC_NOT_ALLOWED",
 ] as const;
 
 export type BusinessErrorCode = (typeof BUSINESS_ERROR_CODES)[number];
@@ -43,6 +44,7 @@ const statusByCode: Record<ApiErrorCode, number> = {
   IDEMPOTENCY_CONFLICT: 409,
   VERSION_CONFLICT: 409,
   BRIDGE_INSTANCE_CONFLICT: 409,
+  HISTORY_SYNC_NOT_ALLOWED: 403,
   INTERNAL_ERROR: 500,
 };
 
@@ -89,7 +91,11 @@ export function mapDatabaseError(error: DatabaseErrorLike): AppError {
   if (error.code === "23503") {
     return new AppError("INVALID_REQUEST", "A referenced resource does not exist");
   }
-  if (error.code === "23514" || error.code === "22P02") {
+  if (
+    error.code === "23514" ||
+    error.code === "22P02" ||
+    error.code === "22007"
+  ) {
     return new AppError("INVALID_REQUEST", "The request violates a data constraint");
   }
   if (error.code === "42501") {
@@ -113,6 +119,7 @@ function messageForCode(code: BusinessErrorCode): string {
     IDEMPOTENCY_CONFLICT: "The idempotency key conflicts with an earlier request",
     VERSION_CONFLICT: "The configuration was changed by another request",
     BRIDGE_INSTANCE_CONFLICT: "Another Bridge runtime is active for this connection",
+    HISTORY_SYNC_NOT_ALLOWED: "Codex history sync is not enabled for this Bridge",
   };
   return messages[code];
 }

@@ -117,11 +117,15 @@ export type AIConnectionBridgeSettingsRow = {
   desired_include_thread_titles: boolean;
   desired_max_threads: number;
   desired_max_concurrent_turns: number;
+  desired_sync_history: boolean;
+  desired_history_turn_limit: number;
   applied_version: number | null;
   effective_enabled: boolean | null;
   effective_include_thread_titles: boolean | null;
   effective_max_threads: number | null;
   effective_max_concurrent_turns: number | null;
+  effective_sync_history: boolean | null;
+  effective_history_turn_limit: number | null;
   constraint_remote_configuration_enabled: boolean | null;
   constraint_allow_thread_titles: boolean | null;
   constraint_max_threads: number | null;
@@ -131,6 +135,8 @@ export type AIConnectionBridgeSettingsRow = {
   constraint_fixed_thread: boolean | null;
   constraint_permission_mode: "safe" | "inherit" | null;
   constraint_approval_mode: "decline" | "accept" | "accept-session" | null;
+  constraint_allow_history_sync: boolean | null;
+  constraint_max_history_turns: number | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -148,11 +154,15 @@ export type AIConnectionBridgeSettingsInsert = {
   desired_include_thread_titles?: boolean;
   desired_max_threads?: number;
   desired_max_concurrent_turns?: number;
+  desired_sync_history?: boolean;
+  desired_history_turn_limit?: number;
   applied_version?: number | null;
   effective_enabled?: boolean | null;
   effective_include_thread_titles?: boolean | null;
   effective_max_threads?: number | null;
   effective_max_concurrent_turns?: number | null;
+  effective_sync_history?: boolean | null;
+  effective_history_turn_limit?: number | null;
   constraint_remote_configuration_enabled?: boolean | null;
   constraint_allow_thread_titles?: boolean | null;
   constraint_max_threads?: number | null;
@@ -162,6 +172,8 @@ export type AIConnectionBridgeSettingsInsert = {
   constraint_fixed_thread?: boolean | null;
   constraint_permission_mode?: "safe" | "inherit" | null;
   constraint_approval_mode?: "decline" | "accept" | "accept-session" | null;
+  constraint_allow_history_sync?: boolean | null;
+  constraint_max_history_turns?: number | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -371,6 +383,9 @@ export type SessionActivityRow = {
   content: string | null;
   data: Json;
   external_ref: string | null;
+  occurred_at: string;
+  source_order: number;
+  source: "live" | "codex_history";
   created_at: string;
 };
 
@@ -385,6 +400,83 @@ export type SessionActivityInsert = {
   content?: string | null;
   data?: Json;
   external_ref?: string | null;
+  occurred_at?: string;
+  source_order?: number;
+  source?: "live" | "codex_history";
+  created_at?: string;
+};
+
+export type SessionHistorySyncStatus =
+  | "syncing"
+  | "partial"
+  | "complete"
+  | "failed";
+
+export type SessionHistorySyncRow = {
+  workspace_id: string;
+  connection_id: string;
+  session_id: string;
+  runtime_instance_id: string;
+  report_sequence: number;
+  request_hash: string;
+  status: SessionHistorySyncStatus;
+  turn_limit: number;
+  scanned_turns: number;
+  total_turns: number | null;
+  imported_items: number;
+  next_cursor: string | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type SessionHistorySync = Omit<
+  SessionHistorySyncRow,
+  | "workspace_id"
+  | "connection_id"
+  | "session_id"
+  | "runtime_instance_id"
+  | "report_sequence"
+  | "request_hash"
+>;
+
+export type SessionHistorySyncInsert = {
+  workspace_id: string;
+  connection_id: string;
+  session_id: string;
+  runtime_instance_id: string;
+  report_sequence: number;
+  request_hash: string;
+  status: SessionHistorySyncStatus;
+  turn_limit: number;
+  scanned_turns?: number;
+  total_turns?: number | null;
+  imported_items?: number;
+  next_cursor?: string | null;
+  error?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+  updated_at?: string;
+};
+
+export type SessionHistoryImportRequestRow = {
+  workspace_id: string;
+  connection_id: string;
+  session_id: string;
+  runtime_instance_id: string;
+  report_sequence: number;
+  request_hash: string;
+  created_at: string;
+};
+
+export type SessionHistoryImportRequestInsert = {
+  workspace_id: string;
+  connection_id: string;
+  session_id: string;
+  runtime_instance_id: string;
+  report_sequence: number;
+  request_hash: string;
   created_at?: string;
 };
 
@@ -468,6 +560,13 @@ type SessionActivityResponse = {
   message: TaskMessageRow | null;
   activity: SessionActivityRow;
 };
+export type SessionHistoryImportResponse = {
+  imported: {
+    inserted: number;
+    replayed: number;
+  };
+  history_sync: SessionHistorySync;
+};
 type CompleteResponse = {
   task: TaskRpcPayload;
   message_id: string | null;
@@ -484,6 +583,8 @@ export type BridgeDesiredConfiguration = {
   include_thread_titles: boolean;
   max_threads: number;
   max_concurrent_turns: number;
+  sync_history: boolean;
+  history_turn_limit: number;
 };
 
 export type BridgeConfigurationConstraints = {
@@ -496,6 +597,8 @@ export type BridgeConfigurationConstraints = {
   fixed_thread: boolean;
   permission_mode: "safe" | "inherit";
   approval_mode: "decline" | "accept" | "accept-session";
+  allow_history_sync: boolean;
+  max_history_turns: number;
 };
 
 export type BridgeAppliedConfiguration = {
@@ -804,6 +907,48 @@ export interface Database {
           },
         ]
       >;
+      session_history_syncs: TableDefinition<
+        SessionHistorySyncRow,
+        SessionHistorySyncInsert,
+        Partial<SessionHistorySyncRow>,
+        [
+          {
+            foreignKeyName: "session_history_syncs_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: true;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_history_syncs_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      session_history_import_requests: TableDefinition<
+        SessionHistoryImportRequestRow,
+        SessionHistoryImportRequestInsert,
+        Partial<SessionHistoryImportRequestRow>,
+        [
+          {
+            foreignKeyName: "session_history_import_requests_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_history_import_requests_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
       artifacts: TableDefinition<
         ArtifactRow,
         ArtifactInsert,
@@ -980,6 +1125,15 @@ export interface Database {
           };
         Returns: SessionActivityResponse;
       };
+      import_session_history: {
+        Args: AISessionArgs & {
+          p_runtime_instance_id: string;
+          p_report_sequence: number;
+          p_items: Json;
+          p_sync: Json;
+        };
+        Returns: SessionHistoryImportResponse;
+      };
       complete_task: {
         Args: AISessionArgs &
           IdempotencyArgs & {
@@ -1128,6 +1282,8 @@ export interface Database {
             p_include_thread_titles: boolean;
             p_max_threads: number;
             p_max_concurrent_turns: number;
+            p_sync_history: boolean;
+            p_history_turn_limit: number;
           };
         Returns: BridgeConfigurationResponse;
       };

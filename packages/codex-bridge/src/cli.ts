@@ -17,8 +17,10 @@ Optional environment variables:
   CODEX_THREAD_SCOPE              cwd (default, exact cwd) or all (high risk)
   CODEX_SESSION_NAME              Prefix for session names shown in the Board
   CODEX_BRIDGE_INCLUDE_THREAD_TITLES  true uploads local thread title/preview
-  CODEX_BRIDGE_WEB_CONFIG          true lets the Board lower safe runtime limits
+  CODEX_BRIDGE_WEB_CONFIG          true lets the Board adjust gated runtime settings
   CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
+  CODEX_BRIDGE_ALLOW_HISTORY_SYNC  true lets Web enable bounded history upload
+  CODEX_BRIDGE_MAX_HISTORY_TURNS   Local history limit ceiling (1..200, default: 50)
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)

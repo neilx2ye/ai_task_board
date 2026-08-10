@@ -12,9 +12,12 @@ import {
   AlertCircleIcon,
   BotIcon,
   BrainCircuitIcon,
+  CheckCircle2Icon,
   ChevronRightIcon,
   CircleDotIcon,
+  HistoryIcon,
   ListChecksIcon,
+  LoaderCircleIcon,
   SendIcon,
   TerminalIcon,
   UserIcon,
@@ -40,6 +43,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDateTime } from "@/components/utils";
 import {
+  bridgeSupportsHistorySync,
+  supportsBridgeSettings,
+} from "@/hooks/use-bridge-config";
+import {
+  compareSessionActivities,
+  sessionActivityOccurredAt,
   useCreateSessionTurn,
   useSessionConversation,
   mergeSessionConversationPages,
@@ -52,6 +61,7 @@ import type {
   ActorType,
   Json,
   SessionActivityKind,
+  SessionHistorySync,
   TaskEventRow,
   TaskMessageRow,
   TaskRow,
@@ -107,6 +117,126 @@ const ACTIVITY_LABEL: Record<SessionActivityKind, string> = {
   status: "状态更新",
 };
 
+type HistorySyncDetails = SessionHistorySync;
+
+export type HistorySyncUiState =
+  | "unauthorized"
+  | "not-started"
+  | HistorySyncDetails["status"];
+
+export function historySyncUiState(
+  historySync: HistorySyncDetails | null,
+  bridgeVersion: string | null,
+): HistorySyncUiState {
+  if (historySync) return historySync.status;
+  return bridgeSupportsHistorySync(bridgeVersion)
+    ? "not-started"
+    : "unauthorized";
+}
+
+function isCodexHistoryActivity(activity: SessionActivityItem): boolean {
+  return (
+    activity.source === "codex_history" ||
+    (activity.task_id === null &&
+      activity.external_ref?.startsWith("codex-history:") === true)
+  );
+}
+
+const HISTORY_SYNC_COPY: Record<
+  HistorySyncUiState,
+  { label: string; description: string; className: string }
+> = {
+  unauthorized: {
+    label: "历史同步未授权",
+    description:
+      "Bridge 尚未上报历史同步能力或本机授权。请升级至 0.4.0+，并在设备本机设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true 后再开启。",
+    className: "border-slate-200 bg-slate-50 text-slate-700",
+  },
+  "not-started": {
+    label: "历史尚未同步",
+    description:
+      "此 Thread 未开启历史同步，或设备尚未开始。请到连接的 Bridge 设置确认期望值与本机授权。",
+    className: "border-slate-200 bg-slate-50 text-slate-700",
+  },
+  syncing: {
+    label: "历史同步中",
+    description: "Bridge 正在从本机 Codex 读取最近的历史 turn。",
+    className: "border-sky-200 bg-sky-50 text-sky-800",
+  },
+  partial: {
+    label: "历史同步部分完成",
+    description:
+      "本轮受安全扫描上限截断，只完成了部分历史；如需更多内容，请调整 Web 与本机上限并检查设备日志。",
+    className: "border-amber-200 bg-amber-50 text-amber-800",
+  },
+  complete: {
+    label: "历史同步完成",
+    description: "本机 Codex 历史已按当前 turn 上限完成导入。",
+    className: "border-teal-200 bg-teal-50 text-teal-800",
+  },
+  failed: {
+    label: "历史同步失败",
+    description: "Bridge 无法完成本次历史读取，请检查本机授权和设备日志。",
+    className: "border-red-200 bg-red-50 text-red-800",
+  },
+};
+
+export function HistorySyncStatus({
+  historySync,
+  bridgeVersion,
+}: {
+  historySync: HistorySyncDetails | null;
+  bridgeVersion: string | null;
+}) {
+  const state = historySyncUiState(historySync, bridgeVersion);
+  const copy = HISTORY_SYNC_COPY[state];
+  const Icon =
+    state === "syncing"
+      ? LoaderCircleIcon
+      : state === "complete"
+        ? CheckCircle2Icon
+        : state === "failed"
+          ? AlertCircleIcon
+          : HistoryIcon;
+
+  return (
+    <section
+      aria-label="Codex 历史同步状态"
+      data-history-sync-state={state}
+      className={cn("rounded-md border px-3 py-2.5", copy.className)}
+    >
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Icon
+          className={cn("size-4 shrink-0", state === "syncing" && "animate-spin")}
+        />
+        <span>{copy.label}</span>
+      </div>
+      <p className="mt-1 text-xs leading-relaxed">{copy.description}</p>
+      {historySync ? (
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+          <span>
+            已扫描 {historySync.scanned_turns}/
+            {historySync.total_turns ?? "未知"} turns
+          </span>
+          <span>已导入 {historySync.imported_items} 条</span>
+          <span>本次上限 {historySync.turn_limit} turns</span>
+          <span>
+            更新于{" "}
+            <time dateTime={historySync.updated_at}>
+              {formatDateTime(historySync.updated_at)}
+            </time>
+          </span>
+        </div>
+      ) : null}
+      {historySync?.error ? (
+        <p role="alert" className="mt-2 break-words text-xs font-medium">
+          {historySync.error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function formattedData(data: Json): string | null {
   if (data === null) return null;
   if (
@@ -128,14 +258,24 @@ function TimelineMeta({
   actorType,
   task,
   createdAt,
+  historySource = false,
 }: {
   actorType: ActorType;
   task: string | null;
   createdAt: string;
+  historySource?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
       <span>{ACTOR_TYPE_LABEL[actorType]}</span>
+      {historySource ? (
+        <Badge
+          variant="outline"
+          className="border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] text-sky-700"
+        >
+          Codex 历史
+        </Badge>
+      ) : null}
       {task ? (
         <>
           <span aria-hidden>·</span>
@@ -153,11 +293,13 @@ function MessageBubble({
   content,
   task,
   createdAt,
+  historySource = false,
 }: {
   actorType: ActorType;
   content: string;
   task: string | null;
   createdAt: string;
+  historySource?: boolean;
 }) {
   const fromUser = actorType === "user";
 
@@ -190,6 +332,7 @@ function MessageBubble({
           actorType={actorType}
           task={task}
           createdAt={createdAt}
+          historySource={historySource}
         />
         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
           {content}
@@ -228,7 +371,8 @@ function ToolActivity({
           <TimelineMeta
             actorType={activity.actor_type}
             task={task}
-            createdAt={activity.created_at}
+            createdAt={sessionActivityOccurredAt(activity)}
+            historySource={isCodexHistoryActivity(activity)}
           />
         </div>
         <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
@@ -269,7 +413,8 @@ function ReasoningSummary({
         <TimelineMeta
           actorType={activity.actor_type}
           task={task}
-          createdAt={activity.created_at}
+          createdAt={sessionActivityOccurredAt(activity)}
+          historySource={isCodexHistoryActivity(activity)}
         />
         {activity.content ? (
           <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap break-words text-amber-950">
@@ -324,7 +469,8 @@ function GeneralActivity({
         <TimelineMeta
           actorType={activity.actor_type}
           task={task}
-          createdAt={activity.created_at}
+          createdAt={sessionActivityOccurredAt(activity)}
+          historySource={isCodexHistoryActivity(activity)}
         />
         {activity.content ? (
           <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap break-words">
@@ -362,7 +508,8 @@ function ActivityItem({
         actorType={activity.kind === "user_message" ? "user" : "ai"}
         content={activity.content ?? "（空消息）"}
         task={task}
-        createdAt={activity.created_at}
+        createdAt={sessionActivityOccurredAt(activity)}
+        historySource={isCodexHistoryActivity(activity)}
       />
     );
   }
@@ -425,7 +572,7 @@ function buildTimeline(
       (activity): TimelineEntry => ({
         source: "activity",
         key: `activity:${activity.id}`,
-        createdAt: activity.created_at,
+        createdAt: sessionActivityOccurredAt(activity),
         activity,
       }),
     ),
@@ -453,9 +600,7 @@ function buildTimeline(
     const byTime = left.createdAt.localeCompare(right.createdAt);
     if (byTime) return byTime;
     if (left.source === "activity" && right.source === "activity") {
-      const leftId = BigInt(left.activity.id);
-      const rightId = BigInt(right.activity.id);
-      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+      return compareSessionActivities(left.activity, right.activity);
     }
     if (left.source === "event" && right.source === "event") {
       return left.event.id - right.event.id;
@@ -622,6 +767,16 @@ function SessionConversationContent({
         }}
         className="min-h-0 flex-1 overflow-y-auto bg-background px-3 py-4 sm:px-6"
       >
+        {details &&
+        currentSession &&
+        supportsBridgeSettings(currentSession.connection) ? (
+          <div className="mx-auto mb-4 w-full max-w-4xl">
+            <HistorySyncStatus
+              historySync={details?.history_sync ?? null}
+              bridgeVersion={currentSession.connection.bridge_version}
+            />
+          </div>
+        ) : null}
         {conversationQuery.error && !details ? (
           <ErrorState
             title="加载会话历史失败"
@@ -635,7 +790,7 @@ function SessionConversationContent({
             <BotIcon className="size-7 text-muted-foreground" />
             <p className="text-sm font-medium">还没有同步的会话记录</p>
             <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-              Harness 回传的 AI 回复、思考摘要和工具过程会显示在这里。你也可以直接发送下一项任务。
+              Bridge 回传的实时过程，以及启用后导入的 Codex 历史消息、回复和思考摘要会显示在这里。你也可以直接发送下一项任务。
             </p>
           </div>
         ) : (

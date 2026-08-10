@@ -61,6 +61,30 @@ lines.on("line", (line) => {
       nextCursor: null,
       backwardsCursor: null,
     },
+    "thread/read": {
+      thread: {
+        id: message.params.threadId,
+        turns: message.params.includeTurns ? [{ id: "turn-read", items: [] }] : [],
+      },
+    },
+    "thread/turns/list": {
+      data: [{
+        id: "turn-listed",
+        status: "completed",
+        itemsView: message.params.itemsView,
+        items: [{ type: "agentMessage", id: "item-listed", text: "Done" }],
+      }],
+      nextCursor: null,
+      backwardsCursor: "newer-cursor",
+    },
+    "thread/items/list": {
+      data: [{
+        turnId: message.params.turnId,
+        item: { type: "agentMessage", id: "item-paged", text: "Done" },
+      }],
+      nextCursor: null,
+      backwardsCursor: "newer-item-cursor",
+    },
     "thread/start": {
       thread: { id: "thread-started", cwd: message.params.cwd },
     },
@@ -166,6 +190,32 @@ describe("CodexAppServerClient", () => {
 
     await expect(client.threadList({ cursor: "page-2" })).resolves.toMatchObject({
       data: [{ id: "thread-listed", cursor: "page-2" }],
+      nextCursor: null,
+    });
+    await expect(
+      client.threadRead({ threadId: "thread-existing", includeTurns: true }),
+    ).resolves.toMatchObject({
+      thread: { id: "thread-existing", turns: [{ id: "turn-read" }] },
+    });
+    await expect(
+      client.threadTurnsList({
+        threadId: "thread-existing",
+        limit: 50,
+        sortDirection: "desc",
+        itemsView: "full",
+      }),
+    ).resolves.toMatchObject({
+      data: [{ id: "turn-listed", itemsView: "full" }],
+      nextCursor: null,
+    });
+    await expect(
+      client.threadItemsList({
+        threadId: "thread-existing",
+        turnId: "turn-listed",
+        sortDirection: "asc",
+      }),
+    ).resolves.toMatchObject({
+      data: [{ turnId: "turn-listed", item: { id: "item-paged" } }],
       nextCursor: null,
     });
     await expect(client.threadStart({ cwd: "/workspace" })).resolves.toMatchObject({

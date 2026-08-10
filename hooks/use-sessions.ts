@@ -17,7 +17,9 @@ const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
 
 export function sessionConversationRecoveryInterval(
   pageCount: number,
-): 30_000 | false {
+  historyStatus: "syncing" | "partial" | "complete" | "failed" | null = null,
+): 3_000 | 30_000 | false {
+  if (historyStatus === "syncing" && pageCount <= 1) return 3_000;
   return pageCount <= 1 ? 30_000 : false;
 }
 
@@ -42,7 +44,7 @@ export function useSessionConversation(sessionId: string | null) {
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
       const query = new URLSearchParams({ limit: "100" });
-      if (pageParam) query.set("before_activity_id", pageParam);
+      if (pageParam) query.set("before_activity_cursor", pageParam);
       return apiFetch<SessionConversation>(
         `/api/user/sessions/${sessionId}?${query.toString()}`,
       );
@@ -58,12 +60,52 @@ export function useSessionConversation(sessionId: string | null) {
     refetchInterval: (query) =>
       sessionConversationRecoveryInterval(
         query.state.data?.pages.length ?? 0,
+        query.state.data?.pages[0]?.history_sync?.status ?? null,
       ),
   });
 }
 
 function valuesById<T>(values: readonly T[], id: (value: T) => string) {
   return [...new Map(values.map((value) => [id(value), value])).values()];
+}
+
+type ActivityOrderingFields = {
+  created_at: string;
+  occurred_at?: string;
+  source_order?: string;
+  id: string;
+};
+
+export function sessionActivityOccurredAt(
+  activity: ActivityOrderingFields,
+): string {
+  return activity.occurred_at ?? activity.created_at;
+}
+
+function compareLosslessIntegers(left: string, right: string): number {
+  try {
+    const leftValue = BigInt(left);
+    const rightValue = BigInt(right);
+    return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+  } catch {
+    return left.localeCompare(right);
+  }
+}
+
+/** Match the API's stable chronological order without coercing bigint strings. */
+export function compareSessionActivities(
+  left: ActivityOrderingFields,
+  right: ActivityOrderingFields,
+): number {
+  const byTime = sessionActivityOccurredAt(left).localeCompare(
+    sessionActivityOccurredAt(right),
+  );
+  if (byTime) return byTime;
+  const bySourceOrder = compareLosslessIntegers(
+    left.source_order ?? left.id,
+    right.source_order ?? right.id,
+  );
+  return bySourceOrder || compareLosslessIntegers(left.id, right.id);
 }
 
 /** Combine newest-first API pages into one chronological conversation. */
@@ -76,17 +118,12 @@ export function mergeSessionConversationPages(
   const activities = valuesById(
     pages.flatMap((page) => page.activities),
     (activity) => activity.id,
-  ).sort((left, right) => {
-    const byTime = left.created_at.localeCompare(right.created_at);
-    if (byTime) return byTime;
-    const leftId = BigInt(left.id);
-    const rightId = BigInt(right.id);
-    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
-  });
+  ).sort(compareSessionActivities);
   const legacy = pages.map((page) => page.pagination.legacy);
 
   return {
     session: first.session,
+    history_sync: first.history_sync,
     tasks: valuesById(
       pages.flatMap((page) => page.tasks),
       (task) => task.id,
@@ -104,7 +141,7 @@ export function mergeSessionConversationPages(
       activities: {
         ...last.pagination.activities,
         newest_cursor: first.pagination.activities.newest_cursor,
-        oldest_cursor: activities[0]?.id ?? null,
+        oldest_cursor: last.pagination.activities.oldest_cursor,
       },
       legacy: {
         limit: Math.max(...legacy.map((value) => value.limit)),
