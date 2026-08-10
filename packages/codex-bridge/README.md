@@ -18,7 +18,7 @@ the Bridge as the same OS user that owns the local Codex data and workspaces:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.4.0
+npx --yes ai-task-board-codex-bridge@0.4.1
 ```
 
 `CODEX_THREAD_ID` is optional. By default, `CODEX_THREAD_SCOPE=cwd` manages only
@@ -29,7 +29,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.4.0
+npx --yes ai-task-board-codex-bridge@0.4.1
 ```
 
 `CODEX_MAX_THREADS` controls the inventory limit, while
@@ -98,15 +98,18 @@ Only text from `userMessage`, the final `agentMessage`, and provider-supplied
 `clientUserMessageId` is skipped because it came from Board live execution.
 Images, local-image/skill paths, raw `reasoning.content`, commands and their
 output, diffs, MCP arguments/results, and every other tool item are discarded
-locally. Text passes through the Bridge redactor and a UTF-safe 50,000-character
-limit before upload. Stable thread/turn/item references make any rescan
-idempotent. An unchanged `thread.updatedAt` plus turn-limit signature is scanned
-only once per Bridge process; a changed thread, changed limit, or process restart
-can enqueue another idempotent scan. Batches contain at most 100 items and 512
-KiB. A `partial` status means a local safety cap stopped that bounded snapshot;
-it is not an unbounded continuation cursor. Scan/import failures use bounded
-backoff, update only the per-Session history status, and do not stop the main
-Bridge.
+locally while persisted items are read in pages. The Bridge scans at most 10,000
+raw items in one turn and retains at most 500 whitelisted activities across one
+snapshot. A turn that would cross either hard safety boundary is not partially
+imported; the snapshot stops with `partial` and a `local-safety-cap` marker.
+That marker reports local truncation and is not a resumable App Server cursor.
+Text passes through the Bridge redactor and a UTF-safe 50,000-character limit
+before upload. Stable thread/turn/item references make any rescan idempotent. An
+unchanged `thread.updatedAt` plus turn-limit signature is scanned only once per
+Bridge process; a changed thread, changed limit, or process restart can enqueue
+another idempotent scan. Batches contain at most 100 items and 512 KiB. Other
+scan/import failures use bounded backoff, update only the per-Session history
+status, and do not stop the main Bridge.
 
 Imported history is append-only on the Board. Turning history sync off or
 lowering the recent-turn limit stops later imports but does not delete content
@@ -138,11 +141,11 @@ App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
 upgraded before starting 0.4; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.4.0`
+API. For persistent use, pin version `0.4.1`
 in systemd, launchd, or another process manager; the npm CLI does not install or
 enable a service itself. Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.4.0 --help` for the complete
+Use `npx --yes ai-task-board-codex-bridge@0.4.1 --help` for the complete
 environment-variable list.

@@ -44,7 +44,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
 CODEX_MAX_CONCURRENT_TURNS='2' \
-npx --yes ai-task-board-codex-bridge@0.4.0
+npx --yes ai-task-board-codex-bridge@0.4.1
 ```
 
 默认 `CODEX_THREAD_SCOPE=cwd`：未设置 `CODEX_THREAD_ID` 时，只发现记录 cwd 与 `CODEX_WORKING_DIRECTORY` **完全相同**的顶层 thread（不会自动包含子目录）。如确需跨项目管理，必须显式设置高风险选项 `CODEX_THREAD_SCOPE=all`。要精确限定一个既有 thread，可设置兼容过滤器；它会覆盖 cwd/all 范围：
@@ -54,7 +54,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-codex-bridge@0.4.0
+npx --yes ai-task-board-codex-bridge@0.4.1
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -96,11 +96,11 @@ npx --yes ai-task-board-codex-bridge@0.4.0
 
 ## 旧历史同步与隐私边界
 
-历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=full`），必要时用 `thread/items/list` 补齐分页 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
+历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=notLoaded`）取得有界 turn 清单，再用 `thread/items/list` 分页读取持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
 
 导入白名单只有三类：`userMessage` 的纯文本输入、最终 `agentMessage`、以及服务商明确给出的 `reasoning.summary`。图片、`localImage`/skill 的本机路径、`reasoning.content` 原始推理、命令与输出、diff、MCP 参数/结果和其他工具 item 都在设备端丢弃，不进入请求。白名单文本仍会经过现有 Secret 尽力脱敏和 UTF-safe 的 50,000 字符上限。
 
-扫描在独立、可取消且有界的后台循环运行，每轮每个 thread 最多 500 条导入活动；请求批次最多 100 条且不超过 512 KiB。Bridge 以 `thread.updatedAt` 和有效 turn 上限组成签名，同一进程内签名未变化时只扫描一次；thread、上限变化或进程重启后的重扫依靠稳定的 thread/turn/item 外部引用、原始 turn 时间和 item 顺序保持幂等。`partial` 表示本次有界快照在达到有效 turn 上限前触发了本机安全扫描上限，不表示后台会沿 cursor 无限制续扫。历史读取或上传失败只更新该 Session 的历史同步状态并做有界退避，不会让运行租约、清单同步、worker 或活跃 turn 退出。
+扫描在独立、可取消且有界的后台循环运行：单个 turn 最多读取 10,000 个原始 item，每轮每个 thread 最多保留 500 条白名单活动；请求批次最多 100 条且不超过 512 KiB。命令、MCP、diff、附件路径与原始推理会在分页读取时直接丢弃，不进入跨页缓存。Bridge 以 `thread.updatedAt` 和有效 turn 上限组成签名，同一进程内签名未变化时只扫描一次；thread、上限变化或进程重启后的重扫依靠稳定的 thread/turn/item 外部引用、原始 turn 时间和 item 顺序保持幂等。`partial` 表示本次有界快照在达到有效 turn 上限前触发了本机安全扫描上限；触顶的 turn 不会部分导入，`local-safety-cap` 也不是可续扫的 App Server cursor。历史读取或上传失败只更新该 Session 的历史同步状态并做有界退避，不会让运行租约、清单同步、worker 或活跃 turn 退出。
 
 Board 中已导入的历史是只追加数据。关闭历史同步或降低最近 turn 上限只会停止后续导入，不会删除此前已经上传的内容；需要清除时应使用 Board 对应的 Workspace / 数据删除流程。
 
@@ -128,7 +128,7 @@ After=network-online.target
 Type=simple
 WorkingDirectory=/path/to/a/safe/start-directory
 EnvironmentFile=%h/.config/ai-task-board/codex-bridge.env
-ExecStart=/absolute/path/to/npx --yes ai-task-board-codex-bridge@0.4.0
+ExecStart=/absolute/path/to/npx --yes ai-task-board-codex-bridge@0.4.1
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

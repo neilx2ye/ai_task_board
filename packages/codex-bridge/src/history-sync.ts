@@ -13,12 +13,13 @@ export const HISTORY_CONTENT_LIMIT = 50_000;
 export const HISTORY_IMPORT_ITEM_LIMIT = 100;
 export const HISTORY_IMPORT_BODY_LIMIT_BYTES = 512 * 1024;
 export const HISTORY_SCAN_TURN_LIMIT = 500;
-export const HISTORY_ITEMS_PER_TURN_LIMIT = 500;
+export const HISTORY_ITEMS_PER_TURN_LIMIT = 10_000;
 export const HISTORY_ACTIVITIES_PER_SCAN_LIMIT = 500;
 export const HISTORY_TARGET_QUEUE_LIMIT = 500;
 
 const HISTORY_SCAN_PAGE_SIZE = 50;
 const HISTORY_ITEM_PAGE_SIZE = 100;
+const HISTORY_ITEM_PAGE_LIMIT = 200;
 const HISTORY_TARGETS_PER_SLICE = 2;
 const HISTORY_SLICE_DELAY_MS = 10_000;
 const HISTORY_DISABLED_WAIT_MS = 60_000;
@@ -26,11 +27,13 @@ const HISTORY_TARGET_TIMEOUT_MS = 20_000;
 const HISTORY_FAILURE_REPORT_TIMEOUT_MS = 3_000;
 const HISTORY_FAILURE_RETRY_DELAYS_MS = [60_000, 5 * 60_000] as const;
 const HISTORY_SOURCE_ORDER_STRIDE = 512;
+const HISTORY_LEGACY_ITEMS_PER_TURN_LIMIT = 500;
 const HISTORY_SOURCE_ORDER_MAX_DISCRIMINATOR = Math.floor(
   (Number.MAX_SAFE_INTEGER - (HISTORY_SOURCE_ORDER_STRIDE - 1)) /
     HISTORY_SOURCE_ORDER_STRIDE,
 );
 const HISTORY_TRUNCATION_SUFFIX = "\n…[历史内容已截断]";
+const HISTORY_SAFETY_CAP_CURSOR = "local-safety-cap";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 
 type HistoryKind = "user_message" | "assistant_message" | "reasoning";
@@ -96,6 +99,7 @@ export type HistoryScanResult = {
   scannedTurns: number;
   nextCursor: string | null;
   sourceExhausted: boolean;
+  safetyCapReached: boolean;
 };
 
 type HistoryAppServer = Pick<
@@ -218,6 +222,165 @@ function reasoningSummary(item: AppServerThreadItem): string | null {
   return sanitizeHistoryContent(text);
 }
 
+type IndexedHistoryCandidate = {
+  itemId: string;
+  kind: HistoryKind;
+  content: string;
+  sourceIndex: number;
+};
+
+type FinalCandidateSlot = {
+  seen: boolean;
+  candidate: IndexedHistoryCandidate | null;
+};
+
+type HistoryCandidateCollector = {
+  nonFinal: IndexedHistoryCandidate[];
+  explicitFinal: FinalCandidateSlot;
+  compatibleFinal: FinalCandidateSlot;
+  activityLimit: number;
+  overflowed: boolean;
+};
+
+function createHistoryCandidateCollector(
+  activityLimit: number,
+): HistoryCandidateCollector {
+  return {
+    nonFinal: [],
+    explicitFinal: { seen: false, candidate: null },
+    compatibleFinal: { seen: false, candidate: null },
+    activityLimit,
+    overflowed: false,
+  };
+}
+
+function historyCandidate(
+  item: AppServerThreadItem,
+  sourceIndex: number,
+  kind: HistoryKind,
+  content: string | null,
+): IndexedHistoryCandidate | null {
+  const itemId = protocolIdentifier(item.id);
+  return itemId && content && content.trim()
+    ? { itemId, kind, content, sourceIndex }
+    : null;
+}
+
+/** Inspect only explicitly whitelisted fields and retain a bounded projection. */
+function observeHistoryItem(
+  collector: HistoryCandidateCollector,
+  item: AppServerThreadItem,
+  sourceIndex: number,
+): boolean {
+  if (item.type === "userMessage") {
+    if (nonEmptyString(item.clientId)) return true;
+    const candidate = historyCandidate(
+      item,
+      sourceIndex,
+      "user_message",
+      userMessageText(item),
+    );
+    if (candidate) {
+      if (collector.nonFinal.length >= collector.activityLimit) {
+        collector.overflowed = true;
+      } else {
+        collector.nonFinal.push(candidate);
+      }
+    }
+    return false;
+  }
+  if (item.type === "reasoning") {
+    const candidate = historyCandidate(
+      item,
+      sourceIndex,
+      "reasoning",
+      // Deliberately read only `summary`; raw `content` is never inspected.
+      reasoningSummary(item),
+    );
+    if (candidate) {
+      if (collector.nonFinal.length >= collector.activityLimit) {
+        collector.overflowed = true;
+      } else {
+        collector.nonFinal.push(candidate);
+      }
+    }
+    return false;
+  }
+  if (item.type !== "agentMessage") return false;
+
+  const phase = item.phase;
+  if (phase !== "final_answer" && phase !== undefined && phase !== null) {
+    return false;
+  }
+  const candidate = historyCandidate(
+    item,
+    sourceIndex,
+    "assistant_message",
+    typeof item.text === "string" && item.text.trim()
+      ? sanitizeHistoryContent(item.text)
+      : null,
+  );
+  const slot = phase === "final_answer"
+    ? collector.explicitFinal
+    : collector.compatibleFinal;
+  // Preserve the old mapper's behavior: the last item of the selected phase
+  // wins even when its identifier or text is invalid.
+  slot.seen = true;
+  slot.candidate = candidate;
+  return false;
+}
+
+function collectedHistoryCandidates(
+  collector: HistoryCandidateCollector,
+): { candidates: IndexedHistoryCandidate[]; overflowed: boolean } {
+  const final = collector.explicitFinal.seen
+    ? collector.explicitFinal.candidate
+    : collector.compatibleFinal.candidate;
+  const candidates = final
+    ? [...collector.nonFinal, final]
+    : [...collector.nonFinal];
+  return {
+    candidates: candidates.sort((left, right) => left.sourceIndex - right.sourceIndex),
+    overflowed:
+      collector.overflowed || candidates.length > collector.activityLimit,
+  };
+}
+
+function historyActivitiesFromCandidates(
+  threadId: string,
+  turn: AppServerTurn,
+  candidates: IndexedHistoryCandidate[],
+  threadCreatedAt: number | null,
+  denseSourceOrder: boolean,
+): HistoryImportItem[] {
+  const safeThreadId = protocolIdentifier(threadId);
+  const safeTurnId = protocolIdentifier(turn.id);
+  if (!safeThreadId || !safeTurnId || turn.status !== "completed") return [];
+  const occurredAt = stableTurnOccurredAt(turn, threadCreatedAt);
+  const sourceOrderBase = stableTurnSourceOrderBase(safeTurnId);
+  return candidates.map((candidate, index) => ({
+    external_ref: stableExternalRef(
+      safeThreadId,
+      safeTurnId,
+      candidate.itemId,
+    ),
+    kind: candidate.kind,
+    content: candidate.content,
+    occurred_at: occurredAt,
+    // Old scans used raw indexes for turns that fit the former 500-item cap.
+    // Larger turns were never importable, so a dense ordinal gives their
+    // whitelisted projection a stable, non-overlapping safe-integer range.
+    source_order:
+      sourceOrderBase + (denseSourceOrder ? index : candidate.sourceIndex),
+    data: {
+      protocol: APP_SERVER_PROTOCOL,
+      thread_id: safeThreadId,
+      turn_id: safeTurnId,
+      item_id: candidate.itemId,
+    },
+  }));
+}
+
 export function hasClientUserMessageId(turn: AppServerTurn): boolean {
   return (turn.items ?? []).some(
     (item) =>
@@ -236,88 +399,45 @@ export function historicalActivitiesForTurn(
   turn: AppServerTurn,
   threadCreatedAt: number | null = null,
 ): HistoryImportItem[] {
-  const safeThreadId = protocolIdentifier(threadId);
-  const safeTurnId = protocolIdentifier(turn.id);
-  if (
-    !safeThreadId ||
-    !safeTurnId ||
-    turn.status !== "completed" ||
-    hasClientUserMessageId(turn)
-  ) {
-    return [];
-  }
+  if (turn.status !== "completed" || hasClientUserMessageId(turn)) return [];
   const items = Array.isArray(turn.items) ? turn.items : [];
-  const explicitFinalIndexes = items.flatMap((item, index) =>
-    item.type === "agentMessage" && item.phase === "final_answer" ? [index] : [],
-  );
-  const compatibleFinalIndexes = items.flatMap((item, index) =>
-    item.type === "agentMessage" &&
-    (item.phase === undefined || item.phase === null)
-      ? [index]
-      : [],
-  );
-  const finalAgentIndex =
-    explicitFinalIndexes.at(-1) ?? compatibleFinalIndexes.at(-1) ?? -1;
-  const occurredAt = stableTurnOccurredAt(turn, threadCreatedAt);
-  const sourceOrderBase = stableTurnSourceOrderBase(safeTurnId);
-  const activities: HistoryImportItem[] = [];
-
-  for (const [sourceOrder, item] of items.entries()) {
-    const itemId = protocolIdentifier(item.id);
-    if (!itemId) continue;
-    let kind: HistoryKind | null = null;
-    let content: string | null = null;
-    if (item.type === "userMessage") {
-      kind = "user_message";
-      content = userMessageText(item);
-    } else if (item.type === "agentMessage" && sourceOrder === finalAgentIndex) {
-      kind = "assistant_message";
-      content =
-        typeof item.text === "string" && item.text.trim()
-          ? sanitizeHistoryContent(item.text)
-          : null;
-    } else if (item.type === "reasoning") {
-      kind = "reasoning";
-      // Deliberately read only `summary`; raw `content` is never inspected.
-      content = reasoningSummary(item);
-    }
-    if (!kind || !content || !content.trim()) continue;
-    activities.push({
-      external_ref: stableExternalRef(safeThreadId, safeTurnId, itemId),
-      kind,
-      content,
-      occurred_at: occurredAt,
-      source_order: sourceOrderBase + sourceOrder,
-      data: {
-        protocol: APP_SERVER_PROTOCOL,
-        thread_id: safeThreadId,
-        turn_id: safeTurnId,
-        item_id: itemId,
-      },
-    });
+  const collector = createHistoryCandidateCollector(Number.MAX_SAFE_INTEGER);
+  for (const [sourceIndex, item] of items.entries()) {
+    observeHistoryItem(collector, item, sourceIndex);
   }
-  return activities;
+  const { candidates } = collectedHistoryCandidates(collector);
+  return historyActivitiesFromCandidates(
+    threadId,
+    turn,
+    candidates,
+    threadCreatedAt,
+    items.length > HISTORY_LEGACY_ITEMS_PER_TURN_LIMIT,
+  );
 }
 
-async function hydrateTurnItems(
+type TurnHistoryResult =
+  | { status: "accepted"; activities: HistoryImportItem[] }
+  | { status: "board_turn" }
+  | { status: "safety_cap" };
+
+async function readTurnHistory(
   appServer: HistoryAppServer,
   threadId: string,
   turn: AppServerTurn,
+  threadCreatedAt: number | null,
+  activityLimit: number,
   signal: AbortSignal,
-): Promise<AppServerTurn> {
-  if (turn.itemsView === "full" && Array.isArray(turn.items)) {
-    if (turn.items.length > HISTORY_ITEMS_PER_TURN_LIMIT) {
-      throw new Error(`Codex turn ${turn.id} 的 item 数超过安全上限`);
-    }
-    return turn;
-  }
-  const items: AppServerThreadItem[] = [];
+): Promise<TurnHistoryResult> {
+  const collector = createHistoryCandidateCollector(activityLimit);
   const seenCursors = new Set<string>();
   let cursor: string | null = null;
+  let rawItemCount = 0;
+  let matchedItemCount = 0;
+  let pageCount = 0;
   do {
     const requestLimit = Math.min(
       HISTORY_ITEM_PAGE_SIZE,
-      HISTORY_ITEMS_PER_TURN_LIMIT - items.length,
+      HISTORY_ITEMS_PER_TURN_LIMIT - rawItemCount,
     );
     const page = await appServer.threadItemsList(
       {
@@ -329,33 +449,53 @@ async function hydrateTurnItems(
       },
       { signal, timeoutMs: 10_000 },
     );
+    pageCount += 1;
     if (!Array.isArray(page.data) || page.data.length > requestLimit) {
       throw new Error("Codex thread/items/list 返回无效或超预算 data");
     }
+    rawItemCount += page.data.length;
     for (const entry of page.data) {
       if (entry.turnId === turn.id && isRecord(entry.item)) {
-        items.push(entry.item as AppServerThreadItem);
+        const item = entry.item as AppServerThreadItem;
+        const boardTurn = observeHistoryItem(
+          collector,
+          item,
+          matchedItemCount,
+        );
+        matchedItemCount += 1;
+        if (boardTurn) return { status: "board_turn" };
       }
-    }
-    if (items.length > HISTORY_ITEMS_PER_TURN_LIMIT) {
-      throw new Error(`Codex turn ${turn.id} 的 item 数超过安全上限`);
     }
     const nextCursor = nonEmptyString(page.nextCursor);
     if (!nextCursor) {
       cursor = null;
       break;
     }
-    if (items.length >= HISTORY_ITEMS_PER_TURN_LIMIT) {
-      throw new Error(`Codex turn ${turn.id} 的 item 数超过安全上限`);
+    if (nextCursor.length > 2_000 || seenCursors.has(nextCursor)) {
+      throw new Error("Codex thread/items/list 返回无效 cursor");
     }
-    if (seenCursors.has(nextCursor)) {
-      throw new Error("Codex thread/items/list 返回重复 cursor");
+    if (
+      rawItemCount >= HISTORY_ITEMS_PER_TURN_LIMIT ||
+      pageCount >= HISTORY_ITEM_PAGE_LIMIT
+    ) {
+      return { status: "safety_cap" };
     }
     seenCursors.add(nextCursor);
     cursor = nextCursor;
   } while (!signal.aborted);
   if (signal.aborted) throw signal.reason;
-  return { ...turn, items, itemsView: "full" };
+  const { candidates, overflowed } = collectedHistoryCandidates(collector);
+  if (overflowed) return { status: "safety_cap" };
+  return {
+    status: "accepted",
+    activities: historyActivitiesFromCandidates(
+      threadId,
+      turn,
+      candidates,
+      threadCreatedAt,
+      matchedItemCount > HISTORY_LEGACY_ITEMS_PER_TURN_LIMIT,
+    ),
+  };
 }
 
 export async function scanThreadHistory(options: {
@@ -375,7 +515,9 @@ export async function scanThreadHistory(options: {
   let cursor: string | null = null;
   let rawScannedTurns = 0;
   let sourceExhausted = false;
+  let safetyCapReached = false;
 
+  scanPages:
   while (
     !options.signal.aborted &&
     accepted.length < options.turnLimit &&
@@ -392,28 +534,38 @@ export async function scanThreadHistory(options: {
         cursor,
         limit: requestLimit,
         sortDirection: "desc",
-        itemsView: "full",
+        itemsView: "notLoaded",
       },
       { signal: options.signal, timeoutMs: 10_000 },
     );
     if (!Array.isArray(page.data) || page.data.length > requestLimit) {
       throw new Error("Codex thread/turns/list 返回无效或超预算 data");
     }
+    const pageNextCursor = nonEmptyString(page.nextCursor);
+    if (
+      pageNextCursor &&
+      (pageNextCursor.length > 2_000 || seenCursors.has(pageNextCursor))
+    ) {
+      throw new Error("Codex thread/turns/list 返回无效 cursor");
+    }
     rawScannedTurns += page.data.length;
     for (const candidate of page.data) {
       if (candidate.status !== "completed") continue;
-      const turn = await hydrateTurnItems(
+      const turn = await readTurnHistory(
         options.appServer,
         options.thread.id,
         candidate,
+        threadCreatedAt,
+        HISTORY_ACTIVITIES_PER_SCAN_LIMIT - acceptedActivityCount,
         options.signal,
       );
-      if (hasClientUserMessageId(turn)) continue;
-      const activities = historicalActivitiesForTurn(
-        options.thread.id,
-        turn,
-        threadCreatedAt,
-      );
+      if (turn.status === "board_turn") continue;
+      if (turn.status === "safety_cap") {
+        safetyCapReached = true;
+        cursor = HISTORY_SAFETY_CAP_CURSOR;
+        break scanPages;
+      }
+      const activities = turn.activities;
       for (const activity of activities) {
         if (seenExternalRefs.has(activity.external_ref)) {
           throw new Error("Codex 历史返回重复 item id");
@@ -422,21 +574,17 @@ export async function scanThreadHistory(options: {
       }
       acceptedActivityCount += activities.length;
       if (acceptedActivityCount > HISTORY_ACTIVITIES_PER_SCAN_LIMIT) {
-        throw new Error("Codex 历史活动数超过单次同步安全上限");
+        throw new Error("Codex 历史活动边界检查失败");
       }
       accepted.push(activities);
     }
-    const nextCursor = nonEmptyString(page.nextCursor);
-    if (!nextCursor || page.data.length === 0) {
+    if (!pageNextCursor || page.data.length === 0) {
       cursor = null;
       sourceExhausted = true;
       break;
     }
-    if (nextCursor.length > 2_000 || seenCursors.has(nextCursor)) {
-      throw new Error("Codex thread/turns/list 返回无效 cursor");
-    }
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
+    seenCursors.add(pageNextCursor);
+    cursor = pageNextCursor;
   }
   if (options.signal.aborted) throw options.signal.reason;
   return {
@@ -444,6 +592,7 @@ export async function scanThreadHistory(options: {
     scannedTurns: accepted.length,
     nextCursor: cursor,
     sourceExhausted,
+    safetyCapReached,
   };
 }
 
@@ -719,16 +868,23 @@ export class HistorySynchronizer {
       // Reaching the configured limit is a complete bounded snapshot. `partial`
       // is reserved for a safety cap that stopped scanning before that limit.
       const complete =
-        result.sourceExhausted || result.scannedTurns >= turnLimit;
+        !result.safetyCapReached &&
+        (result.sourceExhausted || result.scannedTurns >= turnLimit);
       const finalStatus: HistorySyncReportStatus = complete
         ? "complete"
         : "partial";
+      if (result.safetyCapReached) {
+        this.options.log?.(
+          `Thread ${target.thread.id} 历史同步达到本地安全上限，已标记 partial`,
+        );
+      }
       const finalSync: HistorySyncReport = {
         status: finalStatus,
         turn_limit: turnLimit,
         scanned_turns: result.scannedTurns,
         total_turns: null,
-        next_cursor: complete ? null : result.nextCursor,
+        next_cursor:
+          complete ? null : (result.nextCursor ?? HISTORY_SAFETY_CAP_CURSOR),
         error: null,
       };
       const batches = splitHistoryImportItems(

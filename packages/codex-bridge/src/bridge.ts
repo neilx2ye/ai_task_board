@@ -28,7 +28,7 @@ import {
   WakeLatch,
 } from "./wake-client.js";
 
-const BRIDGE_VERSION = "0.4.0";
+const BRIDGE_VERSION = "0.4.1";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;

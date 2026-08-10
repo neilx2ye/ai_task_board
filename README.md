@@ -106,7 +106,7 @@ AI_TASK_BOARD_URL=https://board.example.com \
 AI_TASK_BOARD_CONNECTION_TOKEN='<connection_token>' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
 CODEX_MAX_CONCURRENT_TURNS=2 \
-npx --yes ai-task-board-codex-bridge@0.4.0
+npx --yes ai-task-board-codex-bridge@0.4.1
 ```
 
 仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。长期服务应固定明确版本，

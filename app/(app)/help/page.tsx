@@ -201,7 +201,9 @@ CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
 CODEX_THREAD_SCOPE='cwd' \\
 CODEX_BRIDGE_WEB_CONFIG='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
-npx --yes ai-task-board-codex-bridge@0.3.0`}</CopyableCodeBlock>
+CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
+CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
+npx --yes ai-task-board-codex-bridge@0.4.1`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -233,7 +235,7 @@ npx --yes ai-task-board-codex-bridge@0.3.0`}</CopyableCodeBlock>
             启用 Bridge 前未上报的外部对话也无法追溯补录。
           </li>
           <li>
-            0.3 暂不支持网页逐次审批、可靠的运行中 steer/interrupt 或网页创建 thread；
+            0.4 暂不支持网页逐次审批、可靠的运行中 steer/interrupt 或网页创建 thread；
             默认安全权限模式会限制 sandbox，并拒绝 App Server 发来的审批请求。
           </li>
         </ul>

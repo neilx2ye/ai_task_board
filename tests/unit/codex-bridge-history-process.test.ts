@@ -59,8 +59,23 @@ lines.on("line", (line) => {
     } });
   } else if (message.method === "thread/turns/list") {
     send({ id: message.id, result: {
-      data: turns.slice(0, message.params.limit || turns.length),
+      data: turns.slice(0, message.params.limit || turns.length).map(({ items, ...turn }) => ({
+        ...turn,
+        items: [],
+        itemsView: message.params.itemsView
+      })),
       nextCursor: null,
+      backwardsCursor: null
+    } });
+  } else if (message.method === "thread/items/list") {
+    const turn = turns.find((candidate) => candidate.id === message.params.turnId);
+    const items = turn ? turn.items : [];
+    const offset = message.params.cursor ? Number(message.params.cursor.slice(7)) : 0;
+    const limit = message.params.limit || 100;
+    const end = Math.min(items.length, offset + limit);
+    send({ id: message.id, result: {
+      data: items.slice(offset, end).map((item) => ({ turnId: message.params.turnId, item })),
+      nextCursor: end < items.length ? "offset:" + end : null,
       backwardsCursor: null
     } });
   }
