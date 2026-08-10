@@ -15,6 +15,18 @@ Apply the migrations in filename order:
 3. `20260808000200_rls_storage.sql` enables RLS, applies explicit column/table
    privileges, enables Realtime publication, creates the private
    `task-artifacts` bucket, and installs its object policies.
+4. `20260808000300_session_directed_dispatch.sql` adds session-directed user
+   turns and the atomic per-session dispatch contract.
+5. `20260809141451_session_conversation_bridge.sql` adds the append-only
+   Session activity stream, Web conversation RPCs, and Bridge wake support;
+   `20260809141643_session_activity_fk_indexes.sql` adds its foreign-key
+   indexes.
+6. `20260809150155_heartbeat_idempotency_maintenance.sql` separates heartbeat
+   refreshes from durable idempotency records and installs bounded cleanup.
+7. `20260810100000_bridge_v2_thread_inventory.sql` adds device/thread inventory,
+   authoritative activity fencing, and effective device presence.
+8. `20260810130000_bridge_remote_configuration.sql` adds Owner-managed desired
+   Bridge settings plus token-authenticated, runtime-leased effective status.
 
 For a linked development project:
 
@@ -60,6 +72,9 @@ still cached and replayable after completion. Supabase Cron removes expired
 cache rows every ten minutes in bounded batches.
 
 - `register_ai_session` → `{ "session": ... }`
+- `sync_ai_sessions` → `{ "connection": ..., "sessions": [...] }`
+- `exchange_ai_connection_bridge_config` → `{ "configuration": ... }`
+- `update_ai_connection_bridge_config` → `{ "configuration": ... }`
 - `report_current_task`, `claim_next_task`, `claim_task`, `heartbeat_claim`,
   `report_progress`, `release_task`, `fail_task` → `{ "task": ... }`
 - `create_subtasks`, `create_user_subtasks` →

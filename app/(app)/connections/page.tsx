@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { CableIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  CableIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Settings2Icon,
+  Trash2Icon,
+} from "lucide-react";
 
+import { BridgeConfigDialog } from "@/components/bridge-config-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TokenDisplayDialog } from "@/components/token-display-dialog";
@@ -35,6 +42,7 @@ import {
   type ConnectionWithToken,
   type PublicConnection,
 } from "@/hooks/use-connections";
+import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 
 const PLATFORMS = ["ChatGPT", "Claude", "Codex", "Gemini", "自定义 Agent"];
@@ -143,9 +151,11 @@ function ConnectionCard({
   const rotateConnection = useRotateConnection(connection.id);
   const revokeConnection = useRevokeConnection(connection.id);
   const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
+  const [bridgeConfigOpen, setBridgeConfigOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const pending = rotateConnection.isPending || revokeConnection.isPending;
+  const hasBridgeSettings = supportsBridgeSettings(connection);
 
   const run = async (action: () => Promise<unknown>) => {
     setError(null);
@@ -197,7 +207,18 @@ function ConnectionCard({
           </p>
         ) : null}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {hasBridgeSettings ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() => setBridgeConfigOpen(true)}
+            >
+              <Settings2Icon />
+              Bridge 设置
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -251,6 +272,13 @@ function ConnectionCard({
           })
         }
       />
+      {hasBridgeSettings ? (
+        <BridgeConfigDialog
+          connection={connection}
+          open={bridgeConfigOpen}
+          onOpenChange={setBridgeConfigOpen}
+        />
+      ) : null}
     </Card>
   );
 }

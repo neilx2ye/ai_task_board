@@ -287,7 +287,7 @@ export class CodexAppServerClient {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
         title: "AI Task Board Codex Bridge",
-        version: "0.2.0",
+        version: "0.3.0",
       },
       capabilities: options.capabilities ?? null,
     };

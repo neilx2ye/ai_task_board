@@ -17,6 +17,8 @@ Optional environment variables:
   CODEX_THREAD_SCOPE              cwd (default, exact cwd) or all (high risk)
   CODEX_SESSION_NAME              Prefix for session names shown in the Board
   CODEX_BRIDGE_INCLUDE_THREAD_TITLES  true uploads local thread title/preview
+  CODEX_BRIDGE_WEB_CONFIG          true lets the Board lower safe runtime limits
+  CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)
@@ -27,6 +29,7 @@ Optional environment variables:
   AI_TASK_BOARD_POLL_INTERVAL_MS  Poll interval when SSE is unavailable (500..60000)
   AI_TASK_BOARD_LEASE_SECONDS     Task lease duration (60..3600, default: 900)
   AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS  Full inventory interval (10000..600000)
+  AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS  Web config interval (1000..600000)
 
 Options:
   -h, --help     Show this help

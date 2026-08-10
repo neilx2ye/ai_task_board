@@ -22,7 +22,7 @@ import {
   WakeLatch,
 } from "./wake-client.js";
 
-const BRIDGE_VERSION = "0.2.0";
+const BRIDGE_VERSION = "0.3.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -83,7 +83,38 @@ type ApprovalMode = "decline" | "accept" | "accept-session";
 type PermissionMode = "safe" | "inherit";
 type ThreadScope = "cwd" | "all";
 
-type BridgeConfiguration = {
+export type EffectiveBridgeConfiguration = {
+  enabled: boolean;
+  includeThreadTitles: boolean;
+  maxThreads: number;
+  maxConcurrentTurns: number;
+};
+
+export type RemoteBridgeConfigurationDesired = {
+  enabled: boolean;
+  include_thread_titles: boolean;
+  max_threads: number;
+  max_concurrent_turns: number;
+};
+
+export type RemoteBridgeConfigurationConstraints = {
+  remote_configuration_enabled: boolean;
+  allow_thread_titles: boolean;
+  max_threads: number;
+  max_concurrent_turns: number;
+  thread_scope: ThreadScope;
+  working_directory: string;
+  fixed_thread: boolean;
+  permission_mode: PermissionMode;
+  approval_mode: ApprovalMode;
+};
+
+export type ResolvedRemoteConfiguration = {
+  effective: EffectiveBridgeConfiguration;
+  warnings: string[];
+};
+
+export type BridgeConfiguration = {
   boardUrl: string;
   connectionToken: string;
   threadIdFilter: string | null;
@@ -96,11 +127,40 @@ type BridgeConfiguration = {
   maxThreads: number;
   maxConcurrentTurns: number;
   syncIntervalMs: number;
+  configurationPollIntervalMs: number;
+  configurationLeaseSeconds: number;
   approvalMode: ApprovalMode;
   permissionMode: PermissionMode;
   threadScope: ThreadScope;
+  enabled: boolean;
   includeThreadTitles: boolean;
+  localIncludeThreadTitles: boolean;
+  allowRemoteThreadTitles: boolean;
+  localMaxThreads: number;
+  localMaxConcurrentTurns: number;
+  webConfigurationEnabled: boolean;
   codexBinary: string;
+};
+
+type RemoteConfigurationResponse = {
+  configuration: {
+    connection_id: string;
+    version: number;
+    desired: RemoteBridgeConfigurationDesired;
+    applied?: unknown;
+    updated_at: string;
+  };
+};
+
+type RemoteConfigurationStatus = {
+  runtime_instance_id: string;
+  report_sequence: number;
+  lease_seconds: number;
+  release_runtime: boolean;
+  applied_version: number | null;
+  effective: RemoteBridgeConfigurationDesired | null;
+  constraints: RemoteBridgeConfigurationConstraints;
+  error: string | null;
 };
 
 type BoardRequestOptions = {
@@ -253,13 +313,15 @@ export function* utf8DeltaChunks(
   if (chunk) yield chunk;
 }
 
-function loadConfiguration(): BridgeConfiguration {
-  const boardUrl = (process.env.AI_TASK_BOARD_URL?.trim() ?? "").replace(
+export function loadConfiguration(
+  environment: Record<string, string | undefined> = process.env,
+): BridgeConfiguration {
+  const boardUrl = (environment.AI_TASK_BOARD_URL?.trim() ?? "").replace(
     /\/+$/,
     "",
   );
   const connectionToken =
-    process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ?? "";
+    environment.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ?? "";
   for (const [name, value] of [
     ["AI_TASK_BOARD_URL", boardUrl],
     ["AI_TASK_BOARD_CONNECTION_TOKEN", connectionToken],
@@ -267,53 +329,167 @@ function loadConfiguration(): BridgeConfiguration {
     if (!value) throw new Error(`${name} is required`);
   }
 
+  const localMaxThreads = boundedInteger(
+    environment.CODEX_MAX_THREADS,
+    50,
+    1,
+    500,
+  );
+  const localMaxConcurrentTurns = boundedInteger(
+    environment.CODEX_MAX_CONCURRENT_TURNS,
+    2,
+    1,
+    32,
+  );
+  const localIncludeThreadTitles = parseBoolean(
+    environment.CODEX_BRIDGE_INCLUDE_THREAD_TITLES,
+  );
+  const configurationPollIntervalMs = boundedInteger(
+    environment.AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS,
+    10_000,
+    1_000,
+    10 * 60_000,
+  );
+
   return {
     boardUrl,
     connectionToken,
-    threadIdFilter: process.env.CODEX_THREAD_ID?.trim() || null,
+    threadIdFilter: environment.CODEX_THREAD_ID?.trim() || null,
     workingDirectory: path.resolve(
-      process.env.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
+      environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
     ),
-    sessionNamePrefix: process.env.CODEX_SESSION_NAME?.trim() || null,
-    model: process.env.CODEX_MODEL?.trim() || null,
+    sessionNamePrefix: environment.CODEX_SESSION_NAME?.trim() || null,
+    model: environment.CODEX_MODEL?.trim() || null,
     capabilities: parseList(
-      process.env.CODEX_CAPABILITIES ||
+      environment.CODEX_CAPABILITIES ||
         "coding,shell,file-edit,multi-thread,app-server",
     ),
     pollIntervalMs: boundedInteger(
-      process.env.AI_TASK_BOARD_POLL_INTERVAL_MS,
+      environment.AI_TASK_BOARD_POLL_INTERVAL_MS,
       5_000,
       500,
       60_000,
     ),
     leaseSeconds: boundedInteger(
-      process.env.AI_TASK_BOARD_LEASE_SECONDS,
+      environment.AI_TASK_BOARD_LEASE_SECONDS,
       900,
       60,
       3_600,
     ),
-    maxThreads: boundedInteger(process.env.CODEX_MAX_THREADS, 50, 1, 500),
-    maxConcurrentTurns: boundedInteger(
-      process.env.CODEX_MAX_CONCURRENT_TURNS,
-      2,
-      1,
-      32,
-    ),
+    maxThreads: localMaxThreads,
+    maxConcurrentTurns: localMaxConcurrentTurns,
     syncIntervalMs: boundedInteger(
-      process.env.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
+      environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
       60_000,
       10_000,
       10 * 60_000,
     ),
-    approvalMode: parseApprovalMode(process.env.CODEX_BRIDGE_APPROVAL_MODE),
+    configurationPollIntervalMs,
+    configurationLeaseSeconds: Math.max(
+      15,
+      Math.ceil(Math.min(configurationPollIntervalMs, 10_000) / 1_000) * 3,
+    ),
+    approvalMode: parseApprovalMode(environment.CODEX_BRIDGE_APPROVAL_MODE),
     permissionMode: parsePermissionMode(
-      process.env.CODEX_BRIDGE_PERMISSION_MODE,
+      environment.CODEX_BRIDGE_PERMISSION_MODE,
     ),
-    threadScope: parseThreadScope(process.env.CODEX_THREAD_SCOPE),
-    includeThreadTitles: parseBoolean(
-      process.env.CODEX_BRIDGE_INCLUDE_THREAD_TITLES,
+    threadScope: parseThreadScope(environment.CODEX_THREAD_SCOPE),
+    enabled: true,
+    includeThreadTitles: localIncludeThreadTitles,
+    localIncludeThreadTitles,
+    allowRemoteThreadTitles:
+      localIncludeThreadTitles ||
+      parseBoolean(environment.CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
+    localMaxThreads,
+    localMaxConcurrentTurns,
+    webConfigurationEnabled: parseBoolean(
+      environment.CODEX_BRIDGE_WEB_CONFIG,
     ),
-    codexBinary: process.env.CODEX_BINARY?.trim() || "codex",
+    codexBinary: environment.CODEX_BINARY?.trim() || "codex",
+  };
+}
+
+export function effectiveBridgeConfiguration(
+  configuration: BridgeConfiguration,
+): EffectiveBridgeConfiguration {
+  return {
+    enabled: configuration.enabled,
+    includeThreadTitles: configuration.includeThreadTitles,
+    maxThreads: configuration.maxThreads,
+    maxConcurrentTurns: configuration.maxConcurrentTurns,
+  };
+}
+
+export function bridgeConfigurationConstraints(
+  configuration: BridgeConfiguration,
+): RemoteBridgeConfigurationConstraints {
+  return {
+    remote_configuration_enabled: configuration.webConfigurationEnabled,
+    allow_thread_titles: configuration.allowRemoteThreadTitles,
+    max_threads: configuration.localMaxThreads,
+    max_concurrent_turns: configuration.localMaxConcurrentTurns,
+    thread_scope: configuration.threadScope,
+    working_directory: configuration.workingDirectory,
+    fixed_thread: configuration.threadIdFilter !== null,
+    permission_mode: configuration.permissionMode,
+    approval_mode: configuration.approvalMode,
+  };
+}
+
+function clampedRemoteInteger(
+  value: number,
+  maximum: number,
+  field: string,
+  warnings: string[],
+): number {
+  if (!Number.isInteger(value)) {
+    throw new Error(`看板配置 ${field} 必须是整数`);
+  }
+  const clamped = Math.min(maximum, Math.max(1, value));
+  if (clamped !== value) {
+    warnings.push(
+      `${field}=${value} 超出设备允许范围，已限制为 ${clamped}`,
+    );
+  }
+  return clamped;
+}
+
+export function resolveRemoteConfiguration(
+  configuration: BridgeConfiguration,
+  desired: RemoteBridgeConfigurationDesired,
+): ResolvedRemoteConfiguration {
+  if (typeof desired.enabled !== "boolean") {
+    throw new Error("看板配置 enabled 必须是布尔值");
+  }
+  if (typeof desired.include_thread_titles !== "boolean") {
+    throw new Error("看板配置 include_thread_titles 必须是布尔值");
+  }
+  const warnings: string[] = [];
+  const includeThreadTitles =
+    desired.include_thread_titles && configuration.allowRemoteThreadTitles;
+  if (desired.include_thread_titles && !includeThreadTitles) {
+    warnings.push(
+      "看板请求上传 thread 标题，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
+    );
+  }
+  return {
+    effective: {
+      enabled: desired.enabled,
+      includeThreadTitles,
+      maxThreads: clampedRemoteInteger(
+        desired.max_threads,
+        configuration.localMaxThreads,
+        "max_threads",
+        warnings,
+      ),
+      maxConcurrentTurns: clampedRemoteInteger(
+        desired.max_concurrent_turns,
+        configuration.localMaxConcurrentTurns,
+        "max_concurrent_turns",
+        warnings,
+      ),
+    },
+    warnings,
   };
 }
 
@@ -346,6 +522,10 @@ function errorStatus(error: unknown): number | undefined {
   return (error as { status?: number } | null)?.status;
 }
 
+function monotonicMilliseconds(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
 function isPersistentClientError(error: unknown): boolean {
   const status = errorStatus(error);
   return status !== undefined &&
@@ -353,6 +533,37 @@ function isPersistentClientError(error: unknown): boolean {
     status < 500 &&
     status !== 408 &&
     status !== 429;
+}
+
+class WorkerRetirementDeferredError extends Error {}
+class WorkerRetirementFailureError extends Error {}
+
+export async function stopWorkersForRetirement(
+  workers: Array<{
+    threadId: string;
+    worker: { stop: (reason: string) => Promise<void> };
+  }>,
+  reason: string,
+): Promise<void> {
+  const stopped = await Promise.allSettled(
+    workers.map(({ worker }) => worker.stop(reason)),
+  );
+  const failedStops = stopped.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [{ threadId: workers[index]?.threadId ?? "unknown", reason: result.reason }]
+      : [],
+  );
+  for (const failure of failedStops) {
+    process.stderr.write(
+      `Thread worker ${failure.threadId} 停止时出错：${errorMessage(failure.reason)}\n`,
+    );
+  }
+  if (failedStops.length > 0) {
+    throw new WorkerRetirementFailureError(
+      `${failedStops.length} 个已移除 thread worker 未能安全停止；保留本地映射并终止 Bridge`,
+      { cause: failedStops[0]?.reason },
+    );
+  }
 }
 
 function actionableBoardError(error: unknown): Error {
@@ -366,7 +577,13 @@ function actionableBoardError(error: unknown): Error {
   }
   if (status === 404) {
     return new Error(
-      `看板缺少 Bridge 0.2 API（HTTP 404）：请先升级 Board schema/API，再启动 Bridge。${detail ? ` ${detail}` : ""}`,
+      `看板缺少 Bridge 0.3 API（HTTP 404）：请先升级 Board schema/API，再启动 Bridge。${detail ? ` ${detail}` : ""}`,
+      { cause: error },
+    );
+  }
+  if (status === 409) {
+    return new Error(
+      `Bridge 运行实例冲突（HTTP 409）：同一设备连接已有另一个 Bridge 持有配置租约，请只保留一个进程。${detail ? ` ${detail}` : ""}`,
       { cause: error },
     );
   }
@@ -374,6 +591,50 @@ function actionableBoardError(error: unknown): Error {
     `看板拒绝 Bridge 请求（HTTP ${status ?? "unknown"}）：请检查 Board API、连接权限与版本。${detail ? ` ${detail}` : ""}`,
     { cause: error },
   );
+}
+
+function remoteDesiredFromEffective(
+  effective: EffectiveBridgeConfiguration,
+): RemoteBridgeConfigurationDesired {
+  return {
+    enabled: effective.enabled,
+    include_thread_titles: effective.includeThreadTitles,
+    max_threads: effective.maxThreads,
+    max_concurrent_turns: effective.maxConcurrentTurns,
+  };
+}
+
+function parseRemoteConfigurationResponse(
+  value: unknown,
+): RemoteConfigurationResponse {
+  if (!isRecord(value) || !isRecord(value.configuration)) {
+    throw new Error("看板配置响应缺少 configuration");
+  }
+  const configuration = value.configuration;
+  if (
+    !Number.isInteger(configuration.version) ||
+    (configuration.version as number) < 1
+  ) {
+    throw new Error("看板配置响应 version 无效");
+  }
+  if (!isRecord(configuration.desired)) {
+    throw new Error("看板配置响应缺少 desired");
+  }
+  const desired = configuration.desired;
+  return {
+    configuration: {
+      connection_id: stringValue(configuration.connection_id) ?? "",
+      version: configuration.version as number,
+      desired: {
+        enabled: desired.enabled as boolean,
+        include_thread_titles: desired.include_thread_titles as boolean,
+        max_threads: desired.max_threads as number,
+        max_concurrent_turns: desired.max_concurrent_turns as number,
+      },
+      applied: configuration.applied,
+      updated_at: stringValue(configuration.updated_at) ?? "",
+    },
+  };
 }
 
 function threadIdFromMessage(value: unknown): string | null {
@@ -546,6 +807,7 @@ class BoardClient {
       {
         method: "POST",
         idempotencyKey: idempotencyKey("sync-sessions"),
+        maxAttempts: 1,
         signal,
         body,
       },
@@ -558,6 +820,21 @@ class BoardClient {
       ),
     );
   }
+
+  async exchangeConfiguration(
+    status: RemoteConfigurationStatus,
+    signal?: AbortSignal,
+    timeoutMs = 5_000,
+  ): Promise<RemoteConfigurationResponse> {
+    const result = await this.request<unknown>("/api/ai/config", {
+      method: "POST",
+      maxAttempts: 1,
+      timeoutMs,
+      signal,
+      body: status,
+    });
+    return parseRemoteConfigurationResponse(result);
+  }
 }
 
 export class TurnLimiter {
@@ -568,7 +845,23 @@ export class TurnLimiter {
     signal: AbortSignal;
   }> = [];
 
-  constructor(private readonly limit: number) {}
+  constructor(private limit: number) {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error("TurnLimiter limit must be a positive integer");
+    }
+  }
+
+  get capacity(): number {
+    return this.limit;
+  }
+
+  resize(limit: number): void {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error("TurnLimiter limit must be a positive integer");
+    }
+    this.limit = limit;
+    this.drain();
+  }
 
   acquire(signal: AbortSignal): Promise<() => void> {
     if (signal.aborted) return Promise.reject(signal.reason);
@@ -601,14 +894,18 @@ export class TurnLimiter {
     return () => {
       if (released) return;
       released = true;
-      while (this.waiters.length) {
-        const waiter = this.waiters.shift();
-        if (!waiter || waiter.signal.aborted) continue;
-        waiter.resolve(this.releaseFunction());
-        return;
-      }
       this.active -= 1;
+      this.drain();
     };
+  }
+
+  private drain(): void {
+    while (this.active < this.limit && this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      if (!waiter || waiter.signal.aborted) continue;
+      this.active += 1;
+      waiter.resolve(this.releaseFunction());
+    }
   }
 }
 
@@ -1068,8 +1365,14 @@ class SessionWorker {
 
   async stop(reason = "Codex Bridge 已停止"): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
-    this.stopPromise = this.stopWorker(reason);
-    return this.stopPromise;
+    const attempt = this.stopWorker(reason);
+    this.stopPromise = attempt;
+    try {
+      await attempt;
+    } catch (error) {
+      if (this.stopPromise === attempt) this.stopPromise = null;
+      throw error;
+    }
   }
 
   private async stopWorker(reason: string): Promise<void> {
@@ -1796,6 +2099,16 @@ class DeviceBridge {
   private stopping = false;
   private fatalError: Error | null = null;
   private stopPromise: Promise<void> | null = null;
+  private appliedConfigurationVersion: number | null = null;
+  private configurationError: string | null = null;
+  private effectiveConfigurationKnown = true;
+  private readonly runtimeInstanceId = randomUUID();
+  private reportSequence = 0;
+  private runtimeLeaseClaimed = false;
+  private leaseRenewalPromise: Promise<void> | null = null;
+  private leaseSafetyDeadlineMs: number | null = null;
+  private latestSuccessfulReportSequence = 0;
+  private legacyConfigurationCompatibility = false;
 
   constructor(
     private readonly configuration: BridgeConfiguration,
@@ -1836,20 +2149,67 @@ class DeviceBridge {
         "高风险警告：CODEX_THREAD_SCOPE=all 会管理当前系统用户的跨项目顶层 Codex threads\n",
       );
     }
+    await this.establishRemoteConfigurationLease();
+    if (this.stopping) {
+      await this.stop();
+      if (this.fatalError) throw this.fatalError;
+      return;
+    }
+    this.leaseRenewalPromise = this.runRemoteConfigurationLeaseRenewal();
+    let nextInventorySyncAt = 0;
     do {
-      try {
-        await this.syncWorkers();
-      } catch (error) {
-        if (this.stopping) break;
-        if (isPersistentClientError(error)) {
-          this.markFatal(actionableBoardError(error));
-          break;
+      let reconciledConfiguration = false;
+      if (this.configuration.webConfigurationEnabled) {
+        try {
+          reconciledConfiguration = await this.reconcileRemoteConfiguration();
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `同步 Web Bridge 配置失败，继续使用当前有效配置：${errorMessage(error)}\n`,
+          );
         }
-        process.stderr.write(`同步 Codex threads 失败：${errorMessage(error)}\n`);
       }
       if (this.stopping) break;
+
+      const inventoryDue = Date.now() >= nextInventorySyncAt;
+      if (reconciledConfiguration) {
+        nextInventorySyncAt = Date.now() + this.configuration.syncIntervalMs;
+      } else if (inventoryDue) {
+        try {
+          await this.syncWorkers();
+          this.effectiveConfigurationKnown = true;
+          nextInventorySyncAt = Date.now() + this.configuration.syncIntervalMs;
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(`同步 Codex threads 失败：${errorMessage(error)}\n`);
+        }
+      }
+      if (this.stopping) break;
+      const untilInventorySync = Math.max(1_000, nextInventorySyncAt - Date.now());
+      const sleepMilliseconds = this.configuration.webConfigurationEnabled
+        ? Math.min(
+            this.configuration.configurationPollIntervalMs,
+            untilInventorySync,
+          )
+        : untilInventorySync;
       try {
-        await delay(this.configuration.syncIntervalMs, this.stopController.signal);
+        await delay(sleepMilliseconds, this.stopController.signal);
       } catch {
         break;
       }
@@ -1877,6 +2237,302 @@ class DeviceBridge {
     ]);
     await this.appServer.close();
     await Promise.allSettled(workerStops);
+    await (this.leaseRenewalPromise ?? Promise.resolve()).catch(() => undefined);
+    await this.releaseRemoteConfigurationLease();
+  }
+
+  private configurationLeaseRenewalIntervalMs(): number {
+    return Math.min(
+      this.configuration.configurationPollIntervalMs,
+      Math.max(
+        1_000,
+        Math.floor((this.configuration.configurationLeaseSeconds * 1_000) / 3),
+      ),
+    );
+  }
+
+  private configurationLeaseRequestTimeoutMs(): number {
+    const intervalMs = this.configurationLeaseRenewalIntervalMs();
+    return Math.min(5_000, Math.max(500, Math.floor(intervalMs * 0.8)));
+  }
+
+  private configurationLeaseSafetyMarginMs(): number {
+    return 5_000;
+  }
+
+  private leaseSafetyExpired(): boolean {
+    return (
+      this.leaseSafetyDeadlineMs !== null &&
+      monotonicMilliseconds() >= this.leaseSafetyDeadlineMs
+    );
+  }
+
+  private markLeaseSafetyFatal(lastError?: unknown): void {
+    this.markFatal(
+      new Error(
+        `Bridge 运行租约未能在本地安全期限前续租，已停止所有 worker，避免多个实例同时运行。${
+          lastError ? ` ${errorMessage(lastError)}` : ""
+        }`,
+        lastError === undefined ? undefined : { cause: lastError },
+      ),
+    );
+  }
+
+  private async establishRemoteConfigurationLease(): Promise<void> {
+    let attempt = 0;
+    while (!this.stopping) {
+      attempt += 1;
+      try {
+        await this.exchangeRemoteConfiguration({ timeoutMs: 5_000 });
+        if (!this.leaseSafetyExpired()) return;
+      } catch (error) {
+        if (this.stopping) return;
+        const status = errorStatus(error);
+        if (status === 404 && !this.configuration.webConfigurationEnabled) {
+          // Board 0.2 compatibility: inventory can run without config support.
+          this.legacyConfigurationCompatibility = true;
+          return;
+        }
+        if (status === 409) {
+          if (attempt === 1 || attempt % 10 === 0) {
+            process.stderr.write(
+              "同一连接的旧 Bridge 租约仍有效；本实例保持待机并等待接管\n",
+            );
+          }
+          await delay(
+            Math.min(500 * 2 ** Math.min(attempt - 1, 4), 5_000),
+            this.stopController.signal,
+          ).catch(() => undefined);
+          continue;
+        }
+        if (isPersistentClientError(error)) {
+          throw actionableBoardError(error);
+        }
+        if (attempt === 1 || attempt % 10 === 0) {
+          process.stderr.write(
+            `尚未取得 Bridge 运行租约，等待后重试：${errorMessage(error)}\n`,
+          );
+        }
+        await delay(
+          Math.min(500 * 2 ** Math.min(attempt - 1, 4), 5_000),
+          this.stopController.signal,
+        ).catch(() => undefined);
+      }
+    }
+  }
+
+  private async runRemoteConfigurationLeaseRenewal(): Promise<void> {
+    const intervalMs = this.configurationLeaseRenewalIntervalMs();
+    const timeoutMs = this.configurationLeaseRequestTimeoutMs();
+    while (!this.stopping) {
+      const untilSafetyDeadline =
+        this.leaseSafetyDeadlineMs === null
+          ? intervalMs
+          : Math.max(
+              0,
+              this.leaseSafetyDeadlineMs - monotonicMilliseconds(),
+            );
+      if (this.leaseSafetyDeadlineMs !== null && untilSafetyDeadline <= 0) {
+        this.markLeaseSafetyFatal();
+        return;
+      }
+      try {
+        await delay(
+          Math.min(intervalMs, untilSafetyDeadline),
+          this.stopController.signal,
+        );
+      } catch {
+        return;
+      }
+      if (this.stopping) return;
+      if (this.leaseSafetyExpired()) {
+        this.markLeaseSafetyFatal();
+        return;
+      }
+      try {
+        // This loop only renews the runtime fence and reports the latest
+        // in-memory status. Desired config is applied by the main reconcile.
+        await this.exchangeRemoteConfiguration({ timeoutMs });
+      } catch (error) {
+        if (this.stopping) return;
+        const status = errorStatus(error);
+        if (
+          status === 404 &&
+          !this.configuration.webConfigurationEnabled &&
+          this.legacyConfigurationCompatibility &&
+          !this.runtimeLeaseClaimed
+        ) {
+          continue;
+        }
+        if (isPersistentClientError(error)) {
+          this.markFatal(actionableBoardError(error));
+          return;
+        }
+        process.stderr.write(
+          `Bridge 运行租约续租失败，将在下一周期重试：${errorMessage(error)}\n`,
+        );
+        if (this.leaseSafetyExpired()) {
+          this.markLeaseSafetyFatal(error);
+          return;
+        }
+      }
+    }
+  }
+
+  private configurationStatus(
+    releaseRuntime = false,
+  ): RemoteConfigurationStatus {
+    this.reportSequence += 1;
+    return {
+      runtime_instance_id: this.runtimeInstanceId,
+      report_sequence: this.reportSequence,
+      lease_seconds: this.configuration.configurationLeaseSeconds,
+      release_runtime: releaseRuntime,
+      applied_version: this.appliedConfigurationVersion,
+      effective: this.effectiveConfigurationKnown
+        ? remoteDesiredFromEffective(
+            effectiveBridgeConfiguration(this.configuration),
+          )
+        : null,
+      constraints: bridgeConfigurationConstraints(this.configuration),
+      error: this.configurationError
+        ? redactHarnessText(this.configurationError, 2_000)
+        : null,
+    };
+  }
+
+  private async exchangeRemoteConfiguration(
+    options: {
+      releaseRuntime?: boolean;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<RemoteConfigurationResponse> {
+    const releaseRuntime = options.releaseRuntime === true;
+    const status = this.configurationStatus(releaseRuntime);
+    const requestStartedAt = monotonicMilliseconds();
+    const response = await this.board.exchangeConfiguration(
+      status,
+      releaseRuntime
+        ? options.signal
+        : (options.signal ?? this.stopController.signal),
+      options.timeoutMs,
+    );
+    if (releaseRuntime) {
+      this.runtimeLeaseClaimed = false;
+      this.leaseSafetyDeadlineMs = null;
+    } else if (
+      !this.stopping &&
+      status.report_sequence > this.latestSuccessfulReportSequence
+    ) {
+      this.latestSuccessfulReportSequence = status.report_sequence;
+      this.runtimeLeaseClaimed = true;
+      this.legacyConfigurationCompatibility = false;
+      this.leaseSafetyDeadlineMs =
+        requestStartedAt +
+        this.configuration.configurationLeaseSeconds * 1_000 -
+        this.configurationLeaseSafetyMarginMs();
+    }
+    return response;
+  }
+
+  private async releaseRemoteConfigurationLease(): Promise<void> {
+    if (!this.runtimeLeaseClaimed) return;
+    await this.exchangeRemoteConfiguration({
+      releaseRuntime: true,
+      signal: undefined,
+      timeoutMs: 1_500,
+    })
+      .then(() => {
+        this.runtimeLeaseClaimed = false;
+      })
+      .catch(() => undefined);
+  }
+
+  private async reconcileRemoteConfiguration(): Promise<boolean> {
+    let response = await this.exchangeRemoteConfiguration();
+    let reconciled = false;
+
+    // A re-report can race a Web edit. Apply a few consecutive versions now;
+    // any later version remains unapplied and is picked up by the next poll.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const remote = response.configuration;
+      if (remote.version === this.appliedConfigurationVersion) return reconciled;
+      if (
+        this.appliedConfigurationVersion !== null &&
+        remote.version < this.appliedConfigurationVersion
+      ) {
+        this.configurationError =
+          `忽略过期看板配置 version=${remote.version}；设备已应用 version=${this.appliedConfigurationVersion}`;
+        process.stderr.write(`${this.configurationError}\n`);
+        return reconciled;
+      }
+
+      const resolved = resolveRemoteConfiguration(
+        this.configuration,
+        remote.desired,
+      );
+      const previousEffective = effectiveBridgeConfiguration(this.configuration);
+      const previousEffectiveKnown = this.effectiveConfigurationKnown;
+      this.configuration.enabled = resolved.effective.enabled;
+      this.configuration.includeThreadTitles =
+        resolved.effective.includeThreadTitles;
+      this.configuration.maxThreads = resolved.effective.maxThreads;
+      this.configuration.maxConcurrentTurns =
+        resolved.effective.maxConcurrentTurns;
+      this.limiter.resize(resolved.effective.maxConcurrentTurns);
+      this.configurationError = resolved.warnings.length
+        ? resolved.warnings.join("；")
+        : null;
+      for (const warning of resolved.warnings) {
+        process.stderr.write(`Web Bridge 配置警告：${warning}\n`);
+      }
+      this.effectiveConfigurationKnown = false;
+
+      try {
+        // Retire excluded workers before publishing the authoritative inventory.
+        await this.syncWorkers();
+      } catch (error) {
+        if (error instanceof WorkerRetirementDeferredError) {
+          // The retirement fence fires before worker-map mutation, so the last
+          // effective view is still exact and can be restored safely.
+          this.configuration.enabled = previousEffective.enabled;
+          this.configuration.includeThreadTitles =
+            previousEffective.includeThreadTitles;
+          this.configuration.maxThreads = previousEffective.maxThreads;
+          this.configuration.maxConcurrentTurns =
+            previousEffective.maxConcurrentTurns;
+          this.limiter.resize(previousEffective.maxConcurrentTurns);
+          this.effectiveConfigurationKnown = previousEffectiveKnown;
+        } else {
+          // A later failure may happen after workers were stopped. Do not claim
+          // a precise effective state until a full reconciliation succeeds.
+          this.effectiveConfigurationKnown = false;
+        }
+        this.configurationError = [
+          this.configurationError,
+          `应用 version=${remote.version} 失败：${errorMessage(error)}`,
+        ]
+          .filter(Boolean)
+          .join("；");
+        await this
+          .exchangeRemoteConfiguration()
+          .catch(() => undefined);
+        throw error;
+      }
+
+      this.effectiveConfigurationKnown = true;
+      this.appliedConfigurationVersion = remote.version;
+      reconciled = true;
+      process.stdout.write(
+        `已应用 Web Bridge 配置 version=${remote.version}：${
+          this.configuration.enabled ? "已启用" : "已停用"
+        }，最多 ${this.configuration.maxThreads} 个 thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
+      );
+
+      response = await this.exchangeRemoteConfiguration();
+    }
+    return reconciled;
   }
 
   private async syncWorkers(): Promise<void> {
@@ -1894,26 +2550,17 @@ class DeviceBridge {
         blocked.map(({ worker }) => worker.waitForRetirementReady(3_000)),
       );
       if (blocked.some(({ worker }) => worker.retirementBlocked)) {
-        process.stderr.write(
-          `暂缓同步：${blocked.length} 个已移除 thread 仍在等待 App Server 返回 resume/turn-start，避免产生孤儿 turn\n`,
+        throw new WorkerRetirementDeferredError(
+          `暂缓同步：${blocked.length} 个已移除 thread 仍在等待 App Server 返回 resume/turn-start，避免产生孤儿 turn`,
         );
-        return;
       }
     }
-    for (const { threadId } of removed) this.workers.delete(threadId);
     if (removed.length > 0) {
-      const stopped = await Promise.allSettled(
-        removed.map(({ worker }) =>
-          worker.stop("Codex thread 已从设备清单移除"),
-        ),
+      await stopWorkersForRetirement(
+        removed,
+        "Codex thread 已从设备清单移除",
       );
-      stopped.forEach((result, index) => {
-        if (result.status === "rejected") {
-          process.stderr.write(
-            `Thread worker ${removed[index]?.threadId ?? "unknown"} 停止时出错：${errorMessage(result.reason)}\n`,
-          );
-        }
-      });
+      for (const { threadId } of removed) this.workers.delete(threadId);
     }
 
     if (this.stopping) return;
@@ -1964,6 +2611,7 @@ class DeviceBridge {
   }
 
   private async listThreads(): Promise<ThreadRecord[]> {
+    if (!this.configuration.enabled) return [];
     const threads: ThreadRecord[] = [];
     let cursor: string | null = null;
     let scanned = 0;

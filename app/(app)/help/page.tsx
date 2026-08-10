@@ -199,7 +199,9 @@ export default function HelpPage() {
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
 CODEX_THREAD_SCOPE='cwd' \\
-npx --yes ai-task-board-codex-bridge@0.2.0`}</CopyableCodeBlock>
+CODEX_BRIDGE_WEB_CONFIG='true' \\
+CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
+npx --yes ai-task-board-codex-bridge@0.3.0`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -214,6 +216,11 @@ npx --yes ai-task-board-codex-bridge@0.2.0`}</CopyableCodeBlock>
             launchd 或其他进程管理器负责开机启动和异常重启。
           </li>
           <li>
+            本机显式允许 Web 配置后，Workspace Owner 可以在“AI 连接 → Bridge 设置”
+            动态启停、切换标题上传并降低 thread/并发上限；工作目录、thread 范围、权限、
+            审批策略和本机最大值仍只能在设备上配置。
+          </li>
+          <li>
             Bridge 通过认证 SSE 接收不含任务数据的近实时唤醒，再用 REST
             原子领取；SSE 断线时从默认 5 秒逐步退避到 60 秒轮询，并持续尝试重连。
           </li>
@@ -226,7 +233,7 @@ npx --yes ai-task-board-codex-bridge@0.2.0`}</CopyableCodeBlock>
             启用 Bridge 前未上报的外部对话也无法追溯补录。
           </li>
           <li>
-            0.2 暂不支持网页逐次审批、可靠的运行中 steer/interrupt 或网页创建 thread；
+            0.3 暂不支持网页逐次审批、可靠的运行中 steer/interrupt 或网页创建 thread；
             默认安全权限模式会限制 sandbox，并拒绝 App Server 发来的审批请求。
           </li>
         </ul>

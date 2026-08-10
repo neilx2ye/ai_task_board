@@ -49,6 +49,29 @@ Content-Type: application/json
 
 领取类命令返回的 `claim_token` 只显示在该次响应中。需要持有它才能回传进度、续租、完成、失败、释放或拆分任务；不要复用已过期租约的旧令牌。
 
+### Bridge 设备配置交换（0.3）
+
+Workspace Owner 可通过 `GET` / `PATCH /api/user/connections/:connectionId/bridge-config`
+读取和修改期望配置。`PATCH` 需要 `Idempotency-Key`，并提交当前
+`expected_version` 以及完整的 `enabled`、`include_thread_titles`、
+`max_threads`、`max_concurrent_turns`；版本落后时返回
+`409 VERSION_CONFLICT`，客户端应刷新后让用户重新确认。
+
+Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成一个
+`runtime_instance_id`，并为每次报告单调增加 `report_sequence`；
+`lease_seconds` 建立运行实例租约，防止同一个 Connection 的两个 Bridge 同时
+声称配置已生效。请求同时报告 `applied_version`、实际 `effective`、本机不可越过的
+`constraints` 和可选错误，响应返回当前 `configuration.version` 与 `desired`。
+配置 DTO 还包含服务端计算的 `runtime.online` 与 `runtime.lease_expires_at`；租约
+失效后网页只把 applied 内容当作最后一次上报，不会继续声称设备当前已应用。
+旧序号是成功的无操作；另一个尚未过期的实例返回
+`409 BRIDGE_INSTANCE_CONFLICT`。优雅退出时，同一实例可发送
+`release_runtime: true` 立即释放租约，而不清除网页最后看到的应用状态。
+
+Web 只控制运行时启停、thread 标题上传以及 thread/并行 turn 数量。工作目录、
+thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex 可执行文件和本机最大值
+始终由设备环境决定；服务端也会拒绝突破本机 `constraints` 的 effective 报告。
+
 ## 1. 注册 AI 会话
 
 ```bash
@@ -390,7 +413,7 @@ curl --fail-with-body -sS \
 - `GET /api/user/sessions/:sessionId` 返回该 Session、相关任务、任务消息、任务事件和 `session_activities`，供会话对话框组合时间线。默认返回最新 100 条结构化活动；可用响应中的 `pagination.activities.oldest_cursor` 作为 `before_activity_id` 继续加载更早记录，`limit` 范围为 `1..200`。活动 ID 和游标均使用十进制字符串，避免 JavaScript 丢失 bigint 精度。
 - `POST /api/user/sessions/:sessionId/turns` 接收 `{ "content": "..." }` 和 `Idempotency-Key`。目标 Session 必须仍在线；服务端原子创建定向分配给它的 `ready` Task、用户消息和 `user_message` 活动，并返回 HTTP `201`。
 
-新 Task 的临时名称从消息的第一个非空句生成，最长 80 个 Unicode code point；当前不会额外调用模型命名。Codex Bridge 通常由 SSE 近实时唤醒并领取它，通知不可用时由自适应轮询兜底。若该 thread 的上一轮仍在执行，新 Task 只会排队；0.2 MVP 没有可靠的运行中 steer、网页 interrupt 或网页审批。
+新 Task 的临时名称从消息的第一个非空句生成，最长 80 个 Unicode code point；当前不会额外调用模型命名。Codex Bridge 通常由 SSE 近实时唤醒并领取它，通知不可用时由自适应轮询兜底。若该 thread 的上一轮仍在执行，新 Task 只会排队；0.3 仍没有可靠的运行中 steer、网页 interrupt 或网页审批。
 
 `pagination.legacy` 会分别标记旧任务、消息或事件是否达到兼容读取上限。旧表本身不是完整的 Session 事件流；出现截断标记时，网页会明确提示只展示最近的兼容记录，而 Bridge 接入后的结构化活动仍可持续向前分页。
 
@@ -408,5 +431,7 @@ curl --fail-with-body -sS \
 | `CAPABILITY_MISMATCH` | 409 | 由用户明确改派到满足能力的存活会话 |
 | `INVALID_STATE_TRANSITION` | 409 | 刷新当前状态后决定下一命令 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 不要复用 Key；核对第一次请求 |
+| `VERSION_CONFLICT` | 409 | 刷新 Bridge 配置版本并让 Owner 重新确认修改 |
+| `BRIDGE_INSTANCE_CONFLICT` | 409 | 停止重复 Bridge；等待旧实例退出或租约到期 |
 
 HTTP `401` 表示连接令牌缺失、无效或已撤销；`400 INVALID_REQUEST` 表示 JSON/Zod 校验失败；`500 INTERNAL_ERROR` 可以使用**同一个**幂等键有限退避重试。

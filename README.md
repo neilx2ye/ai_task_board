@@ -106,7 +106,7 @@ AI_TASK_BOARD_URL=https://board.example.com \
 AI_TASK_BOARD_CONNECTION_TOKEN='<connection_token>' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
 CODEX_MAX_CONCURRENT_TURNS=2 \
-npx --yes ai-task-board-codex-bridge@0.2.0
+npx --yes ai-task-board-codex-bridge@0.3.0
 ```
 
 仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。长期服务应固定明确版本，
@@ -114,7 +114,7 @@ npx --yes ai-task-board-codex-bridge@0.2.0
 
 一个常驻 Bridge 代表一台设备上的一个 AI Connection，并为自动发现的每个未归档顶层 Codex thread 同步独立 Board Session；默认 `CODEX_THREAD_SCOPE=cwd` 只管理 cwd 与 `CODEX_WORKING_DIRECTORY` 完全相同的 thread，最多 50 个、最多并行 2 个 turn。跨项目发现必须显式设置高风险的 `CODEX_THREAD_SCOPE=all`；`CODEX_THREAD_ID` 是覆盖范围的单 thread 精确兼容过滤器。Bridge 必须以拥有本地 Codex 登录、会话存储和目标工作树的同一操作系统用户运行，不能放进 Next.js 服务进程。
 
-Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 文本、可展示思考摘要和命令 delta 会聚合后近实时写入 Board。默认 `safe` 权限 profile 会把 turn 收敛到 `on-request`、用户 reviewer、`workspace-write` 和该 thread cwd（排除隐式 tmp 根并关闭网络）；它主要限制写入/网络，不能阻止读取同 UID 本来可读的文件。默认 `decline` 只负责拒绝 App Server 的 server-request，不能替代沙箱。Session 名称默认不上传 thread 标题/首条 prompt，只有显式 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` 才上传；inventory 仍会同步 thread ID、绝对工作目录和模型标签。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先升级到 0.2，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
+Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 文本、可展示思考摘要和命令 delta 会聚合后近实时写入 Board。默认 `safe` 权限 profile 会把 turn 收敛到 `on-request`、用户 reviewer、`workspace-write` 和该 thread cwd（排除隐式 tmp 根并关闭网络）；它主要限制写入/网络，不能阻止读取同 UID 本来可读的文件。默认 `decline` 只负责拒绝 App Server 的 server-request，不能替代沙箱。Session 名称默认不上传 thread 标题/首条 prompt；启用 `CODEX_BRIDGE_WEB_CONFIG=true` 后，可在“AI 连接 → Bridge 设置”调整启停、标题、thread 数和并发数，但网页值始终受本机上限约束。网页开启标题还要求本机显式允许 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` 或已经设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`。Inventory 仍会同步 thread ID、绝对工作目录和模型标签。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先升级到 0.3，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
 
 ## 单会话上下文演示
 
@@ -195,7 +195,7 @@ PLAYWRIGHT_BASE_URL=https://preview.example.com npm run test:e2e
 - Codex Bridge 的回复、思考摘要和命令 delta 会近实时回传，但当前没有可靠的运行中 steering、网页审批或远程进程中断；默认审批安全拒绝，SSE 不可用时会自适应轮询，最长约 60 秒发现新任务。
 - Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。`safe` profile 是默认执行边界，不能抵消同 UID 进程本身的读取与调试权限。
 - Bridge 目前是 at-least-once 执行；若本地 turn 已执行但在完成 Task 前崩溃，租约恢复后可能重复提交该 turn，不可逆工具操作仍需自身幂等或人工确认。
-- 会话对话框只显示 Board 已经保存的历史和 Bridge 启动后回传的新活动，不能从既有 Codex thread 反向补录完整旧历史；`reasoning` 仅代表 Codex 提供的摘要。0.2 MVP 只发现既有顶层 thread，尚不从网页创建新 thread。
+- 会话对话框只显示 Board 已经保存的历史和 Bridge 启动后回传的新活动，不能从既有 Codex thread 反向补录完整旧历史；`reasoning` 仅代表 Codex 提供的摘要。当前版本只发现既有顶层 thread，尚不从网页创建新 thread。
 - Board 服务没有通用任务 Worker；Supabase Cron 仅定时清理已过期的幂等记录。原目标会话可原子恢复自己的过期租约，用户也可显式释放后改派。仅打开页面不会修改租约，卡片可能一直显示旧接收信息，直到下一次接收/释放命令。
 - 附件仅保存私有 Storage 对象与元数据，外部 URL 的安全性由创建方负责。
 - 附件上传采用“先写 Storage、再提交数据库元数据”的补偿式流程；客户端不得把同一个幂等键并发用于不同文件。进程在两步之间异常退出时可能留下未引用对象，生产项目应定期审计 Bucket。

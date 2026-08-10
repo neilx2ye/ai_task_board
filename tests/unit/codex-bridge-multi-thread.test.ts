@@ -200,6 +200,11 @@ describe("Codex Bridge multi-thread device runtime", () => {
       const server = createServer(async (request, response) => {
         const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
         const sessionId = String(request.headers["x-ai-session-id"] ?? "");
+        if (pathname === "/api/ai/config") {
+          response.writeHead(404, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+          return;
+        }
         if (pathname === "/api/ai/sessions/wake") {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
@@ -371,6 +376,11 @@ describe("Codex Bridge multi-thread device runtime", () => {
       let claimed = false;
       const server = createServer(async (request, response) => {
         const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
+        if (pathname === "/api/ai/config") {
+          response.writeHead(404, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+          return;
+        }
         if (pathname === "/api/ai/sessions/wake") {
           response.writeHead(200, { "Content-Type": "text/event-stream" });
           response.write(": connected\n\n");
@@ -528,6 +538,14 @@ describe("Codex Bridge multi-thread device runtime", () => {
   );
 
   it("exits non-zero when Codex App Server exits unexpectedly", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No test port");
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "atb-bridge-crash-"));
     const fakeCodex = path.join(temporaryDirectory, "fake-crash.cjs");
     await writeFile(fakeCodex, CRASHING_CODEX, "utf8");
@@ -539,7 +557,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          AI_TASK_BOARD_URL: "http://127.0.0.1:1",
+          AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
           AI_TASK_BOARD_CONNECTION_TOKEN: "atb_crash_token",
           CODEX_BINARY: fakeCodex,
           CODEX_THREAD_ID: "",
@@ -551,15 +569,23 @@ describe("Codex Bridge multi-thread device runtime", () => {
     child.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    const [code] = await Promise.race([
-      once(child, "exit"),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 4_000),
-      ),
-    ]);
-    child = null;
-    expect(code).not.toBe(0);
-    expect(stderr).toContain("Codex App Server 意外退出");
+    try {
+      const [code] = await Promise.race([
+        once(child, "exit"),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 4_000),
+        ),
+      ]);
+      child = null;
+      expect(code).not.toBe(0);
+      expect(stderr).toContain("Codex App Server 意外退出");
+    } finally {
+      await stopChild(child);
+      child = null;
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   }, 10_000);
 
   it("interrupts and exits instead of buffering unbounded activity uploads", async () => {
@@ -568,6 +594,11 @@ describe("Codex Bridge multi-thread device runtime", () => {
     let claimed = false;
     const server = createServer(async (request, response) => {
       const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
+      if (pathname === "/api/ai/config") {
+        response.writeHead(404, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+        return;
+      }
       if (pathname === "/api/ai/sessions/wake") {
         response.writeHead(200, { "Content-Type": "text/event-stream" });
         response.write(": connected\n\n");

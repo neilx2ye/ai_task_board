@@ -20,6 +20,8 @@ describe("stable API error mapping", () => {
     ["CAPABILITY_MISMATCH", 409],
     ["INVALID_STATE_TRANSITION", 409],
     ["IDEMPOTENCY_CONFLICT", 409],
+    ["VERSION_CONFLICT", 409],
+    ["BRIDGE_INSTANCE_CONFLICT", 409],
   ] as const)("maps database marker %s to HTTP %s", (code, status) => {
     const error = mapDatabaseError({ message: `rpc rejected: ${code}` });
 
@@ -41,6 +43,8 @@ describe("stable API error mapping", () => {
       "CAPABILITY_MISMATCH",
       "INVALID_STATE_TRANSITION",
       "IDEMPOTENCY_CONFLICT",
+      "VERSION_CONFLICT",
+      "BRIDGE_INSTANCE_CONFLICT",
     ]);
   });
 

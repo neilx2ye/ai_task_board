@@ -11,6 +11,8 @@ export const BUSINESS_ERROR_CODES = [
   "CAPABILITY_MISMATCH",
   "INVALID_STATE_TRANSITION",
   "IDEMPOTENCY_CONFLICT",
+  "VERSION_CONFLICT",
+  "BRIDGE_INSTANCE_CONFLICT",
 ] as const;
 
 export type BusinessErrorCode = (typeof BUSINESS_ERROR_CODES)[number];
@@ -39,6 +41,8 @@ const statusByCode: Record<ApiErrorCode, number> = {
   CAPABILITY_MISMATCH: 409,
   INVALID_STATE_TRANSITION: 409,
   IDEMPOTENCY_CONFLICT: 409,
+  VERSION_CONFLICT: 409,
+  BRIDGE_INSTANCE_CONFLICT: 409,
   INTERNAL_ERROR: 500,
 };
 
@@ -107,6 +111,8 @@ function messageForCode(code: BusinessErrorCode): string {
     CAPABILITY_MISMATCH: "The AI session does not meet the task capabilities",
     INVALID_STATE_TRANSITION: "The requested task state transition is invalid",
     IDEMPOTENCY_CONFLICT: "The idempotency key conflicts with an earlier request",
+    VERSION_CONFLICT: "The configuration was changed by another request",
+    BRIDGE_INSTANCE_CONFLICT: "Another Bridge runtime is active for this connection",
   };
   return messages[code];
 }

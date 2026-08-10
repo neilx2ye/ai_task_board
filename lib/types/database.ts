@@ -109,6 +109,88 @@ export type AIConnectionInsert = {
   revoked_at?: string | null;
 };
 
+export type AIConnectionBridgeSettingsRow = {
+  connection_id: string;
+  workspace_id: string;
+  version: number;
+  desired_enabled: boolean;
+  desired_include_thread_titles: boolean;
+  desired_max_threads: number;
+  desired_max_concurrent_turns: number;
+  applied_version: number | null;
+  effective_enabled: boolean | null;
+  effective_include_thread_titles: boolean | null;
+  effective_max_threads: number | null;
+  effective_max_concurrent_turns: number | null;
+  constraint_remote_configuration_enabled: boolean | null;
+  constraint_allow_thread_titles: boolean | null;
+  constraint_max_threads: number | null;
+  constraint_max_concurrent_turns: number | null;
+  constraint_thread_scope: "cwd" | "all" | null;
+  constraint_working_directory: string | null;
+  constraint_fixed_thread: boolean | null;
+  constraint_permission_mode: "safe" | "inherit" | null;
+  constraint_approval_mode: "decline" | "accept" | "accept-session" | null;
+  error: string | null;
+  applied_at: string | null;
+  active_runtime_instance_id: string | null;
+  active_runtime_last_sequence: number | null;
+  active_runtime_lease_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AIConnectionBridgeSettingsInsert = {
+  connection_id: string;
+  workspace_id: string;
+  version?: number;
+  desired_enabled?: boolean;
+  desired_include_thread_titles?: boolean;
+  desired_max_threads?: number;
+  desired_max_concurrent_turns?: number;
+  applied_version?: number | null;
+  effective_enabled?: boolean | null;
+  effective_include_thread_titles?: boolean | null;
+  effective_max_threads?: number | null;
+  effective_max_concurrent_turns?: number | null;
+  constraint_remote_configuration_enabled?: boolean | null;
+  constraint_allow_thread_titles?: boolean | null;
+  constraint_max_threads?: number | null;
+  constraint_max_concurrent_turns?: number | null;
+  constraint_thread_scope?: "cwd" | "all" | null;
+  constraint_working_directory?: string | null;
+  constraint_fixed_thread?: boolean | null;
+  constraint_permission_mode?: "safe" | "inherit" | null;
+  constraint_approval_mode?: "decline" | "accept" | "accept-session" | null;
+  error?: string | null;
+  applied_at?: string | null;
+  active_runtime_instance_id?: string | null;
+  active_runtime_last_sequence?: number | null;
+  active_runtime_lease_expires_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AIConnectionBridgeRuntimeRow = {
+  workspace_id: string;
+  connection_id: string;
+  runtime_instance_id: string;
+  last_report_sequence: number;
+  retired_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AIConnectionBridgeRuntimeInsert = {
+  workspace_id: string;
+  connection_id: string;
+  runtime_instance_id: string;
+  last_report_sequence: number;
+  retired_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type AISessionRow = {
   id: string;
   workspace_id: string;
@@ -397,6 +479,51 @@ type CompleteAndClaimNextResponse = CompleteResponse & {
 type ConnectionResponse = { connection: PublicAIConnectionRow };
 type ArtifactResponse = { artifact: ArtifactRow };
 
+export type BridgeDesiredConfiguration = {
+  enabled: boolean;
+  include_thread_titles: boolean;
+  max_threads: number;
+  max_concurrent_turns: number;
+};
+
+export type BridgeConfigurationConstraints = {
+  remote_configuration_enabled: boolean;
+  allow_thread_titles: boolean;
+  max_threads: number;
+  max_concurrent_turns: number;
+  thread_scope: "cwd" | "all";
+  working_directory: string;
+  fixed_thread: boolean;
+  permission_mode: "safe" | "inherit";
+  approval_mode: "decline" | "accept" | "accept-session";
+};
+
+export type BridgeAppliedConfiguration = {
+  version: number | null;
+  effective: BridgeDesiredConfiguration | null;
+  constraints: BridgeConfigurationConstraints;
+  error: string | null;
+  applied_at: string;
+};
+
+export type BridgeRuntimeStatus = {
+  online: boolean;
+  lease_expires_at: string | null;
+};
+
+export type BridgeConfiguration = {
+  connection_id: string;
+  version: number;
+  desired: BridgeDesiredConfiguration;
+  applied: BridgeAppliedConfiguration | null;
+  runtime: BridgeRuntimeStatus;
+  updated_at: string;
+};
+
+export type BridgeConfigurationResponse = {
+  configuration: BridgeConfiguration;
+};
+
 type IdempotencyArgs = {
   p_idempotency_key: string;
   p_request_hash: string;
@@ -471,6 +598,34 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: "users";
             referencedColumns: ["id"];
+          },
+        ]
+      >;
+      ai_connection_bridge_settings: TableDefinition<
+        AIConnectionBridgeSettingsRow,
+        AIConnectionBridgeSettingsInsert,
+        Partial<AIConnectionBridgeSettingsRow>,
+        [
+          {
+            foreignKeyName: "ai_connection_bridge_settings_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: true;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      ai_connection_bridge_runtimes: TableDefinition<
+        AIConnectionBridgeRuntimeRow,
+        AIConnectionBridgeRuntimeInsert,
+        Partial<AIConnectionBridgeRuntimeRow>,
+        [
+          {
+            foreignKeyName: "ai_connection_bridge_runtimes_settings_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connection_bridge_settings";
+            referencedColumns: ["workspace_id", "connection_id"];
           },
         ]
       >;
@@ -963,6 +1118,31 @@ export interface Database {
             p_token_hash: string;
           };
         Returns: ConnectionResponse;
+      };
+      update_ai_connection_bridge_config: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_connection_id: string;
+            p_expected_version: number;
+            p_enabled: boolean;
+            p_include_thread_titles: boolean;
+            p_max_threads: number;
+            p_max_concurrent_turns: number;
+          };
+        Returns: BridgeConfigurationResponse;
+      };
+      exchange_ai_connection_bridge_config: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_report_sequence: number;
+          p_lease_seconds: number;
+          p_release_runtime: boolean;
+          p_applied_version: number | null;
+          p_effective: Json | null;
+          p_constraints: Json;
+          p_error: string | null;
+        };
+        Returns: BridgeConfigurationResponse;
       };
     };
     Enums: {
