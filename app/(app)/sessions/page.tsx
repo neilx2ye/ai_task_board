@@ -1,15 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BotIcon, PlusIcon } from "lucide-react";
+import { BotIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 
 import { SessionConversationPanel } from "@/components/session-conversation-dialog";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
 import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
+import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
+import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   effectiveSessionStatus,
@@ -136,14 +138,31 @@ export default function SessionsPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
+  const { visibleIds, setSessionVisible } = useVisibleSessionIds();
+  const [pickerConnectionId, setPickerConnectionId] = useState<string | null>(
+    null,
+  );
 
   const sessions = useMemo(
-    () => sessionsQuery.data ?? [],
+    () =>
+      (sessionsQuery.data ?? []).filter(
+        // 已撤销的连接及其 Thread 不在 AI 会话页展示。
+        (session) => !session.connection.revoked_at,
+      ),
     [sessionsQuery.data],
   );
   const connectionGroups = useMemo(
     () => groupSessionsByConnection(sessions),
     [sessions],
+  );
+  const pickerGroup = useMemo(
+    () =>
+      pickerConnectionId
+        ? (connectionGroups.find(
+            (group) => group.connection.id === pickerConnectionId,
+          ) ?? null)
+        : null,
+    [pickerConnectionId, connectionGroups],
   );
   const selectedSession = useMemo(
     () =>
@@ -194,6 +213,11 @@ export default function SessionsPage() {
               {connectionGroups.map(
                 ({ connection, sessions: groupSessions }) => {
                   const deviceOnline = isConnectionAlive(connection);
+                  const visibleSessions = groupSessions.filter((session) =>
+                    visibleIds.has(session.id),
+                  );
+                  const hiddenCount =
+                    groupSessions.length - visibleSessions.length;
                   return (
                     <section
                       key={connection.id}
@@ -222,6 +246,17 @@ export default function SessionsPage() {
                           <Badge variant="outline" className="tabular-nums">
                             {groupSessions.length}
                           </Badge>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 shrink-0"
+                            onClick={() => setPickerConnectionId(connection.id)}
+                            aria-label={`选择「${connection.name}」要显示的 Threads`}
+                            title="选择要显示的 Threads"
+                          >
+                            <ListFilterIcon className="size-3.5" />
+                          </Button>
                         </div>
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           {connection.platform}
@@ -232,7 +267,7 @@ export default function SessionsPage() {
                       </header>
 
                       <div>
-                        {groupSessions.map((session) => (
+                        {visibleSessions.map((session) => (
                           <SessionListRow
                             key={session.id}
                             session={session}
@@ -241,6 +276,16 @@ export default function SessionsPage() {
                             onReserve={() => setTargetSessionId(session.id)}
                           />
                         ))}
+                        {hiddenCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setPickerConnectionId(connection.id)}
+                            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-2.5 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                          >
+                            <ListFilterIcon className="size-3.5 shrink-0" />
+                            已收纳 {hiddenCount} 个 Thread · 点击管理
+                          </button>
+                        ) : null}
                       </div>
                     </section>
                   );
@@ -265,6 +310,21 @@ export default function SessionsPage() {
         }}
         initialSessionId={targetSessionId}
         lockInitialSession
+      />
+
+      <ThreadPickerDialog
+        open={pickerGroup !== null}
+        onOpenChange={(open) => {
+          if (!open) setPickerConnectionId(null);
+        }}
+        connection={pickerGroup?.connection ?? null}
+        sessions={pickerGroup?.sessions ?? []}
+        visibleIds={visibleIds}
+        onToggle={setSessionVisible}
+        onOpen={(sessionId) => {
+          setSelectedSessionId(sessionId);
+          setPickerConnectionId(null);
+        }}
       />
     </div>
   );
