@@ -92,6 +92,8 @@ export type HistoryImportResponse = {
 export type HistorySyncTarget = {
   sessionId: string;
   thread: AppServerThread;
+  /** Defaults on for compatibility with Board versions before this setting. */
+  syncProcessDetails?: boolean;
 };
 
 export type HistoryScanResult = {
@@ -887,9 +889,12 @@ export class HistorySynchronizer {
           complete ? null : (result.nextCursor ?? HISTORY_SAFETY_CAP_CURSOR),
         error: null,
       };
+      const importableItems = target.syncProcessDetails === false
+        ? result.items.filter((item) => item.kind !== "reasoning")
+        : result.items;
       const batches = splitHistoryImportItems(
         this.options.runtimeInstanceId,
-        result.items,
+        importableItems,
         finalSync,
       );
       for (const [index, items] of batches.entries()) {
@@ -979,7 +984,12 @@ export class HistorySynchronizer {
       typeof updatedAt === "number" && Number.isFinite(updatedAt)
         ? String(updatedAt)
         : `legacy:${String(target.thread.createdAt ?? "unknown")}`;
-    return JSON.stringify([target.sessionId, updatedMarker, turnLimit]);
+    return JSON.stringify([
+      target.sessionId,
+      updatedMarker,
+      turnLimit,
+      target.syncProcessDetails !== false,
+    ]);
   }
 
   private async reportFailure(

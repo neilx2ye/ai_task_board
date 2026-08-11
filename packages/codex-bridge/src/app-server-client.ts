@@ -167,6 +167,8 @@ export type AppServerThreadArchiveResponse = Record<string, never>;
 export interface AppServerTurnStartParams {
   threadId: string;
   input: AppServerUserInput[];
+  /** Request a provider-exposed reasoning summary for this and later turns. */
+  summary?: "auto" | "concise" | "detailed" | "none" | null;
   [key: string]: unknown;
 }
 

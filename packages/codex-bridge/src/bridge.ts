@@ -50,6 +50,7 @@ type ClaimedTask = {
 type Session = {
   id: string;
   external_conversation_ref?: string | null;
+  sync_process_details?: boolean;
 };
 
 type ClaimResponse = { task: ClaimedTask | null };
@@ -261,6 +262,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function syncsProcessDetails(session: Session): boolean {
+  return session.sync_process_details !== false;
 }
 
 export function parseStructuredUserInputRequest(
@@ -1205,12 +1210,18 @@ export function completedItemActivity(
       const summary = Array.isArray(item.summary)
         ? item.summary.filter((part): part is string => typeof part === "string").join("\n\n")
         : "";
+      const visibleSummary =
+        summary.trim() ||
+        (bufferedText && bufferedText.trim().length > 0 ? bufferedText : null);
+      // A reasoning item is only useful to the Board when Codex exposed a
+      // readable summary. Never manufacture a placeholder (or fall back to
+      // raw `item.content`) because that both clutters history and could blur
+      // the disclosure boundary.
+      if (!visibleSummary) return null;
       return {
         kind: "reasoning",
         content: redactHarnessText(
-          summary.trim() ||
-            (bufferedText && bufferedText.length > 0 ? bufferedText : null) ||
-            "（无可展示的思考摘要）",
+          visibleSummary,
           100_000,
         ),
         data: protocolData("completed", turnId, id, {
@@ -1417,13 +1428,20 @@ class SessionWorker {
 
   constructor(
     readonly thread: ThreadRecord,
-    readonly session: Session,
+    private session: Session,
     private readonly configuration: BridgeConfiguration,
     private readonly board: BoardClient,
     private readonly appServer: CodexAppServerClient,
     private readonly limiter: TurnLimiter,
     private readonly onFatal: (error: Error) => void,
   ) {}
+
+  updateSession(session: Session): void {
+    if (session.id !== this.session.id) {
+      throw new Error(`Thread ${this.thread.id} received a different Session id`);
+    }
+    this.session = session;
+  }
 
   start(): Promise<void> {
     if (!this.runPromise) this.runPromise = this.run();
@@ -1970,6 +1988,9 @@ class SessionWorker {
           threadId: this.thread.id,
           clientUserMessageId: task.id,
           input: [{ type: "text", text, text_elements: [] }],
+          // Avoid generating summary output when this Session only retains
+          // replies; otherwise make readable summaries deterministic.
+          summary: syncsProcessDetails(this.session) ? "concise" : "none",
           ...(this.configuration.permissionMode === "safe"
             ? {
                 cwd: workspaceRoot,
@@ -2340,6 +2361,12 @@ class SessionWorker {
   ): Promise<void> {
     const task = this.activeClaim;
     if (!task) return;
+    if (
+      activity.kind !== "assistant_message" &&
+      !syncsProcessDetails(this.session)
+    ) {
+      return;
+    }
     await this.board.request("/api/ai/sessions/activity", {
       method: "POST",
       sessionId: this.session.id,
@@ -2358,14 +2385,18 @@ class SessionWorker {
     });
   }
 
-  private heartbeatSession(): Promise<unknown> {
-    return this.board.request("/api/ai/sessions/presence", {
-      method: "POST",
-      sessionId: this.session.id,
-      idempotencyKey: idempotencyKey("session-heartbeat"),
-      signal: this.stopController.signal,
-      body: {},
-    });
+  private async heartbeatSession(): Promise<void> {
+    const response = await this.board.request<{ session?: Session }>(
+      "/api/ai/sessions/presence",
+      {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey("session-heartbeat"),
+        signal: this.stopController.signal,
+        body: {},
+      },
+    );
+    if (response.session) this.updateSession(response.session);
   }
 
   private heartbeatClaim(task: ClaimedTask): Promise<unknown> {
@@ -2981,16 +3012,24 @@ class DeviceBridge {
       threads.flatMap((thread) => {
         const session = sessions.get(thread.id);
         return session && isInteractiveHistoryThread(thread)
-          ? [{ thread, sessionId: session.id }]
+          ? [{
+              thread,
+              sessionId: session.id,
+              syncProcessDetails: syncsProcessDetails(session),
+            }]
           : [];
       }),
     );
 
     for (const thread of threads) {
-      if (this.workers.has(thread.id)) continue;
       const session = sessions.get(thread.id);
       if (!session) {
         process.stderr.write(`看板未返回 thread ${thread.id} 对应的 Session\n`);
+        continue;
+      }
+      const existingWorker = this.workers.get(thread.id);
+      if (existingWorker) {
+        existingWorker.updateSession(session);
         continue;
       }
       const worker = new SessionWorker(

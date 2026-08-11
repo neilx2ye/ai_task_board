@@ -50,6 +50,33 @@ lines.on("line", (line) => {
         turnId,
         item: { type: "agentMessage", id: itemId, text: "", phase: "final_answer" },
       } });
+      send({ method: "item/reasoning/summaryTextDelta", params: {
+        threadId, turnId, itemId: "reasoning-" + threadId, delta: "Checked " + threadId,
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          type: "reasoning",
+          id: "reasoning-" + threadId,
+          summary: ["Checked " + threadId],
+        },
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          type: "commandExecution",
+          id: "command-" + threadId,
+          command: "echo ok",
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: "ok",
+        },
+      } });
+      send({ method: "thread/tokenUsage/updated", params: {
+        threadId, turnId, tokenUsage: { totalTokens: 42 },
+      } });
       send({ method: "turn/completed", params: {
         threadId,
         turn: { id: turnId, status: "completed", error: null },
@@ -223,6 +250,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
             sessions: threads.map((thread, index) => ({
               id: `session-${index + 1}`,
               external_conversation_ref: thread.external_conversation_ref,
+              sync_process_details: index !== 0,
             })),
           });
           return;
@@ -327,6 +355,8 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"requestAttestation":false');
       expect(stderr).toContain('"approvalPolicy":"on-request"');
       expect(stderr).toContain('"approvalsReviewer":"user"');
+      expect(stderr).toContain('"summary":"none"');
+      expect(stderr).toContain('"summary":"concise"');
       expect(stderr).toContain('"sandbox":"workspace-write"');
       expect(stderr).toContain('"type":"workspaceWrite"');
       expect(stderr).toContain('"writableRoots":["/workspace/a"]');
@@ -364,6 +394,16 @@ describe("Codex Bridge multi-thread device runtime", () => {
             activity.body.content === " ",
         ),
       ).toBe(true);
+      expect(
+        activities
+          .filter((activity) => activity.sessionId === "session-1")
+          .every((activity) => activity.body.kind === "assistant_message"),
+      ).toBe(true);
+      expect(
+        activities
+          .filter((activity) => activity.sessionId === "session-2")
+          .map((activity) => activity.body.kind),
+      ).toEqual(expect.arrayContaining(["reasoning", "command", "usage"]));
       expect(JSON.stringify(activities)).not.toContain("LEAKED OLD TURN");
     },
     20_000,

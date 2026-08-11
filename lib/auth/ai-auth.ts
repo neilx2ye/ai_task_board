@@ -62,7 +62,7 @@ export async function authorizeAISession(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("ai_sessions")
-    .select("id")
+    .select("id, sync_process_details")
     .eq("id", sessionId)
     .eq("connection_id", auth.connectionId)
     .eq("workspace_id", auth.workspaceId)
@@ -71,7 +71,11 @@ export async function authorizeAISession(
   if (!data) {
     throw new AppError("SESSION_NOT_AUTHORIZED", "The session does not belong to this connection");
   }
-  return { ...auth, sessionId: data.id };
+  return {
+    ...auth,
+    sessionId: data.id,
+    syncProcessDetails: data.sync_process_details,
+  };
 }
 
 export function sessionIdFromRequest(request: Request): string {

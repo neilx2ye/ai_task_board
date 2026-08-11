@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
   HistorySyncStatus,
+  ProcessDetailsSyncToggle,
   historySyncUiState,
 } from "@/components/session-conversation-dialog";
+import type { SessionListItem } from "@/lib/types/domain";
 
 const historySync = {
   status: "syncing" as const,
@@ -51,5 +54,26 @@ describe("session history UI state", () => {
     expect(markup).toContain("已扫描 12/30 turns");
     expect(markup).toContain("已导入 25 条");
     expect(markup).toContain("本次上限 50 turns");
+  });
+
+  it("renders a per-session process-detail switch in its disabled state", () => {
+    const queryClient = new QueryClient();
+    const markup = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ProcessDetailsSyncToggle, {
+          session: {
+            id: "session-private",
+            sync_process_details: false,
+          } as SessionListItem,
+        }),
+      ),
+    );
+
+    expect(markup).toContain('role="switch"');
+    expect(markup).toContain('data-process-details-sync="disabled"');
+    expect(markup).toContain("同步过程详情");
+    expect(markup).toContain("仅同步 AI 回复与结构化问题");
   });
 });

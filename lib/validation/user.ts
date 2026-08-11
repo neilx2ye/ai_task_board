@@ -152,6 +152,10 @@ export const renameThreadSchema = z
   .object({ name: nonEmptyText.max(200) })
   .strict();
 
+export const sessionProcessDetailsSyncSchema = z
+  .object({ sync_process_details: z.boolean() })
+  .strict();
+
 const userSubtaskSchema = z
   .object({
     client_ref: z.string().trim().min(1).max(100),
@@ -222,5 +226,8 @@ export type CreateConnectionInput = z.infer<typeof createConnectionSchema>;
 export type RenameConnectionInput = z.infer<typeof renameConnectionSchema>;
 export type CreateThreadInput = z.infer<typeof createThreadSchema>;
 export type RenameThreadInput = z.infer<typeof renameThreadSchema>;
+export type SessionProcessDetailsSyncInput = z.infer<
+  typeof sessionProcessDetailsSyncSchema
+>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
 export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;

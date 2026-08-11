@@ -110,6 +110,10 @@ Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新�
 
 Board 中已导入的历史是只追加数据。关闭历史同步或降低最近 turn 上限只会停止后续导入，不会删除此前已经上传的内容；需要清除时应使用 Board 对应的 Workspace / 数据删除流程。
 
+## 逐会话过程详情开关
+
+每个会话框顶部都有“同步过程详情”开关，默认开启。关闭后，该 Session 只继续同步 AI 回复，以及独立的 blocking 结构化问题/答案流程；思考摘要、命令、文件变更、工具、网页搜索、计划、错误、状态和用量不会再写入 Board。服务端会在设置保存后立即拒绝这些过程活动，因此旧 Bridge 或尚未完成配置刷新的 worker 也不会继续落库；Bridge 在下一次 Session 心跳或清单刷新时取得新值，并停止生成过程上传，同时用 `summary: "none"` 启动后续 turn。既有活动和已导入摘要不会被反向删除，重新开启也只恢复后续同步。
+
 未启用 Web 配置时，Bridge 仍会周期性上报本机边界并续租运行实例，但忽略网页期望值；Web 会明确显示“本机禁止 Web 配置”。同一 Connection 的另一个 Bridge 在租约有效时只会待机，不会启动 worker，直到旧实例释放或最长约 30 秒的租约过期。续租长期失败时，持有者会在数据库租约可能失效前主动停止所有 worker。标题可能包含首条 prompt 预览，开启前应确认当前 Workspace 的成员都可以看到这类元数据。
 
 ## 审批安全策略
@@ -161,7 +165,7 @@ systemctl --user enable --now ai-task-board-codex-bridge.service
 4. Bridge 将完整清单同步到 Board。每个本地 thread 的稳定 ID 都映射为一个 Board Session；以后发现的新 thread 会在下一次清单同步加入，离开清单的 worker 会停止。
 5. 每个 Session 建立自己的认证 SSE 唤醒流并保持心跳。SSE 只传固定的 `ready` / `wake` 提示，真正的任务仍通过 REST 原子领取；断线时自适应轮询兜底。
 6. 每个 thread 一次只执行一张 Task。有效的设备级并发上限限制不同 thread 同时运行的 turn 数，多余工作继续排队。
-7. Bridge 调用 `thread/resume` 和 `turn/start`，再消费 App Server 的 JSONL 通知。AI 文本、思考摘要和命令输出 delta 会按约 500 毫秒或 8 KiB 聚合后上传，完成事件也会持久化。
+7. Bridge 调用 `thread/resume` 和 `turn/start`；过程详情开启时显式请求 `concise` 思考摘要，关闭时请求 `none`，再消费 App Server 的 JSONL 通知。允许同步的 AI 文本、思考摘要和命令输出 delta 会按约 500 毫秒或 8 KiB 聚合后上传，完成事件也会持久化；若提供方没有暴露任何可读摘要，则不会写入空占位活动。
 8. 若 App Server 在 turn 中发出 blocking `item/tool/requestUserInput`，Bridge 将结构化问题持久化到 Board 并保持原请求等待；Web 选择框提交后，Bridge 把答案返回该请求，同一个 turn 原地继续。等待期间 Task claim 和心跳均不释放。
 9. `turn/completed` 后，最后一条 AI 消息用于完成 Task；错误会把 Task 标记为失败。Bridge 随后继续处理对应 Session 队列。
 
@@ -200,7 +204,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 
 ## 当前限制
 
-- **Web 配置目前是设备级六项。** 0.4 动态控制整体启停、标题上传、历史同步、最大 thread 数、并行 turn 数和最近历史 turn 数；Session 名称前缀与逐个 thread 的 allow/deny 仍由设备配置或后续版本处理，网页侧栏隐藏某个 Session 也不会停止其本地 worker。
+- **Bridge Web 配置仍是设备级六项。** 0.4 动态控制整体启停、标题上传、历史同步、最大 thread 数、并行 turn 数和最近历史 turn 数；过程详情同步是另一个逐 Session 开关，但不会停止本地 worker。Session 名称前缀与逐个 thread 的 allow/deny 仍由设备配置或后续版本处理，网页侧栏隐藏某个 Session 也不会停止其本地 worker。
 - **历史同步是限量白名单，不是完整原始日志镜像。** 只补录最近完成 turn 的用户纯文本、最终回复和服务商思考摘要；工具过程、附件、本机路径与原始推理不会补录。扩大 turn 上限后会从最近历史重新幂等扫描；关闭或降低上限不会反向删除已导入内容。
 - **没有可靠的运行中 steer。** 忙碌时的新网页消息排到下一张 Task，当前 turn 完成后才执行。
 - **没有网页审批。** 默认安全拒绝 App Server 审批；可选自动批准是设备端静态策略，不是用户逐次确认。

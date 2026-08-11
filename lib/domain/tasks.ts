@@ -272,6 +272,12 @@ export async function reportSessionActivity(
   input: ReportSessionActivityInput,
   idempotencyKey: string,
 ): Promise<unknown> {
+  if (
+    context.syncProcessDetails === false &&
+    input.kind !== "assistant_message"
+  ) {
+    return { activity: null, message: null, suppressed: true };
+  }
   return callDomainRpc("report_session_activity", {
     ...aiContext(context),
     p_task_id: input.task_id,

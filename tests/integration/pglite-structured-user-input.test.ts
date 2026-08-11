@@ -19,6 +19,7 @@ const migrations = [
   "20260810170000_codex_history_sync.sql",
   "20260810180000_web_thread_management.sql",
   "20260811120000_structured_user_input.sql",
+  "20260811130000_session_process_detail_sync.sql",
 ];
 
 describe("structured Web user input migration", () => {
@@ -157,6 +158,28 @@ describe("structured Web user input migration", () => {
 
   afterAll(async () => {
     await database?.close();
+  });
+
+  it("defaults process-detail synchronization on and exposes preference updates", async () => {
+    const initial = await database.query<{
+      session: { sync_process_details: boolean };
+    }>(
+      "select public._session_payload($1::uuid) as session",
+      [sessionId],
+    );
+    expect(initial.rows[0].session.sync_process_details).toBe(true);
+
+    await database.query(
+      "update public.ai_sessions set sync_process_details = false where id = $1::uuid",
+      [sessionId],
+    );
+    const updated = await database.query<{
+      session: { sync_process_details: boolean };
+    }>(
+      "select public._session_payload($1::uuid) as session",
+      [sessionId],
+    );
+    expect(updated.rows[0].session.sync_process_details).toBe(false);
   });
 
   it("retains the claim, accepts Web answers, and clears secrets on completion", async () => {

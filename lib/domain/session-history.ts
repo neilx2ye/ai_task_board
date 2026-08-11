@@ -14,6 +14,9 @@ export async function importSessionHistory(
   context: AISessionContext,
   input: ImportSessionHistoryInput,
 ) {
+  const items = context.syncProcessDetails === false
+    ? input.items.filter((item) => item.kind !== "reasoning")
+    : input.items;
   return callDomainRpc("import_session_history", {
     p_workspace_id: context.workspaceId,
     p_connection_id: context.connectionId,
@@ -21,7 +24,7 @@ export async function importSessionHistory(
     p_session_id: context.sessionId,
     p_runtime_instance_id: input.runtime_instance_id,
     p_report_sequence: input.report_sequence,
-    p_items: input.items as Json,
+    p_items: items as Json,
     p_sync: input.sync as Json,
   });
 }

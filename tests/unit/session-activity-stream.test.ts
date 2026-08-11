@@ -8,6 +8,7 @@ type AppActivityOptions = {
   id: string;
   phase: "started" | "delta" | "completed";
   content: string | null;
+  kind?: "assistant_message" | "reasoning";
   sessionId?: string;
   turnRef?: string;
   itemRef?: string;
@@ -19,6 +20,7 @@ function appActivity({
   id,
   phase,
   content,
+  kind = "assistant_message",
   sessionId = "session-1",
   turnRef = "turn-1",
   itemRef = "item-1",
@@ -31,7 +33,7 @@ function appActivity({
     session_id: sessionId,
     task_id: null,
     task_message_id: null,
-    kind: "assistant_message",
+    kind,
     actor_type: "ai",
     content,
     data: {
@@ -111,6 +113,52 @@ describe("reduceAppServerActivityStream", () => {
 
     expect(reduced).toEqual([completed]);
     expect(reduced[0]).toBe(completed);
+  });
+
+  it("recovers reasoning deltas hidden by a legacy empty completion", () => {
+    const reduced = reduceAppServerActivityStream([
+      appActivity({
+        id: "3",
+        kind: "reasoning",
+        phase: "completed",
+        content: "（无可展示的思考摘要）",
+      }),
+      appActivity({
+        id: "1",
+        kind: "reasoning",
+        phase: "delta",
+        chunkIndex: 0,
+        content: "检查实现",
+      }),
+      appActivity({
+        id: "2",
+        kind: "reasoning",
+        phase: "delta",
+        chunkIndex: 1,
+        content: "并定位问题",
+      }),
+    ]);
+
+    expect(reduced).toHaveLength(1);
+    expect(reduced[0]).toMatchObject({
+      id: "3",
+      kind: "reasoning",
+      content: "检查实现并定位问题",
+      data: expect.objectContaining({ phase: "completed" }),
+    });
+  });
+
+  it("drops completed reasoning groups with no exposed summary", () => {
+    expect(
+      reduceAppServerActivityStream([
+        appActivity({
+          id: "1",
+          kind: "reasoning",
+          phase: "completed",
+          content: null,
+        }),
+      ]),
+    ).toEqual([]);
   });
 
   it("isolates groups by session, turn, and item", () => {

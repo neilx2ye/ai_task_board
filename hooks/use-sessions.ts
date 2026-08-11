@@ -5,13 +5,14 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
 } from "@tanstack/react-query";
 import { useRef } from "react";
 
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
 import type { SessionConversation, SessionListItem } from "@/lib/types/domain";
-import type { AIThreadCommandRow } from "@/lib/types/database";
+import type { AISessionRow, AIThreadCommandRow } from "@/lib/types/database";
 
 const SESSIONS_KEY = ["sessions"] as const;
 const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
@@ -224,6 +225,47 @@ export function useRenameThread(sessionId: string) {
             ? { ...session, name: input.name, user_name: input.name }
             : session,
         ),
+      );
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+    },
+  });
+}
+
+type SessionProcessDetailsSyncResult = { session: AISessionRow };
+
+export function useUpdateSessionProcessDetailsSync(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { sync_process_details: boolean }) =>
+      apiFetch<SessionProcessDetailsSyncResult>(
+        `/api/user/sessions/${sessionId}/process-details`,
+        { method: "PATCH", json: input },
+      ),
+    onSuccess: ({ session }) => {
+      const syncProcessDetails = session.sync_process_details;
+      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
+        current?.map((item) =>
+          item.id === sessionId
+            ? { ...item, sync_process_details: syncProcessDetails }
+            : item,
+        ),
+      );
+      queryClient.setQueryData<InfiniteData<SessionConversation>>(
+        sessionKey(sessionId),
+        (current) =>
+          current
+            ? {
+                ...current,
+                pages: current.pages.map((page) => ({
+                  ...page,
+                  session: {
+                    ...page.session,
+                    sync_process_details: syncProcessDetails,
+                  },
+                })),
+              }
+            : current,
       );
       void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
       void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });

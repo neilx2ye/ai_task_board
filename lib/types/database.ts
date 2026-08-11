@@ -224,6 +224,7 @@ export type AISessionRow = {
   working_directory: string | null;
   archived_at: string | null;
   inventory_active: boolean;
+  sync_process_details: boolean;
   user_name: string | null;
   deletion_requested_at: string | null;
   created_at: string;
@@ -245,6 +246,7 @@ export type AISessionInsert = {
   working_directory?: string | null;
   archived_at?: string | null;
   inventory_active?: boolean;
+  sync_process_details?: boolean;
   user_name?: string | null;
   deletion_requested_at?: string | null;
   created_at?: string;

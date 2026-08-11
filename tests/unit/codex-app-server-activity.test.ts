@@ -121,6 +121,21 @@ describe("Codex App Server activity mapping", () => {
     expect(command?.data).toMatchObject({ output: "line one\nline two" });
   });
 
+  it("omits reasoning items when the provider exposed no readable summary", () => {
+    expect(
+      completedItemActivity(
+        {
+          type: "reasoning",
+          id: "reasoning-empty",
+          summary: ["  "],
+          content: ["hidden raw model reasoning"],
+        },
+        "turn-empty",
+        null,
+      ),
+    ).toBeNull();
+  });
+
   it("chunks large UTF-8 deltas before buffering and bounds accumulated text", () => {
     const source = `${"界".repeat(5_000)} ${"x".repeat(20_000)}`;
     const chunks = [...utf8DeltaChunks(source)];

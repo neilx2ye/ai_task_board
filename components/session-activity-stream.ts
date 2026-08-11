@@ -17,6 +17,8 @@ type AppServerActivityGroup = {
   completed: SessionActivityItem | null;
 };
 
+const LEGACY_EMPTY_REASONING_SUMMARY = "（无可展示的思考摘要）";
+
 function isJsonObject(
   value: SessionActivityItem["data"],
 ): value is { [key: string]: Json | undefined } {
@@ -88,21 +90,39 @@ function laterActivity(
     : current;
 }
 
-function materializeGroup(group: AppServerActivityGroup): SessionActivityItem {
-  if (group.completed) return group.completed;
-
+function materializeGroup(
+  group: AppServerActivityGroup,
+): SessionActivityItem | null {
   const deltas = [...group.deltas.entries()].sort(
     ([leftIndex], [rightIndex]) => leftIndex - rightIndex,
   );
+  const deltaContent = deltas
+    .map(([, activity]) => activity.content)
+    .filter((content): content is string => content !== null)
+    .join("");
+
+  if (group.completed) {
+    const completedContent = group.completed.content?.trim() ?? "";
+    const emptyReasoning =
+      group.completed.kind === "reasoning" &&
+      (!completedContent || completedContent === LEGACY_EMPTY_REASONING_SUMMARY);
+    if (!emptyReasoning) return group.completed;
+
+    // Older Bridge versions persisted a placeholder completion even after
+    // uploading real summary deltas. Recover those deltas for existing rows;
+    // if Codex exposed nothing, omit the empty reasoning card altogether.
+    return deltaContent.trim()
+      ? { ...group.completed, content: deltaContent }
+      : null;
+  }
+
   if (deltas.length > 0) {
     const base = deltas[0][1];
-    const chunks = deltas
-      .map(([, activity]) => activity.content)
-      .filter((content): content is string => content !== null);
+    if (base.kind === "reasoning" && !deltaContent.trim()) return null;
 
     return {
       ...base,
-      content: chunks.length > 0 ? chunks.join("") : null,
+      content: deltaContent || null,
     };
   }
 
@@ -158,7 +178,10 @@ export function reduceAppServerActivityStream(
     }
     if (emittedGroups.has(descriptor.key)) continue;
 
-    reduced.push(materializeGroup(groups.get(descriptor.key) as AppServerActivityGroup));
+    const materialized = materializeGroup(
+      groups.get(descriptor.key) as AppServerActivityGroup,
+    );
+    if (materialized) reduced.push(materialized);
     emittedGroups.add(descriptor.key);
   }
 

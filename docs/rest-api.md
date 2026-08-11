@@ -484,6 +484,7 @@ curl --fail-with-body -sS \
 
 - `GET /api/user/sessions/:sessionId` 返回该 Session、相关任务、任务消息、任务事件和 `session_activities`，供会话对话框组合时间线。默认返回最新 100 条结构化活动；用响应中的 opaque `pagination.activities.oldest_cursor` 作为 `before_activity_cursor` 继续加载更早记录，`limit` 范围为 `1..200`。旧 `before_activity_id` 只在滚动升级窗口内兼容，新客户端不得依赖。
 - `POST /api/user/sessions/:sessionId/turns` 接收 `{ "content": "..." }` 和 `Idempotency-Key`。目标 Session 必须仍在线；服务端原子创建定向分配给它的 `ready` Task、用户消息和 `user_message` 活动，并返回 HTTP `201`。
+- `PATCH /api/user/sessions/:sessionId/process-details` 接收 `{ "sync_process_details": false }`。关闭后，服务端立即忽略该 Session 后续的非 `assistant_message` 活动，并从后续历史导入批次中移除 reasoning；结构化问题使用独立请求流，仍会正常显示和回答。Bridge 会在下一次会话心跳或清单刷新后同时停止生成这些上传，并把 `turn/start.summary` 改为 `none`。重新开启只影响后续同步；既有活动不会被删除。
 
 新 Task 的临时名称从消息的第一个非空句生成，最长 80 个 Unicode code point；当前不会额外调用模型命名。Codex Bridge 通常由 SSE 近实时唤醒并领取它，通知不可用时由自适应轮询兜底。若该 thread 的上一轮仍在执行，新 Task 只会排队；0.3 仍没有可靠的运行中 steer、网页 interrupt 或网页审批。
 

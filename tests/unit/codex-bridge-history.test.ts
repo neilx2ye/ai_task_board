@@ -618,6 +618,97 @@ describe("Codex Bridge history sync", () => {
     }
   });
 
+  it("omits reasoning history when process-detail synchronization is disabled", async () => {
+    const reports: Array<{
+      sync: HistorySyncReport;
+      items: HistoryImportItem[];
+    }> = [];
+    const synchronizer = new HistorySynchronizer({
+      appServer: {
+        threadTurnsList: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: "turn-private",
+              status: "completed",
+              startedAt: 100,
+              itemsView: "notLoaded",
+            },
+          ],
+          nextCursor: null,
+        }),
+        threadItemsList: vi.fn().mockResolvedValue({
+          data: [
+            {
+              turnId: "turn-private",
+              item: {
+                type: "userMessage",
+                id: "user-private",
+                content: [{ type: "text", text: "Please continue" }],
+              },
+            },
+            {
+              turnId: "turn-private",
+              item: {
+                type: "reasoning",
+                id: "reasoning-private",
+                summary: ["Readable summary"],
+              },
+            },
+            {
+              turnId: "turn-private",
+              item: {
+                type: "agentMessage",
+                id: "answer-private",
+                phase: "final_answer",
+                text: "Done",
+              },
+            },
+          ],
+          nextCursor: null,
+        }),
+      } as never,
+      runtimeInstanceId: "019f1234-5678-7abc-8def-0123456789ab",
+      configuration: () => ({ enabled: true, turnLimit: 1 }),
+      importHistory: vi.fn(async (_sessionId, request) => {
+        reports.push({ sync: request.sync, items: request.items });
+        return {
+          imported: { inserted: request.items.length, replayed: 0 },
+          history_sync: {
+            ...request.sync,
+            imported_items: request.items.length,
+            started_at: "2026-08-10T00:00:00.000Z",
+            completed_at: null,
+            updated_at: "2026-08-10T00:00:00.000Z",
+          },
+        };
+      }),
+    });
+    const controller = new AbortController();
+    const running = synchronizer.start(controller.signal);
+    synchronizer.updateTargets([
+      {
+        sessionId: "session-private",
+        thread: { id: "thread-private", source: "cli", createdAt: 100 },
+        syncProcessDetails: false,
+      },
+    ]);
+
+    const deadline = Date.now() + 2_000;
+    while (!reports.some((report) => report.sync.status === "complete")) {
+      if (Date.now() >= deadline) {
+        throw new Error("history completion was not reported");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(
+      reports.flatMap((report) => report.items).map((item) => item.kind),
+    ).toEqual(["user_message", "assistant_message"]);
+    synchronizer.stop();
+    controller.abort(new Error("test complete"));
+    await expect(running).resolves.toBeUndefined();
+  });
+
   it("reports history failures without terminating the background runtime", async () => {
     const reports: HistorySyncReport[] = [];
     const importer: HistoryImporter = vi.fn(async (_sessionId, request) => {
