@@ -33,16 +33,19 @@ export async function syncSessions(
   input: SyncSessionsInput,
   idempotencyKey: string,
 ): Promise<unknown> {
-  return callDomainRpc("sync_ai_sessions", {
+  return callDomainRpc("sync_ai_sessions_with_directories", {
     p_workspace_id: auth.workspaceId,
     p_connection_id: auth.connectionId,
     p_api_token_hash: auth.tokenHash,
     p_bridge_version: input.bridge_version,
+    p_directories: input.directories
+      ? (JSON.parse(JSON.stringify(input.directories)) as Json)
+      : null,
     // Zod defaults normalize every thread, while this boundary also removes
     // optional `undefined` keys before handing the value to supabase-js.
     p_threads: JSON.parse(JSON.stringify(input.threads)) as Json,
     p_idempotency_key: idempotencyKey,
-    p_request_hash: hashRequest("sync_ai_sessions", input),
+    p_request_hash: hashRequest("sync_ai_sessions_with_directories", input),
   });
 }
 

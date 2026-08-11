@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const FAKE_CODEX = `#!/usr/bin/env node
 const readline = require("node:readline");
 const threads = [
-  { id: "thread-a", name: "Alpha", preview: "Alpha", cwd: "/workspace/a", parentThreadId: null },
-  { id: "thread-b", name: "Beta", preview: "Beta", cwd: "/workspace/b", parentThreadId: null },
+  { id: "thread-a", name: "Alpha", preview: "Alpha", cwd: process.env.FAKE_THREAD_A_CWD || "/workspace/a", parentThreadId: null },
+  { id: "thread-b", name: "Beta", preview: "Beta", cwd: process.env.FAKE_THREAD_B_CWD || "/workspace/b", parentThreadId: null },
 ];
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -40,6 +40,11 @@ lines.on("line", (line) => {
     } });
     send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta: "Working" } });
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
+    send({
+      id: "approval-" + threadId,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId, itemId: "approval-item-" + threadId, command: "echo ok" },
+    });
     setTimeout(() => {
       send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta: " " } });
     }, 600);
@@ -84,6 +89,8 @@ lines.on("line", (line) => {
     }, 1_200);
   } else if (message.method === "turn/interrupt") {
     send({ id: message.id, result: {} });
+  } else if (String(message.id).startsWith("approval-") && !message.method) {
+    process.stderr.write("FAKE_APPROVAL " + JSON.stringify(message) + "\\n");
   }
 });
 `;
@@ -217,6 +224,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
       const claimedSessions = new Set<string>();
       const activities: SeenActivity[] = [];
       let syncedInventory: Array<Record<string, unknown>> = [];
+      let syncedDirectories: Array<Record<string, unknown>> = [];
       const completedSessions = new Set<string>();
       const wakeResponses = new Set<ServerResponse>();
       let resolveCompleted!: () => void;
@@ -245,6 +253,9 @@ describe("Codex Bridge multi-thread device runtime", () => {
         if (pathname === "/api/ai/sessions/sync") {
           const body = await bodyOf(request);
           const threads = body.threads as Array<Record<string, unknown>>;
+          syncedDirectories = body.directories as Array<
+            Record<string, unknown>
+          >;
           syncedInventory = threads;
           json(response, {
             sessions: threads.map((thread, index) => ({
@@ -293,6 +304,12 @@ describe("Codex Bridge multi-thread device runtime", () => {
       if (!address || typeof address === "string") throw new Error("No test port");
 
       temporaryDirectory = await mkdtemp(path.join(tmpdir(), "atb-bridge-test-"));
+      const workingDirectoryA = path.join(temporaryDirectory, "a");
+      const workingDirectoryB = path.join(temporaryDirectory, "b");
+      await Promise.all([
+        mkdir(workingDirectoryA),
+        mkdir(workingDirectoryB),
+      ]);
       const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
       await writeFile(fakeCodex, FAKE_CODEX, "utf8");
       await chmod(fakeCodex, 0o755);
@@ -303,8 +320,14 @@ describe("Codex Bridge multi-thread device runtime", () => {
         AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_connection_token",
         CODEX_BINARY: fakeCodex,
         CODEX_MAX_THREADS: "2",
-        CODEX_THREAD_SCOPE: "all",
+        CODEX_THREAD_SCOPE: "cwd",
+        CODEX_WORKING_DIRECTORIES: JSON.stringify([
+          { key: "a", name: "Project A", path: workingDirectoryA },
+          { key: "b", name: "Project B", path: workingDirectoryB },
+        ]),
         CODEX_MAX_CONCURRENT_TURNS: "2",
+        FAKE_THREAD_A_CWD: workingDirectoryA,
+        FAKE_THREAD_B_CWD: workingDirectoryB,
         OPENAI_API_KEY: "codex_auth_is_preserved",
         AI_TASK_BOARD_POLL_INTERVAL_MS: "500",
         AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
@@ -343,10 +366,28 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(completedSessions).toEqual(new Set(["session-1", "session-2"]));
       expect(JSON.stringify(syncedInventory)).not.toContain("Alpha");
       expect(JSON.stringify(syncedInventory)).not.toContain("Beta");
+      expect(syncedDirectories).toEqual([
+        {
+          directory_key: "a",
+          name: "Project A",
+          working_directory: workingDirectoryA,
+        },
+        {
+          directory_key: "b",
+          name: "Project B",
+          working_directory: workingDirectoryB,
+        },
+      ]);
       expect(syncedInventory).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ name: "Codex · a · thread-a" }),
-          expect.objectContaining({ name: "Codex · b · thread-b" }),
+          expect.objectContaining({
+            name: "Codex · a · thread-a",
+            directory_key: "a",
+          }),
+          expect.objectContaining({
+            name: "Codex · b · thread-b",
+            directory_key: "b",
+          }),
         ]),
       );
       expect(stderr).toContain(
@@ -359,7 +400,15 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"summary":"concise"');
       expect(stderr).toContain('"sandbox":"workspace-write"');
       expect(stderr).toContain('"type":"workspaceWrite"');
-      expect(stderr).toContain('"writableRoots":["/workspace/a"]');
+      expect(stderr).toContain(
+        `"writableRoots":[${JSON.stringify(workingDirectoryA)}]`,
+      );
+      expect(stderr).toContain(
+        'FAKE_APPROVAL {"id":"approval-thread-a","result":{"decision":"accept"}}',
+      );
+      expect(stderr).toContain(
+        'FAKE_APPROVAL {"id":"approval-thread-b","result":{"decision":"accept"}}',
+      );
       expect(
         activities.filter((activity) => activity.body.kind === "assistant_message"),
       ).toEqual(

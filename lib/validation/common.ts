@@ -8,6 +8,10 @@ export const capabilitiesSchema = z.array(capabilitySchema).max(100).default([])
 export const progressPercentSchema = z.number().int().min(0).max(100).nullable().optional();
 export const prioritySchema = z.number().int().min(-1000).max(1000).default(0);
 export const idempotencyKeySchema = z.string().trim().min(1).max(200);
+export const bridgeDirectoryKeySchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 
 const storageUuidPattern =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;

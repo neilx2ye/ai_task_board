@@ -8,12 +8,83 @@ import {
   effectiveBridgeConfiguration,
   isExactWorkingDirectory,
   loadConfiguration,
+  managedDirectoryForWorkingDirectory,
+  parseWorkingDirectories,
   resolveRemoteConfiguration,
   stopWorkersForRetirement,
   TurnLimiter,
+  workingDirectoryForThreadCreate,
 } from "../../packages/codex-bridge/src/bridge";
 
 describe("Codex Bridge runtime primitives", () => {
+  it("parses an exact multi-directory allowlist with a stable default", () => {
+    const directories = parseWorkingDirectories(
+      JSON.stringify([
+        { key: "main", name: "Main app", path: "/workspace/main" },
+        { key: "docs", path: "/workspace/docs" },
+      ]),
+      "/workspace/fallback",
+    );
+
+    expect(directories).toEqual([
+      {
+        key: "main",
+        name: "Main app",
+        workingDirectory: "/workspace/main",
+      },
+      {
+        key: "docs",
+        name: "docs",
+        workingDirectory: "/workspace/docs",
+      },
+    ]);
+    expect(
+      managedDirectoryForWorkingDirectory("/workspace/docs", directories),
+    ).toMatchObject({ key: "docs" });
+    expect(
+      managedDirectoryForWorkingDirectory(
+        "/workspace/docs/child",
+        directories,
+      ),
+    ).toBeNull();
+    expect(
+      workingDirectoryForThreadCreate(
+        "docs",
+        directories,
+        "/workspace/fallback",
+      ),
+    ).toBe("/workspace/docs");
+    expect(() =>
+      workingDirectoryForThreadCreate(
+        "unknown",
+        directories,
+        "/workspace/fallback",
+      ),
+    ).toThrow("本机白名单");
+
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_WORKING_DIRECTORY: "/workspace/legacy",
+      CODEX_WORKING_DIRECTORIES: JSON.stringify([
+        { key: "main", path: "/workspace/main" },
+        { key: "docs", path: "/workspace/docs" },
+      ]),
+    });
+    expect(configuration.workingDirectory).toBe("/workspace/main");
+    expect(configuration.workingDirectories).toHaveLength(2);
+
+    expect(() =>
+      parseWorkingDirectories(
+        JSON.stringify([
+          { key: "same", path: "/workspace/main" },
+          { key: "same", path: "/workspace/docs" },
+        ]),
+        "/workspace/fallback",
+      ),
+    ).toThrow("重复 key");
+  });
+
   it("removes delay abort listeners after normal completion", async () => {
     const controller = new AbortController();
 
@@ -69,7 +140,6 @@ describe("Codex Bridge runtime primitives", () => {
       CODEX_MAX_THREADS: "5",
       CODEX_MAX_CONCURRENT_TURNS: "3",
       CODEX_BRIDGE_PERMISSION_MODE: "safe",
-      CODEX_BRIDGE_APPROVAL_MODE: "decline",
     });
 
     expect(configuration.webConfigurationEnabled).toBe(false);
@@ -103,7 +173,7 @@ describe("Codex Bridge runtime primitives", () => {
       thread_scope: "cwd",
       working_directory: "/workspace/safe",
       permission_mode: "safe",
-      approval_mode: "decline",
+      approval_mode: "accept",
     });
     expect(effectiveBridgeConfiguration(configuration)).toMatchObject({
       enabled: true,
@@ -111,7 +181,14 @@ describe("Codex Bridge runtime primitives", () => {
     });
     expect(configuration.threadScope).toBe("cwd");
     expect(configuration.permissionMode).toBe("safe");
-    expect(configuration.approvalMode).toBe("decline");
+    expect(configuration.approvalMode).toBe("accept");
+    expect(
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+        CODEX_BRIDGE_APPROVAL_MODE: "decline",
+      }).approvalMode,
+    ).toBe("decline");
     expect(configuration.syncHistory).toBe(false);
     expect(configuration.localMaxHistoryTurns).toBe(50);
   });

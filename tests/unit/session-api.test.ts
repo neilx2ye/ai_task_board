@@ -18,6 +18,7 @@ const aiContext = {
 
 const domainMocks = vi.hoisted(() => ({
   createSessionTurn: vi.fn(),
+  listBridgeDirectories: vi.fn(),
   getSessionConversation: vi.fn(),
   renameThread: vi.fn(),
   deleteThread: vi.fn(),
@@ -34,6 +35,7 @@ const routeMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/domain/users", () => ({
   createSessionTurn: domainMocks.createSessionTurn,
+  listBridgeDirectories: domainMocks.listBridgeDirectories,
   getSessionConversation: domainMocks.getSessionConversation,
   renameThread: domainMocks.renameThread,
   deleteThread: domainMocks.deleteThread,
@@ -59,6 +61,7 @@ vi.mock("@/lib/auth/ai-auth", () => ({
 
 import { POST as reportActivity } from "@/app/api/ai/sessions/activity/route";
 import { POST as syncSessions } from "@/app/api/ai/sessions/sync/route";
+import { GET as listBridgeDirectories } from "@/app/api/user/bridge-directories/route";
 import {
   DELETE as deleteThread,
   GET as getConversation,
@@ -122,6 +125,7 @@ beforeEach(() => {
     session: { id: sessionId },
     tasks: [],
   });
+  domainMocks.listBridgeDirectories.mockResolvedValue({ directories: [] });
   domainMocks.renameThread.mockResolvedValue({ command: { id: "rename" } });
   domainMocks.deleteThread.mockResolvedValue({ command: { id: "delete" } });
   domainMocks.updateSessionProcessDetailsSync.mockResolvedValue({
@@ -139,6 +143,101 @@ beforeEach(() => {
 });
 
 describe("Bridge thread inventory REST API", () => {
+  it("lists Bridge directories for an authenticated Workspace member", async () => {
+    const request = new Request(
+      "http://localhost/api/user/bridge-directories",
+    );
+    const response = await listBridgeDirectories(request);
+
+    expect(response.status).toBe(200);
+    expect(routeMocks.userContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.listBridgeDirectories).toHaveBeenCalledWith(userContext);
+  });
+
+  it("validates directory inventory and Thread directory membership", async () => {
+    const request = jsonRequest(
+      "/api/ai/sessions/sync",
+      {
+        bridge_version: " 0.7.0 ",
+        directories: [
+          {
+            directory_key: " main ",
+            name: " Main repository ",
+            working_directory: " /srv/main ",
+          },
+        ],
+        threads: [
+          {
+            external_conversation_ref: " thread-local-1 ",
+            name: " Main thread ",
+            working_directory: " /srv/main ",
+            directory_key: " main ",
+          },
+        ],
+      },
+      {
+        Authorization: "Bearer atb_test",
+        "Idempotency-Key": "bridge/inventory/directories-1",
+      },
+    );
+
+    const response = await syncSessions(request);
+
+    expect(response.status).toBe(200);
+    expect(domainMocks.syncSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId, workspaceId }),
+      expect.objectContaining({
+        bridge_version: "0.7.0",
+        directories: [
+          {
+            directory_key: "main",
+            name: "Main repository",
+            working_directory: "/srv/main",
+          },
+        ],
+        threads: [
+          expect.objectContaining({
+            directory_key: "main",
+            external_conversation_ref: "thread-local-1",
+          }),
+        ],
+      }),
+      "bridge/inventory/directories-1",
+    );
+  });
+
+  it("rejects a Thread whose directory key is not in the reported allowlist", async () => {
+    const response = await syncSessions(
+      jsonRequest(
+        "/api/ai/sessions/sync",
+        {
+          bridge_version: "0.7.0",
+          directories: [
+            {
+              directory_key: "main",
+              name: "Main",
+              working_directory: "/srv/main",
+            },
+          ],
+          threads: [
+            {
+              external_conversation_ref: "thread-local-1",
+              name: "Main thread",
+              directory_key: "other",
+            },
+          ],
+        },
+        {
+          Authorization: "Bearer atb_test",
+          "Idempotency-Key": "bridge/inventory/directories-invalid",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.syncSessions).not.toHaveBeenCalled();
+  });
+
   it("authenticates at connection scope and syncs a normalized full snapshot", async () => {
     const request = jsonRequest(
       "/api/ai/sessions/sync",

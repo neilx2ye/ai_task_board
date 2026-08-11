@@ -93,7 +93,7 @@ describe("Web Thread management REST API", () => {
   it("queues creation against a validated connection", async () => {
     const request = jsonRequest(
       `/api/user/connections/${connectionId}/threads`,
-      { name: "  New Thread  " },
+      { name: "  New Thread  ", directory_key: " project-main " },
       "web/thread/create-1",
     );
     const response = await createThread(request, {
@@ -104,7 +104,7 @@ describe("Web Thread management REST API", () => {
     expect(domainMocks.createThread).toHaveBeenCalledWith(
       expect.objectContaining({ role: "owner" }),
       connectionId,
-      { name: "New Thread" },
+      { name: "New Thread", directory_key: "project-main" },
       "web/thread/create-1",
     );
   });

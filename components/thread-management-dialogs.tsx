@@ -26,12 +26,16 @@ import type {
 
 export function CreateThreadDialog({
   connection,
+  directoryKey,
+  directoryName,
   workingDirectory,
   open,
   onOpenChange,
   onSubmitted,
 }: {
   connection: SessionConnectionSummary;
+  directoryKey: string | null;
+  directoryName: string | null;
   workingDirectory: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,7 +49,10 @@ export function CreateThreadDialog({
     event.preventDefault();
     setError(null);
     try {
-      await createThread.mutateAsync({ name: name.trim() });
+      await createThread.mutateAsync({
+        name: name.trim(),
+        directory_key: directoryKey,
+      });
       onOpenChange(false);
       onSubmitted();
     } catch (err) {
@@ -60,7 +67,8 @@ export function CreateThreadDialog({
           <DialogTitle>新建 Thread</DialogTitle>
           <DialogDescription>
             请求会发送给「{connection.name}」上的 Codex Bridge，并在本机创建真实
-            Thread。
+            Thread
+            {directoryName ? `，归入「${directoryName}」` : ""}。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -77,7 +85,7 @@ export function CreateThreadDialog({
             />
           </div>
           <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-            工作目录：{workingDirectory ?? "使用 Bridge 的本机工作目录"}
+            工作目录：{workingDirectory ?? "使用 Bridge 的默认本机工作目录"}
           </div>
           {error ? (
             <p role="alert" className="text-sm text-destructive">

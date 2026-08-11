@@ -432,6 +432,24 @@ export async function listConnections(context: UserWorkspaceContext) {
   return { connections: data ?? [] };
 }
 
+export async function listBridgeDirectories(context: UserWorkspaceContext) {
+  const admin = createAdminClient();
+  const directories = await collectRangePages(async (from, to) => {
+    const { data, error } = await admin
+      .from("ai_bridge_directories")
+      .select("*")
+      .eq("workspace_id", context.workspaceId)
+      .order("connection_id")
+      .order("inventory_active", { ascending: false })
+      .order("name")
+      .order("directory_key")
+      .range(from, to);
+    if (error) throw mapDatabaseError(error);
+    return data ?? [];
+  });
+  return { directories };
+}
+
 export async function createConnection(
   context: UserWorkspaceContext,
   input: CreateConnectionInput,
@@ -512,18 +530,24 @@ async function enqueueThreadCommand(
     sessionId: string | null;
     action: "create" | "rename" | "delete";
     name: string | null;
+    directoryKey: string | null;
   },
   idempotencyKey: string,
 ) {
   const scope = `${context.workspaceId}\0${context.userId}\0enqueue_ai_thread_command\0${idempotencyKey}`;
-  return callDomainRpc("enqueue_ai_thread_command", {
+  return callDomainRpc("enqueue_ai_thread_command_with_directory", {
     ...userContext(context),
     p_command_id: deriveStableUuid(scope),
     p_connection_id: input.connectionId,
     p_session_id: input.sessionId,
     p_action: input.action,
     p_name: input.name,
-    ...commandMetadata("enqueue_ai_thread_command", input, idempotencyKey),
+    p_directory_key: input.directoryKey,
+    ...commandMetadata(
+      "enqueue_ai_thread_command_with_directory",
+      input,
+      idempotencyKey,
+    ),
   });
 }
 
@@ -535,7 +559,13 @@ export function createThread(
 ) {
   return enqueueThreadCommand(
     context,
-    { connectionId, sessionId: null, action: "create", name: input.name },
+    {
+      connectionId,
+      sessionId: null,
+      action: "create",
+      name: input.name,
+      directoryKey: input.directory_key ?? null,
+    },
     idempotencyKey,
   );
 }
@@ -566,7 +596,13 @@ export async function renameThread(
   const connectionId = await sessionConnectionId(context, sessionId);
   return enqueueThreadCommand(
     context,
-    { connectionId, sessionId, action: "rename", name: input.name },
+    {
+      connectionId,
+      sessionId,
+      action: "rename",
+      name: input.name,
+      directoryKey: null,
+    },
     idempotencyKey,
   );
 }
@@ -579,7 +615,13 @@ export async function deleteThread(
   const connectionId = await sessionConnectionId(context, sessionId);
   return enqueueThreadCommand(
     context,
-    { connectionId, sessionId, action: "delete", name: null },
+    {
+      connectionId,
+      sessionId,
+      action: "delete",
+      name: null,
+      directoryKey: null,
+    },
     idempotencyKey,
   );
 }

@@ -29,7 +29,7 @@ import {
   WakeLatch,
 } from "./wake-client.js";
 
-const BRIDGE_VERSION = "0.6.0";
+const BRIDGE_VERSION = "0.7.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -116,6 +116,12 @@ type ApprovalMode = "decline" | "accept" | "accept-session";
 type PermissionMode = "safe" | "inherit";
 type ThreadScope = "cwd" | "all";
 
+export type ManagedWorkingDirectory = {
+  key: string;
+  name: string;
+  workingDirectory: string;
+};
+
 export type EffectiveBridgeConfiguration = {
   enabled: boolean;
   includeThreadTitles: boolean;
@@ -160,6 +166,7 @@ export type BridgeConfiguration = {
   connectionToken: string;
   threadIdFilter: string | null;
   workingDirectory: string;
+  workingDirectories: ManagedWorkingDirectory[];
   sessionNamePrefix: string | null;
   model: string | null;
   capabilities: string[];
@@ -225,8 +232,15 @@ type InventoryThread = {
   platform: "codex";
   model: string | null;
   working_directory: string | null;
+  directory_key: string | null;
   capabilities: string[];
   archived: false;
+};
+
+type InventoryDirectory = {
+  directory_key: string;
+  name: string;
+  working_directory: string;
 };
 
 type SyncSessionsResponse = {
@@ -237,6 +251,7 @@ type ThreadCommand = {
   id: string;
   action: "create" | "rename" | "delete";
   name: string | null;
+  directory_key: string | null;
   external_thread_id: string | null;
   attempt_count?: number;
 };
@@ -373,8 +388,8 @@ function boundedInteger(
 }
 
 function parseApprovalMode(value: string | undefined): ApprovalMode {
-  if (value === "accept" || value === "accept-session") return value;
-  return "decline";
+  if (value === "decline" || value === "accept-session") return value;
+  return "accept";
 }
 
 function parsePermissionMode(value: string | undefined): PermissionMode {
@@ -383,6 +398,79 @@ function parsePermissionMode(value: string | undefined): PermissionMode {
 
 function parseThreadScope(value: string | undefined): ThreadScope {
   return value === "all" ? "all" : "cwd";
+}
+
+export function parseWorkingDirectories(
+  value: string | undefined,
+  fallbackWorkingDirectory: string,
+): ManagedWorkingDirectory[] {
+  const fallback = path.resolve(fallbackWorkingDirectory);
+  if (!value?.trim()) {
+    return [
+      {
+        key: "default",
+        name: path.basename(fallback) || fallback,
+        workingDirectory: fallback,
+      },
+    ];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("CODEX_WORKING_DIRECTORIES 必须是合法 JSON 数组");
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 100) {
+    throw new Error("CODEX_WORKING_DIRECTORIES 必须包含 1 到 100 个目录");
+  }
+
+  const keys = new Set<string>();
+  const paths = new Set<string>();
+  return parsed.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`CODEX_WORKING_DIRECTORIES[${index}] 必须是对象`);
+    }
+    const unknownField = Object.keys(item).find(
+      (field) => !["key", "name", "path"].includes(field),
+    );
+    const key = stringValue(item.key);
+    const configuredPath = stringValue(item.path);
+    if (unknownField || !key || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(key)) {
+      throw new Error(
+        `CODEX_WORKING_DIRECTORIES[${index}].key 格式无效`,
+      );
+    }
+    if (!configuredPath || configuredPath.length > 4_096) {
+      throw new Error(
+        `CODEX_WORKING_DIRECTORIES[${index}].path 必须是有效路径`,
+      );
+    }
+    const workingDirectory = path.resolve(configuredPath);
+    if (item.name !== undefined && !stringValue(item.name)) {
+      throw new Error(
+        `CODEX_WORKING_DIRECTORIES[${index}].name 必须是非空字符串`,
+      );
+    }
+    const name =
+      stringValue(item.name) || path.basename(workingDirectory) || key;
+    if (name.length > 200) {
+      throw new Error(
+        `CODEX_WORKING_DIRECTORIES[${index}].name 不能超过 200 个字符`,
+      );
+    }
+    if (keys.has(key)) {
+      throw new Error(`CODEX_WORKING_DIRECTORIES 包含重复 key：${key}`);
+    }
+    if (paths.has(workingDirectory)) {
+      throw new Error(
+        `CODEX_WORKING_DIRECTORIES 包含重复路径：${workingDirectory}`,
+      );
+    }
+    keys.add(key);
+    paths.add(workingDirectory);
+    return { key, name, workingDirectory };
+  });
 }
 
 function parseBoolean(value: string | undefined): boolean {
@@ -498,14 +586,23 @@ export function loadConfiguration(
     1_000,
     10 * 60_000,
   );
+  const legacyWorkingDirectory = path.resolve(
+    environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
+  );
+  const workingDirectories = parseWorkingDirectories(
+    environment.CODEX_WORKING_DIRECTORIES,
+    legacyWorkingDirectory,
+  );
 
   return {
     boardUrl,
     connectionToken,
     threadIdFilter: environment.CODEX_THREAD_ID?.trim() || null,
-    workingDirectory: path.resolve(
-      environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
-    ),
+    // The first allowlisted directory is the App Server startup/default-create
+    // cwd. Without the new list this is exactly the legacy single cwd.
+    workingDirectory:
+      workingDirectories[0]?.workingDirectory ?? legacyWorkingDirectory,
+    workingDirectories,
     sessionNamePrefix: environment.CODEX_SESSION_NAME?.trim() || null,
     model: environment.CODEX_MODEL?.trim() || null,
     capabilities: parseList(
@@ -852,6 +949,36 @@ export function isExactWorkingDirectory(
   return path.relative(path.resolve(configured), path.resolve(candidate)) === "";
 }
 
+export function managedDirectoryForWorkingDirectory(
+  workingDirectory: string | null,
+  configuredDirectories: readonly ManagedWorkingDirectory[],
+): ManagedWorkingDirectory | null {
+  if (!workingDirectory) return null;
+  return (
+    configuredDirectories.find((directory) =>
+      isExactWorkingDirectory(
+        workingDirectory,
+        directory.workingDirectory,
+      ),
+    ) ?? null
+  );
+}
+
+export function workingDirectoryForThreadCreate(
+  directoryKey: string | null,
+  configuredDirectories: readonly ManagedWorkingDirectory[],
+  fallbackWorkingDirectory: string,
+): string {
+  if (!directoryKey) return fallbackWorkingDirectory;
+  const directory = configuredDirectories.find(
+    (candidate) => candidate.key === directoryKey,
+  );
+  if (!directory) {
+    throw new Error("目标工作目录不在当前 Bridge 的本机白名单中");
+  }
+  return directory.workingDirectory;
+}
+
 function shortThreadTitle(thread: ThreadRecord): string {
   const explicit = stringValue(thread.name);
   const preview = stringValue(thread.preview)?.split(/\r?\n/, 1)[0]?.trim();
@@ -887,12 +1014,18 @@ function inventoryThread(
   thread: ThreadRecord,
   configuration: BridgeConfiguration,
 ): InventoryThread {
+  const workingDirectory = threadCwd(thread);
+  const directory = managedDirectoryForWorkingDirectory(
+    workingDirectory,
+    configuration.workingDirectories,
+  );
   return {
     external_conversation_ref: thread.id,
     name: sessionName(thread, configuration),
     platform: "codex",
     model: stringValue(thread.model) ?? configuration.model,
-    working_directory: threadCwd(thread),
+    working_directory: workingDirectory,
+    directory_key: directory?.key ?? null,
     capabilities: configuration.capabilities,
     archived: false,
   };
@@ -992,6 +1125,13 @@ class BoardClient {
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      directories: this.configuration.workingDirectories.map(
+        (directory): InventoryDirectory => ({
+          directory_key: directory.key,
+          name: directory.name,
+          working_directory: directory.workingDirectory,
+        }),
+      ),
       threads: threads.map((thread) =>
         inventoryThread(thread, this.configuration),
       ),
@@ -1571,7 +1711,7 @@ class SessionWorker {
             request.method === "item/tool/requestUserInput"
               ? "Codex 正在等待 Web Console 的结构化回答"
               : this.configuration.approvalMode === "decline"
-              ? "Codex 请求本地审批；Bridge 已按安全默认值拒绝"
+              ? "Codex 请求本地审批；Bridge 已按设备策略拒绝"
               : "Codex 请求本地审批；Bridge 已按设备策略处理",
           data: {
             protocol: APP_SERVER_PROTOCOL,
@@ -3120,7 +3260,11 @@ class DeviceBridge {
       const name = stringValue(command.name);
       if (!name) throw new Error("新建 Thread 指令缺少名称");
       const response = await this.appServer.threadStart({
-        cwd: this.configuration.workingDirectory,
+        cwd: workingDirectoryForThreadCreate(
+          command.directory_key,
+          this.configuration.workingDirectories,
+          this.configuration.workingDirectory,
+        ),
       });
       const threadId = stringValue(response.thread?.id);
       if (!threadId) throw new Error("Codex App Server 未返回新 Thread ID");
@@ -3216,7 +3360,10 @@ class DeviceBridge {
           const cwd = threadCwd(thread);
           if (
             !cwd ||
-            !isExactWorkingDirectory(cwd, this.configuration.workingDirectory)
+            !managedDirectoryForWorkingDirectory(
+              cwd,
+              this.configuration.workingDirectories,
+            )
           ) {
             continue;
           }

@@ -21,6 +21,16 @@ afterEach(() => {
 });
 
 describe("Realtime cache invalidation", () => {
+  it("refreshes the working-directory hierarchy on inventory changes", () => {
+    expect(
+      labels(
+        realtimeInvalidations("ai_bridge_directories", {
+          new: { connection_id: "connection-1", directory_key: "main" },
+        }),
+      ),
+    ).toEqual(["exact:bridge-directories"]);
+  });
+
   it("excludes service-only history fencing columns from Realtime", () => {
     expect(SAFE_HISTORY_SYNC_REALTIME_COLUMNS).not.toContain(
       "runtime_instance_id",

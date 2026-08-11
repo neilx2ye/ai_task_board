@@ -28,14 +28,27 @@ export function activeConnections(
   return connections.filter((connection) => connection.revoked_at === null);
 }
 
-export function supportsWebThreadManagement(
+function supportsBridgeMinorVersion(
   connection: Pick<AIConnectionRow, "bridge_version">,
+  minimumMinor: number,
 ): boolean {
   const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  return major > 0 || minor >= 5;
+  return major > 0 || minor >= minimumMinor;
+}
+
+export function supportsWebThreadManagement(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  return supportsBridgeMinorVersion(connection, 5);
+}
+
+export function supportsWorkingDirectoryInventory(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  return supportsBridgeMinorVersion(connection, 7);
 }
 
 export function useConnections(enabled = true) {

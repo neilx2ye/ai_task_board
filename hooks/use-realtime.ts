@@ -28,6 +28,7 @@ export const REALTIME_TABLES = [
   "session_activities",
   "session_history_syncs",
   "ai_sessions",
+  "ai_bridge_directories",
   "artifacts",
 ] as const;
 
@@ -112,6 +113,8 @@ export function realtimeInvalidations(
       const sessionId = nonEmptyString(row, "id");
       if (sessionId) exact(["sessions", sessionId]);
     }
+  } else if (table === "ai_bridge_directories") {
+    exact(["bridge-directories"]);
   } else {
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "session_id");
@@ -200,6 +203,7 @@ export function createHistoryActivityRefreshBatcher(
 const RECOVERY_INVALIDATIONS: readonly RealtimeInvalidation[] = [
   { queryKey: ["tasks"], exact: false },
   { queryKey: ["sessions"], exact: false },
+  { queryKey: ["bridge-directories"], exact: false },
 ];
 
 /**
@@ -514,7 +518,7 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
             ? { select: [...SAFE_TASK_REALTIME_COLUMNS] }
             : table === "session_history_syncs"
               ? { select: [...SAFE_HISTORY_SYNC_REALTIME_COLUMNS] }
-            : null),
+              : null),
         },
         (payload) => {
           if (table === "task_events") {

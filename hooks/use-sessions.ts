@@ -199,13 +199,14 @@ type ThreadCommandResult = { command: AIThreadCommandRow };
 export function useCreateThread(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string }) =>
+    mutationFn: (input: { name: string; directory_key?: string | null }) =>
       apiFetch<ThreadCommandResult>(
         `/api/user/connections/${connectionId}/threads`,
         { method: "POST", json: input },
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["bridge-directories"] });
     },
   });
 }

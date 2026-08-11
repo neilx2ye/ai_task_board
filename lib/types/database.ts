@@ -209,6 +209,30 @@ export type AIConnectionBridgeRuntimeInsert = {
   updated_at?: string;
 };
 
+export type AIBridgeDirectoryRow = {
+  workspace_id: string;
+  connection_id: string;
+  directory_key: string;
+  name: string;
+  working_directory: string;
+  inventory_active: boolean;
+  last_seen_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AIBridgeDirectoryInsert = {
+  workspace_id: string;
+  connection_id: string;
+  directory_key: string;
+  name: string;
+  working_directory: string;
+  inventory_active?: boolean;
+  last_seen_at?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type AISessionRow = {
   id: string;
   workspace_id: string;
@@ -222,6 +246,7 @@ export type AISessionRow = {
   current_task_id: string | null;
   last_seen_at: string;
   working_directory: string | null;
+  bridge_directory_key: string | null;
   archived_at: string | null;
   inventory_active: boolean;
   sync_process_details: boolean;
@@ -244,6 +269,7 @@ export type AISessionInsert = {
   current_task_id?: string | null;
   last_seen_at?: string;
   working_directory?: string | null;
+  bridge_directory_key?: string | null;
   archived_at?: string | null;
   inventory_active?: boolean;
   sync_process_details?: boolean;
@@ -260,6 +286,7 @@ export type AIThreadCommandRow = {
   session_id: string | null;
   action: AIThreadCommandAction;
   name: string | null;
+  directory_key: string | null;
   external_thread_id: string | null;
   status: AIThreadCommandStatus;
   attempt_count: number;
@@ -280,6 +307,7 @@ export type AIThreadCommandInsert = {
   session_id?: string | null;
   action: AIThreadCommandAction;
   name?: string | null;
+  directory_key?: string | null;
   external_thread_id?: string | null;
   status?: AIThreadCommandStatus;
   attempt_count?: number;
@@ -870,6 +898,20 @@ export interface Database {
           },
         ]
       >;
+      ai_bridge_directories: TableDefinition<
+        AIBridgeDirectoryRow,
+        AIBridgeDirectoryInsert,
+        Partial<AIBridgeDirectoryRow>,
+        [
+          {
+            foreignKeyName: "ai_bridge_directories_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
       ai_sessions: TableDefinition<
         AISessionRow,
         AISessionInsert,
@@ -888,6 +930,17 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: "ai_connections";
             referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_sessions_bridge_directory_fk";
+            columns: ["workspace_id", "connection_id", "bridge_directory_key"];
+            isOneToOne: false;
+            referencedRelation: "ai_bridge_directories";
+            referencedColumns: [
+              "workspace_id",
+              "connection_id",
+              "directory_key",
+            ];
           },
           {
             foreignKeyName: "ai_sessions_current_task_fk";
@@ -909,6 +962,17 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: "ai_connections";
             referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_thread_commands_directory_fk";
+            columns: ["workspace_id", "connection_id", "directory_key"];
+            isOneToOne: false;
+            referencedRelation: "ai_bridge_directories";
+            referencedColumns: [
+              "workspace_id",
+              "connection_id",
+              "directory_key",
+            ];
           },
           {
             foreignKeyName: "ai_thread_commands_session_fk";
@@ -1196,6 +1260,15 @@ export interface Database {
         Args: AIConnectionArgs &
           IdempotencyArgs & {
             p_bridge_version: string;
+            p_threads: Json;
+          };
+        Returns: SessionSyncResponse;
+      };
+      sync_ai_sessions_with_directories: {
+        Args: AIConnectionArgs &
+          IdempotencyArgs & {
+            p_bridge_version: string;
+            p_directories: Json | null;
             p_threads: Json;
           };
         Returns: SessionSyncResponse;
@@ -1507,6 +1580,18 @@ export interface Database {
             p_session_id: string | null;
             p_action: AIThreadCommandAction;
             p_name: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_thread_command_with_directory: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+            p_directory_key: string | null;
           };
         Returns: AIThreadCommandResponse;
       };

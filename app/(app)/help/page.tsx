@@ -204,7 +204,7 @@ CODEX_BRIDGE_WEB_CONFIG='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-codex-bridge@0.6.0`}</CopyableCodeBlock>
+npx --yes ai-task-board-codex-bridge@0.7.0`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -224,6 +224,11 @@ npx --yes ai-task-board-codex-bridge@0.6.0`}</CopyableCodeBlock>
             thread 范围、权限、审批策略和本机最大值仍只能在设备上配置。
           </li>
           <li>
+            0.7 可用 <code>CODEX_WORKING_DIRECTORIES</code> 在一个 Bridge 中配置多个
+            精确 cwd；会话页按设备、工作目录和 Thread 分层展示，新建时只把本机已上报的
+            目录 key 返回 Bridge，不允许网页提交任意路径。
+          </li>
+          <li>
             Bridge 通过认证 SSE 接收不含任务数据的近实时唤醒，再用 REST
             原子领取；SSE 断线时从默认 5 秒逐步退避到 60 秒轮询，并持续尝试重连。
           </li>
@@ -236,9 +241,9 @@ npx --yes ai-task-board-codex-bridge@0.6.0`}</CopyableCodeBlock>
             经设备与网页双重授权后，可补录最近完成 turn 的历史白名单。
           </li>
           <li>
-            0.6 支持 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
-            可靠的运行中 steer/interrupt。默认安全权限模式会限制 sandbox，并拒绝
-            App Server 发来的审批请求。
+            0.7 保留 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
+            可靠的运行中 steer/interrupt。默认安全权限模式会限制 sandbox，审批则在
+            设备端自动接受与当前活跃 turn 关联的受支持请求。
           </li>
         </ul>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">

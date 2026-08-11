@@ -9,7 +9,7 @@ streams supported progress back to the Board.
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Run the 0.6 CLI
+## Run the 0.7 CLI
 
 Node.js 18 or newer and a compatible, logged-in `codex` CLI are required. Run
 the Bridge as the same OS user that owns the local Codex data and workspaces:
@@ -18,21 +18,35 @@ the Bridge as the same OS user that owns the local Codex data and workspaces:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.6.0
+npx --yes ai-task-board-codex-bridge@0.7.0
 ```
 
 `CODEX_THREAD_ID` is optional. By default, `CODEX_THREAD_SCOPE=cwd` manages only
-top-level threads whose recorded cwd exactly equals `CODEX_WORKING_DIRECTORY`,
+top-level threads whose recorded cwd exactly equals a locally allowlisted directory,
 up to 50 recent matches. Set `CODEX_THREAD_SCOPE=all` only as an explicit,
 high-risk opt-in to cross-project discovery. `CODEX_THREAD_ID` overrides the
 scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.6.0
+npx --yes ai-task-board-codex-bridge@0.7.0
 ```
 
-`CODEX_MAX_THREADS` controls the inventory limit, while
+Bridge 0.7 can manage several exact working directories in one process:
+
+```bash
+CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
+CODEX_THREAD_SCOPE='cwd' \
+npx --yes ai-task-board-codex-bridge@0.7.0
+```
+
+The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
+entry is the App Server startup and legacy default-create directory. The Board
+stores and returns only a selected key in Web create commands; the Bridge
+resolves that key against its local list, so Web cannot submit arbitrary paths.
+
+`CODEX_MAX_THREADS` controls the device-wide inventory limit (default `50`,
+range `1..500` across all configured directories), while
 `CODEX_MAX_CONCURRENT_TURNS` controls device-wide turn concurrency (default
 `2`). Session names do not upload the local thread title or first prompt by
 default; they use the cwd basename plus a short thread ID. Set
@@ -65,7 +79,7 @@ The device environment remains the immutable security boundary:
 - Web history sync is denied unless the device explicitly sets
   `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`. The requested recent-turn count is
   clamped to `CODEX_BRIDGE_MAX_HISTORY_TURNS` (default `50`, maximum `200`).
-- The Board cannot change the URL/token, Codex executable, working directory,
+- The Board cannot change the URL/token, Codex executable, working-directory allowlist,
   thread scope/fixed thread, permission mode, or approval mode.
 
 The Bridge reports its effective settings, local constraints, applied version,
@@ -89,8 +103,8 @@ fallback cannot provide this single-runtime fence.
 Bridge 0.5 lets a Workspace owner create, rename, and delete Codex Threads from
 the Web Console. The Board stores each request as a leased command; only the
 Bridge process holding that connection's runtime lease may execute it. New
-Threads always use the locally configured `CODEX_WORKING_DIRECTORY`, and the
-Web cannot choose an arbitrary device path. Rename and delete commands only
+Threads use the locally configured directory selected in the hierarchy, and
+the Web cannot choose an arbitrary device path. Rename and delete commands only
 target Threads already present in the Bridge's managed inventory. Fixed
 `CODEX_THREAD_ID` mode rejects create and delete commands.
 
@@ -140,10 +154,12 @@ workspace-write, limits writable roots to that thread's absolute cwd, excludes
 implicit tmp roots, and disables network access. This primarily constrains
 writes and network; it does not prevent reading files already readable by the
 same UID. The `inherit` mode can inherit danger-full-access or broader roots and is a
-high-risk opt-in. Separately, server-initiated approval requests are denied by
-default. `CODEX_BRIDGE_APPROVAL_MODE` controls only those request decisions; it
-does not configure the sandbox. Its `accept` and `accept-session` modes
-automatically approve local actions and are high risk.
+high-risk opt-in. Separately, supported server-initiated approval requests that
+are correlated with the active turn are automatically accepted by default.
+`CODEX_BRIDGE_APPROVAL_MODE` controls only those request decisions; it does not
+configure the sandbox. Use `decline` to deny approval requests, or
+`accept-session` to extend supported approvals to the session. Automatic
+approval is high risk and is not a Web confirmation flow.
 
 There is currently no reliable running-turn steer, Web-triggered interrupt, or
 Web approval flow. Messages sent while a thread is busy queue as later Tasks.
@@ -161,12 +177,12 @@ not pass it as a command-line argument. The Bridge removes that token from the
 App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
-upgraded before starting 0.6; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.6.0`
+upgraded before starting 0.7; there is no 404 fallback to the old registration
+API. For persistent use, pin version `0.7.0`
 in systemd, launchd, or another process manager; the npm CLI does not install or
 enable a service itself. Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.6.0 --help` for the complete
+Use `npx --yes ai-task-board-codex-bridge@0.7.0 --help` for the complete
 environment-variable list.

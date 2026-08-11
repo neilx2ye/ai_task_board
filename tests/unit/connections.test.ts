@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeConnections,
+  supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
   type PublicConnection,
 } from "@/hooks/use-connections";
@@ -62,6 +63,21 @@ describe("activeConnections", () => {
   ])("识别 Bridge %s 的 Web Thread 管理能力", (bridgeVersion, expected) => {
     expect(
       supportsWebThreadManagement(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["0.7.0", true],
+    ["0.12.3", true],
+    ["1.0.0", true],
+    ["0.6.99", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的多工作目录能力", (bridgeVersion, expected) => {
+    expect(
+      supportsWorkingDirectoryInventory(
         connection({ bridge_version: bridgeVersion as string | null }),
       ),
     ).toBe(expected);

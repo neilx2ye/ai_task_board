@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   artifactReferenceSchema,
+  bridgeDirectoryKeySchema,
   capabilitiesSchema,
   nonEmptyText,
   optionalText,
@@ -27,18 +28,53 @@ const syncedThreadSchema = z
     platform: nonEmptyText.max(100).default("codex"),
     model: z.string().trim().min(1).max(200).nullable().optional(),
     working_directory: z.string().trim().min(1).max(4096).nullable().optional(),
+    directory_key: bridgeDirectoryKeySchema.nullable().optional(),
     capabilities: capabilitiesSchema,
     archived: z.boolean().default(false),
+  })
+  .strict();
+
+const syncedBridgeDirectorySchema = z
+  .object({
+    directory_key: bridgeDirectoryKeySchema,
+    name: nonEmptyText.max(200),
+    working_directory: nonEmptyText.max(4096),
   })
   .strict();
 
 export const syncSessionsSchema = z
   .object({
     bridge_version: nonEmptyText.max(100),
+    directories: z
+      .array(syncedBridgeDirectorySchema)
+      .min(1)
+      .max(100)
+      .optional(),
     threads: z.array(syncedThreadSchema).max(500),
   })
   .strict()
   .superRefine((value, context) => {
+    const directoryKeys = new Set<string>();
+    const directoryPaths = new Set<string>();
+    value.directories?.forEach((directory, index) => {
+      if (directoryKeys.has(directory.directory_key)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate directory_key: ${directory.directory_key}`,
+          path: ["directories", index, "directory_key"],
+        });
+      }
+      if (directoryPaths.has(directory.working_directory)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate working_directory: ${directory.working_directory}`,
+          path: ["directories", index, "working_directory"],
+        });
+      }
+      directoryKeys.add(directory.directory_key);
+      directoryPaths.add(directory.working_directory);
+    });
+
     const references = new Set<string>();
     value.threads.forEach((thread, index) => {
       if (references.has(thread.external_conversation_ref)) {
@@ -49,19 +85,31 @@ export const syncSessionsSchema = z
         });
       }
       references.add(thread.external_conversation_ref);
+      if (thread.directory_key && !directoryKeys.has(thread.directory_key)) {
+        context.addIssue({
+          code: "custom",
+          message: `Unknown directory_key: ${thread.directory_key}`,
+          path: ["threads", index, "directory_key"],
+        });
+      }
     });
 
     if (
-      new TextEncoder().encode(JSON.stringify(value.threads)).byteLength >
-      1024 * 1024
+      new TextEncoder().encode(
+        JSON.stringify({
+          directories: value.directories ?? null,
+          threads: value.threads,
+        }),
+      ).byteLength >
+      1120 * 1024
     ) {
       context.addIssue({
         code: "too_big",
-        maximum: 1024 * 1024,
+        maximum: 1120 * 1024,
         origin: "value",
         inclusive: true,
-        message: "Thread inventory must not exceed 1 MiB",
-        path: ["threads"],
+        message: "Bridge inventory must not exceed 1120 KiB",
+        path: [],
       });
     }
   });

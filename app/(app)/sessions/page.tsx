@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BotIcon, ListFilterIcon, PlusIcon } from "lucide-react";
+import { BotIcon } from "lucide-react";
 
 import { SessionConversationPanel } from "@/components/session-conversation-dialog";
+import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
-import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
 import {
   CreateThreadDialog,
@@ -16,145 +16,25 @@ import {
 } from "@/components/thread-management-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
+import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { useSessions } from "@/hooks/use-sessions";
 import {
+  supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
   useConnections,
 } from "@/hooks/use-connections";
 import { useWorkspace } from "@/hooks/use-workspace";
 import {
-  effectiveSessionStatus,
-  isConnectionAlive,
-  isSessionAlive,
-} from "@/lib/domain/session-presence";
-import type {
-  SessionConnectionSummary,
-  SessionListItem,
-} from "@/lib/types/domain";
-
-type ConnectionGroup = {
-  connection: SessionConnectionSummary;
-  sessions: SessionListItem[];
-};
-
-function groupSessionsByConnection(
-  sessions: SessionListItem[],
-  connections: SessionConnectionSummary[] = [],
-): ConnectionGroup[] {
-  const groups = new Map<string, ConnectionGroup>();
-
-  for (const connection of connections) {
-    groups.set(connection.id, { connection, sessions: [] });
-  }
-
-  for (const session of sessions) {
-    const existing = groups.get(session.connection.id);
-    if (existing) {
-      existing.sessions.push(session);
-    } else {
-      groups.set(session.connection.id, {
-        connection: session.connection,
-        sessions: [session],
-      });
-    }
-  }
-
-  return [...groups.values()];
-}
-
-function SessionListRow({
-  session,
-  selected,
-  onSelect,
-  onReserve,
-}: {
-  session: SessionListItem;
-  selected: boolean;
-  onSelect: () => void;
-  onReserve: () => void;
-}) {
-  const alive = isSessionAlive(session);
-  const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
-  const task = session.current_task;
-  const taskStatusMeta = task
-    ? TASK_STATUS_META[
-        task.awaiting_user_input ? "waiting_user" : task.status
-      ]
-    : null;
-
-  return (
-    <div
-      className={cn(
-        "flex items-stretch border-b border-border transition-colors last:border-b-0",
-        selected ? "bg-indigo-50/80" : "hover:bg-secondary/50",
-      )}
-    >
-      <button
-        type="button"
-        aria-pressed={selected}
-        aria-label={`${selected ? "取消选中" : "选中"} Thread「${session.name}」`}
-        title={selected ? "取消选中并清除已同步历史" : "在控制台打开"}
-        onClick={onSelect}
-        className="min-w-0 flex-1 cursor-pointer px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-      >
-        <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-            {session.name}
-          </span>
-          <Badge className={cn("shrink-0", statusMeta.badgeClass)}>
-            {statusMeta.label}
-          </Badge>
-        </div>
-
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {session.working_directory ?? session.platform}
-          {session.model ? ` · ${session.model}` : ""}
-        </p>
-
-        <div className="mt-2 flex flex-col gap-1">
-          {task ? (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                {task.title}
-              </span>
-              {taskStatusMeta ? (
-                <Badge className={cn("shrink-0", taskStatusMeta.badgeClass)}>
-                  {taskStatusMeta.label}
-                </Badge>
-              ) : null}
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">当前空闲</span>
-          )}
-        </div>
-
-        <p className="mt-2 text-xs text-muted-foreground tabular-nums">
-          已预留 {session.queued_task_count} 项
-        </p>
-      </button>
-
-      {alive ? (
-        <div className="flex shrink-0 items-start px-2 py-2.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onReserve}
-            aria-label={`给 ${session.name} 预留任务`}
-            title="预留任务"
-          >
-            <PlusIcon />
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
+  groupSessionsByConnection,
+  type SessionConnectionGroup,
+  type SessionDirectoryGroup,
+} from "@/lib/domain/session-directory-groups";
+import type { SessionListItem } from "@/lib/types/domain";
 
 export default function SessionsPage() {
   const sessionsQuery = useSessions();
+  const directoriesQuery = useBridgeDirectories();
   const workspaceQuery = useWorkspace();
   const isOwner = workspaceQuery.data?.role === "owner";
   const connectionsQuery = useConnections(isOwner);
@@ -165,9 +45,12 @@ export default function SessionsPage() {
   const [pickerConnectionId, setPickerConnectionId] = useState<string | null>(
     null,
   );
-  const [createConnectionId, setCreateConnectionId] = useState<string | null>(
-    null,
-  );
+  const [createTarget, setCreateTarget] = useState<{
+    connectionId: string;
+    directoryKey: string | null;
+    directoryName: string | null;
+    workingDirectory: string | null;
+  } | null>(null);
   const [renameSession, setRenameSession] = useState<SessionListItem | null>(
     null,
   );
@@ -175,6 +58,7 @@ export default function SessionsPage() {
     null,
   );
   const [notice, setNotice] = useState<string | null>(null);
+  const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
 
   const sessions = useMemo(
     () =>
@@ -198,8 +82,9 @@ export default function SessionsPage() {
             bridge_version: connection.bridge_version,
             revoked_at: connection.revoked_at,
           })),
+        directoriesQuery.data ?? [],
       ),
-    [connectionsQuery.data, sessions],
+    [connectionsQuery.data, directoriesQuery.data, sessions],
   );
   const pickerGroup = useMemo(
     () =>
@@ -209,6 +94,19 @@ export default function SessionsPage() {
           ) ?? null)
         : null,
     [pickerConnectionId, connectionGroups],
+  );
+  const pickerSupportsDirectories = pickerGroup
+    ? supportsWorkingDirectoryInventory(pickerGroup.connection)
+    : false;
+  const pickerCreateDirectories = useMemo(
+    () =>
+      pickerGroup?.directories.filter(
+        (directory) =>
+          directory.configured &&
+          directory.inventoryActive &&
+          directory.directoryKey !== null,
+      ) ?? [],
+    [pickerGroup],
   );
   const selectedSessions = useMemo(
     () =>
@@ -237,20 +135,36 @@ export default function SessionsPage() {
   };
   const createGroup = useMemo(
     () =>
-      createConnectionId
+      createTarget
         ? (connectionGroups.find(
-            (group) => group.connection.id === createConnectionId,
+            (group) => group.connection.id === createTarget.connectionId,
           ) ?? null)
         : null,
-    [connectionGroups, createConnectionId],
+    [connectionGroups, createTarget],
   );
+
+  const openCreateDialog = (
+    group: SessionConnectionGroup,
+    directory?: SessionDirectoryGroup,
+  ) => {
+    setCreateTarget({
+      connectionId: group.connection.id,
+      directoryKey: directory?.directoryKey ?? null,
+      directoryName: directory?.name ?? null,
+      workingDirectory:
+        directory?.workingDirectory ??
+        group.sessions.find((session) => session.working_directory)
+          ?.working_directory ??
+        null,
+    });
+  };
 
   return (
     <div className="flex flex-col gap-5 lg:h-[calc(100dvh-3rem)]">
       <div className="shrink-0">
         <h1 className="text-xl font-semibold tracking-tight">AI 会话</h1>
         <p className="text-sm text-muted-foreground">
-          按设备组织 Thread，点击选中后在右侧并排查看上下文、执行过程并继续发送任务。
+          按设备和工作目录组织 Thread，点击选中后在右侧并排查看上下文、执行过程并继续发送任务。
         </p>
       </div>
 
@@ -271,12 +185,15 @@ export default function SessionsPage() {
         </div>
       ) : null}
 
-      {sessionsQuery.error ? (
+      {hierarchyError ? (
         <ErrorState
-          message={sessionsQuery.error.message}
-          onRetry={() => void sessionsQuery.refetch()}
+          message={hierarchyError.message}
+          onRetry={() => {
+            void sessionsQuery.refetch();
+            void directoriesQuery.refetch();
+          }}
         />
-      ) : sessionsQuery.isLoading ? (
+      ) : sessionsQuery.isLoading || directoriesQuery.isLoading ? (
         <LoadingBlock label="加载 AI 会话…" />
       ) : connectionGroups.length === 0 ? (
         <EmptyState
@@ -285,11 +202,11 @@ export default function SessionsPage() {
           description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端注册的会话会显示在这里。"
         />
       ) : (
-        <div className="grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm lg:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm lg:grid-cols-[22rem_minmax(0,1fr)]">
           <aside className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0">
             <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
               <div>
-                <h2 className="text-sm font-semibold">设备与 Threads</h2>
+                <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
                 <p className="text-xs text-muted-foreground">
                   点击选中，可多选并排查看
                 </p>
@@ -299,115 +216,16 @@ export default function SessionsPage() {
               </Badge>
             </header>
 
-            <nav aria-label="设备与 Thread 列表">
-              {connectionGroups.map(
-                ({ connection, sessions: groupSessions }) => {
-                  const deviceOnline = isConnectionAlive(connection);
-                  const visibleSessions = groupSessions.filter((session) =>
-                    visibleIds.has(session.id),
-                  );
-                  const hiddenCount =
-                    groupSessions.length - visibleSessions.length;
-                  const canManage =
-                    isOwner && supportsWebThreadManagement(connection);
-                  return (
-                    <section
-                      key={connection.id}
-                      aria-labelledby={`connection-${connection.id}`}
-                      className="border-b border-border last:border-b-0"
-                    >
-                      <header className="bg-muted/40 px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <h3
-                            id={`connection-${connection.id}`}
-                            className="min-w-0 flex-1 truncate text-xs font-semibold"
-                          >
-                            {connection.name}
-                          </h3>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "shrink-0",
-                              deviceOnline
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            {deviceOnline ? "设备在线" : "设备离线"}
-                          </Badge>
-                          <Badge variant="outline" className="tabular-nums">
-                            {groupSessions.length}
-                          </Badge>
-                          {canManage ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-7 shrink-0"
-                              onClick={() =>
-                                setCreateConnectionId(connection.id)
-                              }
-                              aria-label={`在「${connection.name}」新建 Thread`}
-                              title="新建 Thread"
-                            >
-                              <PlusIcon className="size-3.5" />
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 shrink-0"
-                            onClick={() => setPickerConnectionId(connection.id)}
-                            aria-label={`选择「${connection.name}」要显示的 Threads`}
-                            title="选择要显示的 Threads"
-                          >
-                            <ListFilterIcon className="size-3.5" />
-                          </Button>
-                        </div>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {connection.platform}
-                          {connection.bridge_version
-                            ? ` · Bridge ${connection.bridge_version}`
-                            : ""}
-                        </p>
-                      </header>
-
-                      <div>
-                        {visibleSessions.map((session) => (
-                          <SessionListRow
-                            key={session.id}
-                            session={session}
-                            selected={selectedSessionIds.includes(session.id)}
-                            onSelect={() => toggleSessionSelected(session.id)}
-                            onReserve={() => setTargetSessionId(session.id)}
-                          />
-                        ))}
-                        {hiddenCount > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => setPickerConnectionId(connection.id)}
-                            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-2.5 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-                          >
-                            <ListFilterIcon className="size-3.5 shrink-0" />
-                            已收纳 {hiddenCount} 个 Thread · 点击管理
-                          </button>
-                        ) : groupSessions.length === 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => setPickerConnectionId(connection.id)}
-                            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-3 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-                          >
-                            <ListFilterIcon className="size-3.5 shrink-0" />
-                            暂无 Thread · 点击管理
-                          </button>
-                        ) : null}
-                      </div>
-                    </section>
-                  );
-                },
-              )}
-            </nav>
+            <SessionDirectoryNavigation
+              groups={connectionGroups}
+              visibleIds={visibleIds}
+              selectedSessionIds={selectedSessionIds}
+              isOwner={Boolean(isOwner)}
+              onToggleSession={toggleSessionSelected}
+              onReserve={setTargetSessionId}
+              onManage={setPickerConnectionId}
+              onCreate={openCreateDialog}
+            />
           </aside>
 
           <div id="session-console" className="min-h-0">
@@ -459,10 +277,16 @@ export default function SessionsPage() {
             pickerGroup?.connection ?? { bridge_version: null },
           )
         }
+        canCreate={
+          !pickerSupportsDirectories || pickerCreateDirectories.length <= 1
+        }
         onToggle={setSessionVisible}
         onCreate={() => {
           if (!pickerGroup) return;
-          setCreateConnectionId(pickerGroup.connection.id);
+          const directory = pickerSupportsDirectories
+            ? pickerCreateDirectories[0]
+            : undefined;
+          openCreateDialog(pickerGroup, directory);
           setPickerConnectionId(null);
         }}
         onRename={(session) => {
@@ -484,13 +308,12 @@ export default function SessionsPage() {
       {createGroup ? (
         <CreateThreadDialog
           connection={createGroup.connection}
-          workingDirectory={
-            createGroup.sessions.find((session) => session.working_directory)
-              ?.working_directory ?? null
-          }
+          directoryKey={createTarget?.directoryKey ?? null}
+          directoryName={createTarget?.directoryName ?? null}
+          workingDirectory={createTarget?.workingDirectory ?? null}
           open
           onOpenChange={(open) => {
-            if (!open) setCreateConnectionId(null);
+            if (!open) setCreateTarget(null);
           }}
           onSubmitted={() =>
             setNotice(

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  bridgeDirectoryKeySchema,
   capabilitiesSchema,
   nonEmptyText,
   optionalText,
@@ -145,7 +146,10 @@ export const renameConnectionSchema = z
   .strict();
 
 export const createThreadSchema = z
-  .object({ name: nonEmptyText.max(200) })
+  .object({
+    name: nonEmptyText.max(200),
+    directory_key: bridgeDirectoryKeySchema.nullable().optional(),
+  })
   .strict();
 
 export const renameThreadSchema = z

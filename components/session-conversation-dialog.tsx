@@ -695,9 +695,12 @@ function buildTimeline(
 }
 
 function sessionContentDescription(session: SessionListItem): string {
+  const location = session.working_directory
+    ? `${session.connection.name} › ${session.working_directory}`
+    : session.connection.name;
   return session.sync_process_details === false
-    ? `${session.connection.name} · 仅同步对话与结构化问题`
-    : `${session.connection.name} · 对话、思考摘要与工具过程`;
+    ? `${location} · 仅同步对话与结构化问题`
+    : `${location} · 对话、思考摘要与工具过程`;
 }
 
 export function ProcessDetailsSyncToggle({

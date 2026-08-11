@@ -1,6 +1,6 @@
 {
   "name": "ai-task-board-codex-bridge",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Device-level multi-thread Codex bridge for AI Task Board",
   "type": "module",
   "types": "./dist/index.d.ts",

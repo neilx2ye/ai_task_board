@@ -57,6 +57,7 @@ describe("Harness activity sanitization", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("ai-task-board-codex-bridge");
     expect(result.stdout).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
+    expect(result.stdout).toContain("accept (default), decline, or accept-session");
     expect(result.stderr).toBe("");
   });
 

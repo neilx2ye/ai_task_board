@@ -30,6 +30,7 @@ export function ThreadPickerDialog({
   onToggle,
   onOpen,
   canManage,
+  canCreate,
   onCreate,
   onRename,
   onDelete,
@@ -42,6 +43,7 @@ export function ThreadPickerDialog({
   onToggle: (sessionId: string, visible: boolean) => void;
   onOpen: (sessionId: string) => void;
   canManage: boolean;
+  canCreate: boolean;
   onCreate: () => void;
   onRename: (session: SessionListItem) => void;
   onDelete: (session: SessionListItem) => void;
@@ -54,7 +56,7 @@ export function ThreadPickerDialog({
         <DialogHeader>
           <div className="flex items-center justify-between gap-3 pr-7">
             <DialogTitle>管理 Threads</DialogTitle>
-            {canManage && connection ? (
+            {canManage && canCreate && connection ? (
               <Button type="button" size="sm" onClick={onCreate}>
                 <PlusIcon />
                 新建 Thread
@@ -64,7 +66,7 @@ export function ThreadPickerDialog({
           <DialogDescription>
             {connection
               ? canManage
-                ? `「${connection.name}」共 ${sessions.length} 个 Thread。勾选控制侧栏显示；重命名和删除会同步到本机 Codex。`
+                ? `「${connection.name}」共 ${sessions.length} 个 Thread。勾选控制侧栏显示；重命名和删除会同步到本机 Codex。${canCreate ? "" : " 请从左侧具体工作目录的新建按钮创建 Thread。"}`
                 : `「${connection.name}」共 ${sessions.length} 个 Thread。管理操作仅对 Workspace 所有者开放，并需要 Bridge 0.5。`
               : "勾选的显示在侧栏，其余保留在这里。"}
           </DialogDescription>

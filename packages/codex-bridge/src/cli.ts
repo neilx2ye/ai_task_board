@@ -13,7 +13,8 @@ Required environment variables:
 
 Optional environment variables:
   CODEX_THREAD_ID                 Manage only this thread (legacy compatibility)
-  CODEX_WORKING_DIRECTORY         Directory used to start App Server (default: cwd)
+  CODEX_WORKING_DIRECTORY         Legacy single working directory (default: cwd)
+  CODEX_WORKING_DIRECTORIES       JSON allowlist of {key,name,path} directories
   CODEX_THREAD_SCOPE              cwd (default, exact cwd) or all (high risk)
   CODEX_SESSION_NAME              Prefix for session names shown in the Board
   CODEX_BRIDGE_INCLUDE_THREAD_TITLES  true uploads local thread title/preview
@@ -25,7 +26,7 @@ Optional environment variables:
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)
   CODEX_MAX_CONCURRENT_TURNS      Device turn concurrency (1..32, default: 2)
-  CODEX_BRIDGE_APPROVAL_MODE      decline (default), accept, or accept-session
+  CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session
   CODEX_BRIDGE_PERMISSION_MODE    safe (default) or inherit (high risk)
   CODEX_BINARY                    Codex executable (default: codex)
   AI_TASK_BOARD_POLL_INTERVAL_MS  Poll interval when SSE is unavailable (500..60000)

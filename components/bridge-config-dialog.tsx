@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/hooks/api-client";
+import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import {
   bridgeConfigSyncState,
   bridgeSupportsHistorySync,
@@ -27,6 +28,7 @@ import {
   type BridgeConfiguration,
   type BridgeDesiredConfig,
 } from "@/hooks/use-bridge-config";
+import type { AIBridgeDirectoryRow } from "@/lib/types/database";
 
 type BridgeConnection = {
   id: string;
@@ -88,7 +90,9 @@ function yesNo(value: boolean): string {
 
 function scopeLabel(constraints: BridgeConfigConstraints): string {
   if (constraints.fixed_thread) return "固定单个 thread";
-  return constraints.thread_scope === "cwd" ? "当前项目（cwd）" : "整台设备";
+  return constraints.thread_scope === "cwd"
+    ? "本机目录白名单（精确 cwd）"
+    : "整台设备";
 }
 
 function permissionLabel(mode: BridgeConfigConstraints["permission_mode"]): string {
@@ -231,7 +235,7 @@ function LocalConstraints({
         <dd className="mt-0.5 font-medium">{scopeLabel(constraints)}</dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">工作目录</dt>
+        <dt className="text-muted-foreground">默认工作目录</dt>
         <dd className="mt-0.5 break-all font-mono text-[11px]">
           {constraints.working_directory || "—"}
         </dd>
@@ -279,14 +283,52 @@ function LocalConstraints({
   );
 }
 
+function LocalDirectories({
+  directories,
+}: {
+  directories: AIBridgeDirectoryRow[];
+}) {
+  if (!directories.length) {
+    return (
+      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+        等待 Bridge 0.7+ 上报工作目录清单；旧 Bridge 仍使用上方默认目录。
+      </div>
+    );
+  }
+
+  return (
+    <ul className="overflow-hidden rounded-md border border-border text-xs">
+      {directories.map((directory) => (
+        <li
+          key={directory.directory_key}
+          className="border-t border-border px-3 py-2 first:border-t-0"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium">{directory.name}</span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              {directory.directory_key}
+              {directory.inventory_active ? "" : " · 已移除"}
+            </span>
+          </div>
+          <p className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">
+            {directory.working_directory}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function BridgeConfigForm({
   connection,
   configuration,
+  directories,
   onConflict,
   onSubmitStart,
 }: {
   connection: BridgeConnection;
   configuration: BridgeConfiguration;
+  directories: AIBridgeDirectoryRow[];
   onConflict: () => Promise<unknown>;
   onSubmitStart: () => void;
 }) {
@@ -546,6 +588,7 @@ function BridgeConfigForm({
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">设备本地安全边界</h3>
         <LocalConstraints constraints={constraints} />
+        <LocalDirectories directories={directories} />
       </div>
 
       {configuration.applied ? (
@@ -584,6 +627,7 @@ export function BridgeConfigDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const configQuery = useBridgeConfig(connection.id, open);
+  const directoriesQuery = useBridgeDirectories(open);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
 
   const changeOpen = (nextOpen: boolean) => {
@@ -633,6 +677,9 @@ export function BridgeConfigDialog({
               key={configQuery.data.configuration.version}
               connection={connection}
               configuration={configQuery.data.configuration}
+              directories={(directoriesQuery.data ?? []).filter(
+                (directory) => directory.connection_id === connection.id,
+              )}
               onSubmitStart={() => setConflictNotice(null)}
               onConflict={async () => {
                 const result = await configQuery.refetch();
