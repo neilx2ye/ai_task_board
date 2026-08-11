@@ -28,7 +28,7 @@ type SessionDirectoryNavigationProps = {
   isOwner: boolean;
   onToggleSession: (sessionId: string) => void;
   onReserve: (sessionId: string) => void;
-  onManage: (connectionId: string) => void;
+  onManage: (connectionId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
@@ -132,6 +132,7 @@ function DirectorySection({
   selectedSessionIds,
   onToggleSession,
   onReserve,
+  onManage,
   onCreate,
 }: {
   group: SessionConnectionGroup;
@@ -141,6 +142,7 @@ function DirectorySection({
   selectedSessionIds: readonly string[];
   onToggleSession: (sessionId: string) => void;
   onReserve: (sessionId: string) => void;
+  onManage: (connectionId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory: SessionDirectoryGroup,
@@ -178,6 +180,18 @@ function DirectorySection({
           <Badge variant="outline" className="tabular-nums">
             {directory.sessions.length}
           </Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2"
+            onClick={() => onManage(group.connection.id, directory.id)}
+            aria-label={`管理项目「${directory.name}」的 Threads`}
+            title={`管理「${directory.name}」的 Threads`}
+          >
+            <ListFilterIcon className="size-3.5" />
+            管理 Threads
+          </Button>
           {canCreate ? (
             <Button
               type="button"
@@ -215,7 +229,7 @@ function DirectorySection({
           </p>
         ) : visibleSessions.length === 0 ? (
           <p className="px-3 py-2.5 text-xs text-muted-foreground">
-            此目录的 Thread 已全部收纳
+            此项目的 Thread 已全部收纳
           </p>
         ) : null}
       </div>
@@ -237,9 +251,6 @@ function ConnectionSection({
 }) {
   const { connection, sessions, directories } = group;
   const deviceOnline = isConnectionAlive(connection);
-  const hiddenCount =
-    sessions.length -
-    sessions.filter((session) => visibleIds.has(session.id)).length;
   const canManage = isOwner && supportsWebThreadManagement(connection);
   const supportsDirectories = supportsWorkingDirectoryInventory(connection);
   const canCreateWithoutDirectory =
@@ -287,17 +298,6 @@ function ConnectionSection({
               <PlusIcon className="size-3.5" />
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={() => onManage(connection.id)}
-            aria-label={`选择「${connection.name}」要显示的 Threads`}
-            title="选择要显示的 Threads"
-          >
-            <ListFilterIcon className="size-3.5" />
-          </Button>
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {connection.platform}
@@ -324,27 +324,14 @@ function ConnectionSection({
             selectedSessionIds={selectedSessionIds}
             onToggleSession={onToggleSession}
             onReserve={onReserve}
+            onManage={onManage}
             onCreate={onCreate}
           />
         ))}
-        {hiddenCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => onManage(connection.id)}
-            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-2.5 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-          >
-            <ListFilterIcon className="size-3.5 shrink-0" />
-            已收纳 {hiddenCount} 个 Thread · 点击管理
-          </button>
-        ) : directories.length === 0 ? (
-          <button
-            type="button"
-            onClick={() => onManage(connection.id)}
-            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-3 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-          >
-            <ListFilterIcon className="size-3.5 shrink-0" />
-            暂无工作目录或 Thread · 点击管理
-          </button>
+        {directories.length === 0 ? (
+          <p className="px-3 py-3 text-xs text-muted-foreground">
+            暂无工作目录或 Thread
+          </p>
         ) : null}
       </div>
     </section>

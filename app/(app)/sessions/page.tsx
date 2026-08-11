@@ -38,6 +38,11 @@ type CreateThreadTarget = {
   directoryKey: string | null;
 };
 
+type ThreadPickerTarget = {
+  connectionId: string;
+  directoryId: string;
+};
+
 export default function SessionsPage() {
   const sessionsQuery = useSessions();
   const directoriesQuery = useBridgeDirectories();
@@ -48,9 +53,8 @@ export default function SessionsPage() {
   // 按点选顺序保存选中的 Thread；只有选中的才会挂载面板并同步历史。
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
-  const [pickerConnectionId, setPickerConnectionId] = useState<string | null>(
-    null,
-  );
+  const [pickerTarget, setPickerTarget] =
+    useState<ThreadPickerTarget | null>(null);
   const [createTarget, setCreateTarget] =
     useState<CreateThreadTarget | null>(null);
   const [renameSession, setRenameSession] = useState<SessionListItem | null>(
@@ -88,28 +92,26 @@ export default function SessionsPage() {
       ),
     [connectionsQuery.data, directoriesQuery.data, sessions],
   );
-  const pickerGroup = useMemo(
-    () =>
-      pickerConnectionId
-        ? (connectionGroups.find(
-            (group) => group.connection.id === pickerConnectionId,
-          ) ?? null)
-        : null,
-    [pickerConnectionId, connectionGroups],
-  );
-  const pickerSupportsDirectories = pickerGroup
-    ? supportsWorkingDirectoryInventory(pickerGroup.connection)
+  const pickerContext = useMemo(() => {
+    if (!pickerTarget) return null;
+    const group = connectionGroups.find(
+      (candidate) =>
+        candidate.connection.id === pickerTarget.connectionId,
+    );
+    const project = group?.directories.find(
+      (candidate) => candidate.id === pickerTarget.directoryId,
+    );
+    return group && project ? { group, project } : null;
+  }, [pickerTarget, connectionGroups]);
+  const pickerSupportsDirectories = pickerContext
+    ? supportsWorkingDirectoryInventory(pickerContext.group.connection)
     : false;
-  const pickerCreateDirectories = useMemo(
-    () =>
-      pickerGroup?.directories.filter(
-        (directory) =>
-          directory.configured &&
-          directory.inventoryActive &&
-          directory.directoryKey !== null,
-      ) ?? [],
-    [pickerGroup],
-  );
+  const pickerCanCreate = pickerContext
+    ? !pickerSupportsDirectories ||
+      (pickerContext.project.configured &&
+        pickerContext.project.inventoryActive &&
+        pickerContext.project.directoryKey !== null)
+    : false;
   const selectedSessions = useMemo(
     () =>
       selectedSessionIds
@@ -242,7 +244,9 @@ export default function SessionsPage() {
               isOwner={Boolean(isOwner)}
               onToggleSession={toggleSessionSelected}
               onReserve={setTargetSessionId}
-              onManage={setPickerConnectionId}
+              onManage={(connectionId, directoryId) =>
+                setPickerTarget({ connectionId, directoryId })
+              }
               onCreate={openCreateDialog}
             />
           </aside>
@@ -283,44 +287,42 @@ export default function SessionsPage() {
       />
 
       <ThreadPickerDialog
-        open={pickerGroup !== null}
+        open={pickerContext !== null}
         onOpenChange={(open) => {
-          if (!open) setPickerConnectionId(null);
+          if (!open) setPickerTarget(null);
         }}
-        connection={pickerGroup?.connection ?? null}
-        projects={pickerGroup?.directories ?? []}
+        connection={pickerContext?.group.connection ?? null}
+        project={pickerContext?.project ?? null}
         visibleIds={visibleIds}
         canManage={
-          Boolean(isOwner && pickerGroup) &&
+          Boolean(isOwner && pickerContext) &&
           supportsWebThreadManagement(
-            pickerGroup?.connection ?? { bridge_version: null },
+            pickerContext?.group.connection ?? { bridge_version: null },
           )
         }
-        canCreate={
-          !pickerSupportsDirectories || pickerCreateDirectories.length <= 1
-        }
+        canCreate={pickerCanCreate}
         onToggle={setSessionVisible}
         onCreate={() => {
-          if (!pickerGroup) return;
+          if (!pickerContext) return;
           const directory = pickerSupportsDirectories
-            ? pickerCreateDirectories[0]
+            ? pickerContext.project
             : undefined;
-          openCreateDialog(pickerGroup, directory);
-          setPickerConnectionId(null);
+          openCreateDialog(pickerContext.group, directory);
+          setPickerTarget(null);
         }}
         onRename={(session) => {
           setRenameSession(session);
-          setPickerConnectionId(null);
+          setPickerTarget(null);
         }}
         onDelete={(session) => {
           setDeleteSession(session);
-          setPickerConnectionId(null);
+          setPickerTarget(null);
         }}
         onOpen={(sessionId) => {
           setSelectedSessionIds((prev) =>
             prev.includes(sessionId) ? prev : [...prev, sessionId],
           );
-          setPickerConnectionId(null);
+          setPickerTarget(null);
         }}
       />
 

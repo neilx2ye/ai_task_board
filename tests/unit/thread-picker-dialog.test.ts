@@ -2,9 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { ThreadPickerProjectList } from "@/components/thread-picker-dialog";
+import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
+import { ThreadPickerList } from "@/components/thread-picker-dialog";
 import type { SessionDirectoryGroup } from "@/lib/domain/session-directory-groups";
-import type { SessionListItem } from "@/lib/types/domain";
+import type {
+  SessionConnectionSummary,
+  SessionListItem,
+} from "@/lib/types/domain";
 
 function session(id: string, name: string, workingDirectory: string) {
   return {
@@ -22,32 +26,68 @@ function session(id: string, name: string, workingDirectory: string) {
   } as SessionListItem;
 }
 
-describe("ThreadPickerProjectList", () => {
-  it("renders Threads in separate project sections", () => {
-    const projects: SessionDirectoryGroup[] = [
-      {
-        id: "configured:app",
-        directoryKey: "app",
-        name: "主应用",
-        workingDirectory: "/workspace/app",
-        inventoryActive: true,
-        configured: true,
-        sessions: [session("thread-app", "修复登录", "/workspace/app")],
-      },
-      {
-        id: "configured:docs",
-        directoryKey: "docs",
-        name: "文档站",
-        workingDirectory: "/workspace/docs",
-        inventoryActive: true,
-        configured: true,
-        sessions: [session("thread-docs", "更新指南", "/workspace/docs")],
-      },
-    ];
+const connection: SessionConnectionSummary = {
+  id: "connection-1",
+  name: "开发设备",
+  platform: "Codex",
+  last_seen_at: null,
+  bridge_version: "0.7.0",
+  revoked_at: null,
+};
 
+const projects: SessionDirectoryGroup[] = [
+  {
+    id: "configured:app",
+    directoryKey: "app",
+    name: "主应用",
+    workingDirectory: "/workspace/app",
+    inventoryActive: true,
+    configured: true,
+    sessions: [session("thread-app", "修复登录", "/workspace/app")],
+  },
+  {
+    id: "configured:docs",
+    directoryKey: "docs",
+    name: "文档站",
+    workingDirectory: "/workspace/docs",
+    inventoryActive: true,
+    configured: true,
+    sessions: [session("thread-docs", "更新指南", "/workspace/docs")],
+  },
+];
+
+describe("project-scoped Thread management", () => {
+  it("renders one management button for each project", () => {
     const markup = renderToStaticMarkup(
-      createElement(ThreadPickerProjectList, {
-        projects,
+      createElement(SessionDirectoryNavigation, {
+        groups: [
+          {
+            connection,
+            sessions: projects.flatMap((project) => project.sessions),
+            directories: projects,
+          },
+        ],
+        visibleIds: new Set<string>(),
+        selectedSessionIds: [],
+        isOwner: true,
+        onToggleSession: vi.fn(),
+        onReserve: vi.fn(),
+        onManage: vi.fn(),
+        onCreate: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain('aria-label="管理项目「主应用」的 Threads"');
+    expect(markup).toContain('aria-label="管理项目「文档站」的 Threads"');
+    expect(markup).not.toContain(
+      'aria-label="选择「开发设备」要显示的 Threads"',
+    );
+  });
+
+  it("renders only the Threads passed from the selected project", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ThreadPickerList, {
+        sessions: projects[0].sessions,
         visibleIds: new Set(["thread-app"]),
         onToggle: vi.fn(),
         onOpen: vi.fn(),
@@ -57,16 +97,7 @@ describe("ThreadPickerProjectList", () => {
       }),
     );
 
-    const appProjectStart = markup.indexOf('aria-label="项目「主应用」"');
-    const docsProjectStart = markup.indexOf('aria-label="项目「文档站」"');
-    const appProjectMarkup = markup.slice(appProjectStart, docsProjectStart);
-    const docsProjectMarkup = markup.slice(docsProjectStart);
-
-    expect(appProjectStart).toBeGreaterThanOrEqual(0);
-    expect(docsProjectStart).toBeGreaterThan(appProjectStart);
-    expect(appProjectMarkup).toContain("修复登录");
-    expect(appProjectMarkup).not.toContain("更新指南");
-    expect(docsProjectMarkup).toContain("更新指南");
-    expect(docsProjectMarkup).not.toContain("修复登录");
+    expect(markup).toContain("修复登录");
+    expect(markup).not.toContain("更新指南");
   });
 });
