@@ -257,7 +257,7 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/history" \
   }'
 ```
 
-为兼容旧 Bridge，请求 schema 仍允许 `user_message`、`assistant_message` 和 `reasoning`；服务端在写库前固定只保留 `assistant_message`。每页最多 100 项，单项 `content` 最长 50,000 字符，单项 `data` 最多 4 KiB，整个
+为兼容旧 Bridge，请求 schema 仍允许 `user_message`、`assistant_message` 和 `reasoning`；服务端在写库前固定只保留 `user_message` 与 `assistant_message`。每页最多 100 项，单项 `content` 最长 50,000 字符，单项 `data` 最多 4 KiB，整个
 `items` JSON 最多 512 KiB（HTTP body 最多 640 KiB）。`source_order` 是 `0` 到
 `Number.MAX_SAFE_INTEGER` 的整数，用来稳定排列同一时间的 item。`items: []` 合法，供没有
 可导入内容的 Thread 单独上报状态。

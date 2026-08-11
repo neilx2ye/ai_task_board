@@ -128,8 +128,9 @@ completed turns for ordinary CLI/VS Code threads in a separate, cancellable,
 bounded background loop. Runtime-lease renewal, inventory, and live turns do
 not wait for this scan.
 
-Only the final `agentMessage` is imported. A turn carrying a non-empty persisted
-`clientUserMessageId` is skipped because it came from Board live execution.
+The user's `userMessage` and the final `agentMessage` are imported. A turn
+carrying a non-empty persisted `clientUserMessageId` is skipped because it came
+from Board live execution.
 Images, local-image/skill paths, raw `reasoning.content`, commands and their
 output, diffs, MCP arguments/results, and every other tool item are discarded
 locally while persisted items are read in pages. The Bridge scans at most 10,000
@@ -145,7 +146,8 @@ another idempotent scan. Batches contain at most 100 items and 512 KiB. Other
 scan/import failures use bounded backoff, update only the per-Session history
 status, and do not stop the main Bridge.
 
-Imported history is append-only on the Board. Turning history sync off or
+Imported history is append-only on the Board, and historical user prompts are
+visible to members who can access the Workspace. Turning history sync off or
 lowering the recent-turn limit stops later imports but does not delete content
 that was already uploaded. Remove that data through the Board's applicable
 Workspace/data deletion flow when required.

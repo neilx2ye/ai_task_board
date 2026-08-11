@@ -888,7 +888,8 @@ export class HistorySynchronizer {
         error: null,
       };
       const importableItems = result.items.filter(
-        (item) => item.kind === "assistant_message",
+        (item) =>
+          item.kind === "user_message" || item.kind === "assistant_message",
       );
       const batches = splitHistoryImportItems(
         this.options.runtimeInstanceId,

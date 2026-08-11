@@ -291,6 +291,10 @@ describe("Codex Bridge history process", () => {
     ];
     expect(imported).toEqual([
       expect.objectContaining({
+        kind: "user_message",
+        content: "Local historical prompt",
+      }),
+      expect.objectContaining({
         kind: "assistant_message",
         content: "Local historical answer",
       }),

@@ -120,7 +120,7 @@ Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新�
 
 历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=notLoaded`）取得有界 turn 清单，再用 `thread/items/list` 分页读取持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
 
-导入白名单只有最终 `agentMessage`。`userMessage`、`reasoning.summary`、图片、`localImage`/skill 的本机路径、`reasoning.content` 原始推理、命令与输出、diff、MCP 参数/结果和其他工具 item 都不进入上传请求。回复文本仍会经过现有 Secret 尽力脱敏和 UTF-safe 的 50,000 字符上限。
+导入白名单只有用户的 `userMessage` 与最终 `agentMessage`。`reasoning.summary`、图片、`localImage`/skill 的本机路径、`reasoning.content` 原始推理、命令与输出、diff、MCP 参数/结果和其他工具 item 都不进入上传请求。消息文本仍会经过现有 Secret 尽力脱敏和 UTF-safe 的 50,000 字符上限。历史用户消息会对有权访问该 Workspace 的成员可见。
 
 扫描在独立、可取消且有界的后台循环运行：单个 turn 最多读取 10,000 个原始 item，每轮每个 thread 最多保留 500 条白名单活动；请求批次最多 100 条且不超过 512 KiB。命令、MCP、diff、附件路径与原始推理会在分页读取时直接丢弃，不进入跨页缓存。Bridge 以 `thread.updatedAt` 和有效 turn 上限组成签名，同一进程内签名未变化时只扫描一次；thread、上限变化或进程重启后的重扫依靠稳定的 thread/turn/item 外部引用、原始 turn 时间和 item 顺序保持幂等。`partial` 表示本次有界快照在达到有效 turn 上限前触发了本机安全扫描上限；触顶的 turn 不会部分导入，`local-safety-cap` 也不是可续扫的 App Server cursor。历史读取或上传失败只更新该 Session 的历史同步状态并做有界退避，不会让运行租约、清单同步、worker 或活跃 turn 退出。
 
@@ -128,7 +128,7 @@ Board 中已导入的历史是只追加数据。关闭历史同步或降低最�
 
 ## 会话记录同步边界
 
-同步策略是固定的，会话顶部不再提供开关。Bridge 只上传 AI 回复，并用 `summary: "none"` 启动 turn；服务端也会无条件忽略非 `assistant_message` 活动，防止旧 Bridge 或自定义 Adapter 重新开启过程上传。Blocking 结构化问题/答案继续使用独立流程，不属于会话活动同步。以前已保存的过程活动不会被反向删除，但会话面板不再展示它们。
+实时同步策略是固定的，会话顶部不再提供开关。Bridge 在网页发起的 turn 中只上传 AI 回复，并用 `summary: "none"` 启动 turn；服务端也会无条件忽略实时流里的非 `assistant_message` 活动，防止旧 Bridge 或自定义 Adapter 重新开启过程上传。另行授权的旧历史同步会导入用户消息与最终 AI 回复。Blocking 结构化问题/答案继续使用独立流程，不属于会话活动同步。以前已保存的过程活动不会被反向删除，但会话面板不再展示它们。
 
 未启用 Web 配置时，Bridge 仍会周期性上报本机边界并续租运行实例，但忽略网页期望值；Web 会明确显示“本机禁止 Web 配置”。同一 Connection 的另一个 Bridge 在租约有效时只会待机，不会启动 worker，直到旧实例释放或最长约 30 秒的租约过期。续租长期失败时，持有者会在数据库租约可能失效前主动停止所有 worker。标题可能包含首条 prompt 预览，开启前应确认当前 Workspace 的成员都可以看到这类元数据。
 
@@ -216,7 +216,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 ## 当前限制
 
 - **Web 路径授权是设备级高权限开关。** 0.8 可在网页管理项目清单，但只有设备显式设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用；授权后受信 Owner 可以把 Bridge 工作范围切换到该 OS 用户可访问的其他目录。Session 名称前缀与逐个 thread 的 allow/deny 仍由设备配置或后续版本处理，网页侧栏隐藏某个 Session 也不会停止其本地 worker。
-- **历史同步是限量白名单，不是完整原始日志镜像。** 只补录最近完成 turn 的最终 AI 回复；用户消息、思考、工具过程、附件与本机路径都不会补录。扩大 turn 上限后会从最近历史重新幂等扫描；关闭或降低上限不会反向删除已导入内容。
+- **历史同步是限量白名单，不是完整原始日志镜像。** 只补录最近完成 turn 的用户消息与最终 AI 回复；思考、工具过程、附件与本机路径都不会补录。扩大 turn 上限后会从最近历史重新幂等扫描；关闭或降低上限不会反向删除已导入内容。
 - **没有可靠的运行中 steer。** 忙碌时的新网页消息排到下一张 Task，当前 turn 完成后才执行。
 - **没有网页审批。** 默认会在设备端自动批准与当前活跃 turn 关联的受支持请求；这不是用户逐次确认，设置 `CODEX_BRIDGE_APPROVAL_MODE=decline` 才会统一拒绝审批。
 - **没有可靠的网页 interrupt。** 网页状态或取消操作不能保证立即终止本地命令；停止 systemd 服务只会走尽力的 App Server interrupt。

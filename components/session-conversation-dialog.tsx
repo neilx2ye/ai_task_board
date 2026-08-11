@@ -25,6 +25,8 @@ import {
   XIcon,
   ZapIcon,
 } from "lucide-react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { ErrorState, LoadingBlock } from "@/components/states";
 import {
@@ -296,6 +298,64 @@ function TimelineMeta({
   );
 }
 
+const MESSAGE_MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => {
+    const opensNewTab = Boolean(href && !href.startsWith("#"));
+    return (
+      <a
+        href={href}
+        target={opensNewTab ? "_blank" : undefined}
+        rel={opensNewTab ? "noreferrer" : undefined}
+      >
+        {children}
+      </a>
+    );
+  },
+  // Do not make an AI-authored Markdown image trigger a third-party request.
+  img: ({ alt }) => (
+    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+      {alt ? `图片：${alt}` : "图片"}
+    </span>
+  ),
+};
+
+export function AssistantMessageContent({ content }: { content: string }) {
+  return (
+    <div
+      data-message-format="markdown"
+      className={cn(
+        "min-w-0 max-w-full overflow-x-auto text-sm leading-relaxed break-words",
+        "[&>:first-child]:mt-0 [&>:last-child]:mb-0",
+        "[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
+        "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
+        "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:font-semibold",
+        "[&_p]:my-2 [&_p]:whitespace-pre-wrap",
+        "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5",
+        "[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5",
+        "[&_li_p]:my-0",
+        "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-indigo-300 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
+        "[&_a]:font-medium [&_a]:text-indigo-700 [&_a]:underline [&_a]:underline-offset-2",
+        "[&_code]:rounded [&_code]:bg-black/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em]",
+        "[&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-slate-950 [&_pre]:p-3 [&_pre]:text-slate-50",
+        "[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-xs [&_pre_code]:leading-relaxed",
+        "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
+        "[&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
+        "[&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top",
+        "[&_hr]:my-4 [&_hr]:border-border",
+        "[&_input]:mr-2",
+      )}
+    >
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={MESSAGE_MARKDOWN_COMPONENTS}
+        skipHtml
+      >
+        {content}
+      </Markdown>
+    </div>
+  );
+}
+
 function MessageBubble({
   actorType,
   content,
@@ -342,9 +402,13 @@ function MessageBubble({
           createdAt={createdAt}
           historySource={historySource}
         />
-        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-          {content}
-        </p>
+        {fromUser ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+            {content}
+          </p>
+        ) : (
+          <AssistantMessageContent content={content} />
+        )}
       </div>
     </div>
   );
@@ -693,11 +757,21 @@ function buildTimeline(
   });
 }
 
+export function conversationMessageActivities(
+  activities: readonly SessionActivityItem[],
+): SessionActivityItem[] {
+  return reduceAppServerActivityStream(activities).filter(
+    (activity) =>
+      activity.kind === "user_message" ||
+      activity.kind === "assistant_message",
+  );
+}
+
 function sessionContentDescription(session: SessionListItem): string {
   const location = session.working_directory
     ? `${session.connection.name} › ${session.working_directory}`
     : session.connection.name;
-  return `${location} · 仅同步 AI 回复`;
+  return `${location} · 展示用户消息与 AI 回复`;
 }
 
 function SessionConversationContent({
@@ -734,10 +808,7 @@ function SessionConversationContent({
     [details?.tasks],
   );
   const activities = useMemo(
-    () =>
-      reduceAppServerActivityStream(details?.activities ?? []).filter(
-        (activity) => activity.kind === "assistant_message",
-      ),
+    () => conversationMessageActivities(details?.activities ?? []),
     [details?.activities],
   );
   const timeline = useMemo(
@@ -911,7 +982,7 @@ function SessionConversationContent({
             <BotIcon className="size-7 text-muted-foreground" />
             <p className="text-sm font-medium">还没有同步的会话记录</p>
             <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-              Bridge 只会同步 AI 回复；结构化问题仍通过独立流程显示。你也可以直接发送下一项任务。
+              历史同步会展示用户消息与 AI 回复；结构化问题仍通过独立流程显示。你也可以直接发送下一项任务。
             </p>
           </div>
         ) : (

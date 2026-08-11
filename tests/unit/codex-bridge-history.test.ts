@@ -702,7 +702,7 @@ describe("Codex Bridge history sync", () => {
 
     expect(
       reports.flatMap((report) => report.items).map((item) => item.kind),
-    ).toEqual(["assistant_message"]);
+    ).toEqual(["user_message", "assistant_message"]);
     synchronizer.stop();
     controller.abort(new Error("test complete"));
     await expect(running).resolves.toBeUndefined();

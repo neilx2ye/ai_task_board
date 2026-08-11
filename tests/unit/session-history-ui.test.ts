@@ -4,11 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
+  AssistantMessageContent,
   HistorySyncStatus,
   SessionConversationPanel,
+  conversationMessageActivities,
   historySyncUiState,
 } from "@/components/session-conversation-dialog";
-import type { SessionListItem } from "@/lib/types/domain";
+import type {
+  SessionActivityItem,
+  SessionListItem,
+} from "@/lib/types/domain";
 
 const historySync = {
   status: "syncing" as const,
@@ -80,9 +85,73 @@ describe("session history UI state", () => {
       ),
     );
 
-    expect(markup).toContain("Codex device › /workspace/project · 仅同步 AI 回复");
+    expect(markup).toContain(
+      "Codex device › /workspace/project · 展示用户消息与 AI 回复",
+    );
     expect(markup).not.toContain('role="switch"');
     expect(markup).not.toContain("sync-process-details");
     expect(markup).not.toContain("同步过程详情");
+  });
+
+  it("keeps imported user messages and assistant replies in the conversation", () => {
+    const activity = (
+      id: string,
+      kind: SessionActivityItem["kind"],
+    ) =>
+      ({
+        id,
+        workspace_id: "workspace-1",
+        session_id: "session-1",
+        task_id: null,
+        task_message_id: null,
+        kind,
+        actor_type: kind === "user_message" ? "user" : "ai",
+        content: kind,
+        data: {},
+        external_ref: `history:${id}`,
+        occurred_at: "2026-08-11T00:00:00.000Z",
+        source_order: id,
+        source: "codex_history",
+        created_at: "2026-08-11T00:00:00.000Z",
+      }) as SessionActivityItem;
+
+    expect(
+      conversationMessageActivities([
+        activity("1", "user_message"),
+        activity("2", "reasoning"),
+        activity("3", "assistant_message"),
+      ]).map((item) => item.kind),
+    ).toEqual(["user_message", "assistant_message"]);
+  });
+
+  it("renders AI Markdown structure without executing raw HTML", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AssistantMessageContent, {
+        content: [
+          "# 结果",
+          "",
+          "- 第一项",
+          "- 第二项",
+          "",
+          "```ts",
+          "const ready = true;",
+          "```",
+          "",
+          "| 项目 | 状态 |",
+          "| --- | --- |",
+          "| Web | 完成 |",
+          "",
+          "<script>alert('unsafe')</script>",
+        ].join("\n"),
+      }),
+    );
+
+    expect(markup).toContain('data-message-format="markdown"');
+    expect(markup).toContain("<h1>结果</h1>");
+    expect(markup).toContain("<ul>");
+    expect(markup).toContain("<pre>");
+    expect(markup).toContain("<table>");
+    expect(markup).not.toContain("<script");
+    expect(markup).not.toContain("alert(&#x27;unsafe&#x27;)");
   });
 });

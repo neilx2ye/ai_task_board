@@ -99,7 +99,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("assistant-only session synchronization", () => {
+describe("message-only session synchronization", () => {
   it("always suppresses non-assistant live activity before any database call", async () => {
     await expect(
       reportSessionActivity(context, activity, "activity/reasoning-1"),
@@ -128,13 +128,13 @@ describe("assistant-only session synchronization", () => {
     );
   });
 
-  it("removes every non-assistant item from history batches", async () => {
+  it("keeps user prompts and assistant replies in history batches", async () => {
     await importSessionHistory(context, history);
 
     expect(rpcMocks.callDomainRpc).toHaveBeenCalledWith(
       "import_session_history",
       expect.objectContaining({
-        p_items: [history.items[2]],
+        p_items: [history.items[0], history.items[2]],
       }),
     );
   });

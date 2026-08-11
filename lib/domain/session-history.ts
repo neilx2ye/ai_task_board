@@ -14,10 +14,13 @@ export async function importSessionHistory(
   context: AISessionContext,
   input: ImportSessionHistoryInput,
 ) {
-  // History follows the same fixed policy as live activity: only final AI
-  // replies cross the persistence boundary. Filtering here keeps imports safe
-  // when an older Bridge still sends user messages or reasoning summaries.
-  const items = input.items.filter((item) => item.kind === "assistant_message");
+  // History keeps the human prompt and final AI reply so imported turns remain
+  // readable as conversations. Reasoning summaries still stay outside the
+  // persistence boundary, including when sent by an older/custom Bridge.
+  const items = input.items.filter(
+    (item) =>
+      item.kind === "user_message" || item.kind === "assistant_message",
+  );
   return callDomainRpc("import_session_history", {
     p_workspace_id: context.workspaceId,
     p_connection_id: context.connectionId,
