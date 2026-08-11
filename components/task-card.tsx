@@ -22,6 +22,8 @@ type Props = {
   childStats?: { done: number; total: number };
   /** waiting_user 时最近一条 AI 问题（含后代冒泡上来的）。 */
   latestQuestion?: TaskMessageRow | null;
+  /** 看板语义状态；用于把未绑定的历史 ready 叶子排除出“已预留”。 */
+  displayStatus?: TaskRow["status"];
 };
 
 export function TaskCard({
@@ -30,10 +32,11 @@ export function TaskCard({
   sessionById,
   childStats,
   latestQuestion,
+  displayStatus,
 }: Props) {
   const effectivelyWaiting = latestQuestion != null;
   const statusMeta = TASK_STATUS_META[
-    effectivelyWaiting ? "waiting_user" : task.status
+    effectivelyWaiting ? "waiting_user" : (displayStatus ?? task.status)
   ];
   const priority = priorityLevelOf(task.priority);
   const session =

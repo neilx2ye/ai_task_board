@@ -125,6 +125,7 @@ export type AIConnectionBridgeSettingsRow = {
   desired_max_concurrent_turns: number;
   desired_sync_history: boolean;
   desired_history_turn_limit: number;
+  desired_working_directories: Json | null;
   applied_version: number | null;
   effective_enabled: boolean | null;
   effective_include_thread_titles: boolean | null;
@@ -132,6 +133,7 @@ export type AIConnectionBridgeSettingsRow = {
   effective_max_concurrent_turns: number | null;
   effective_sync_history: boolean | null;
   effective_history_turn_limit: number | null;
+  effective_working_directories: Json | null;
   constraint_remote_configuration_enabled: boolean | null;
   constraint_allow_thread_titles: boolean | null;
   constraint_max_threads: number | null;
@@ -143,6 +145,7 @@ export type AIConnectionBridgeSettingsRow = {
   constraint_approval_mode: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync: boolean | null;
   constraint_max_history_turns: number | null;
+  constraint_allow_working_directory_configuration: boolean | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -162,6 +165,7 @@ export type AIConnectionBridgeSettingsInsert = {
   desired_max_concurrent_turns?: number;
   desired_sync_history?: boolean;
   desired_history_turn_limit?: number;
+  desired_working_directories?: Json | null;
   applied_version?: number | null;
   effective_enabled?: boolean | null;
   effective_include_thread_titles?: boolean | null;
@@ -169,6 +173,7 @@ export type AIConnectionBridgeSettingsInsert = {
   effective_max_concurrent_turns?: number | null;
   effective_sync_history?: boolean | null;
   effective_history_turn_limit?: number | null;
+  effective_working_directories?: Json | null;
   constraint_remote_configuration_enabled?: boolean | null;
   constraint_allow_thread_titles?: boolean | null;
   constraint_max_threads?: number | null;
@@ -180,6 +185,7 @@ export type AIConnectionBridgeSettingsInsert = {
   constraint_approval_mode?: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync?: boolean | null;
   constraint_max_history_turns?: number | null;
+  constraint_allow_working_directory_configuration?: boolean | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -744,6 +750,12 @@ export type AIThreadCommandResponse = {
 };
 type ArtifactResponse = { artifact: ArtifactRow };
 
+export type BridgeWorkingDirectory = {
+  directory_key: string;
+  name: string;
+  working_directory: string;
+};
+
 export type BridgeDesiredConfiguration = {
   enabled: boolean;
   include_thread_titles: boolean;
@@ -751,6 +763,7 @@ export type BridgeDesiredConfiguration = {
   max_concurrent_turns: number;
   sync_history: boolean;
   history_turn_limit: number;
+  working_directories: BridgeWorkingDirectory[] | null;
 };
 
 export type BridgeConfigurationConstraints = {
@@ -765,6 +778,7 @@ export type BridgeConfigurationConstraints = {
   approval_mode: "decline" | "accept" | "accept-session";
   allow_history_sync: boolean;
   max_history_turns: number;
+  allow_working_directory_configuration: boolean;
 };
 
 export type BridgeAppliedConfiguration = {
@@ -1623,6 +1637,7 @@ export interface Database {
             p_max_concurrent_turns: number;
             p_sync_history: boolean;
             p_history_turn_limit: number;
+            p_working_directories: Json | null;
           };
         Returns: BridgeConfigurationResponse;
       };

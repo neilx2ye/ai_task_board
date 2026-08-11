@@ -19,8 +19,6 @@ export type AIAuthContext = {
 
 export type AISessionContext = AIAuthContext & {
   sessionId: string;
-  /** Defaults to true for rolling compatibility with older Board tests/clients. */
-  syncProcessDetails?: boolean;
 };
 
 export type ClaimedTask = Pick<

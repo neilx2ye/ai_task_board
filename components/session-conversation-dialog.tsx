@@ -59,7 +59,6 @@ import {
   sessionActivityOccurredAt,
   useCreateSessionTurn,
   useSessionConversation,
-  useUpdateSessionProcessDetailsSync,
   mergeSessionConversationPages,
 } from "@/hooks/use-sessions";
 import {
@@ -698,66 +697,7 @@ function sessionContentDescription(session: SessionListItem): string {
   const location = session.working_directory
     ? `${session.connection.name} › ${session.working_directory}`
     : session.connection.name;
-  return session.sync_process_details === false
-    ? `${location} · 仅同步对话与结构化问题`
-    : `${location} · 对话、思考摘要与工具过程`;
-}
-
-export function ProcessDetailsSyncToggle({
-  session,
-}: {
-  session: SessionListItem;
-}) {
-  const mutation = useUpdateSessionProcessDetailsSync(session.id);
-  const enabled = session.sync_process_details !== false;
-  const fieldId = `session-process-details-${session.id}`;
-  const descriptionId = `${fieldId}-description`;
-
-  return (
-    <div
-      className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2"
-      data-process-details-sync={enabled ? "enabled" : "disabled"}
-    >
-      <label
-        htmlFor={fieldId}
-        className={cn(
-          "flex items-start justify-between gap-4",
-          mutation.isPending ? "cursor-wait opacity-70" : "cursor-pointer",
-        )}
-      >
-        <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">
-            同步过程详情
-          </span>
-          <span
-            id={descriptionId}
-            className="mt-0.5 block text-xs leading-relaxed text-muted-foreground"
-          >
-            关闭后仅同步 AI 回复与结构化问题；思考摘要、命令、工具、计划和用量不再上传，既有记录仍会保留。
-          </span>
-        </span>
-        <input
-          id={fieldId}
-          type="checkbox"
-          role="switch"
-          aria-describedby={descriptionId}
-          checked={enabled}
-          disabled={mutation.isPending}
-          onChange={(event) =>
-            mutation.mutate({ sync_process_details: event.target.checked })
-          }
-          className="mt-0.5 size-4 shrink-0 accent-indigo-600"
-        />
-      </label>
-      {mutation.error ? (
-        <p role="alert" className="mt-1.5 text-xs text-destructive">
-          {mutation.error.message}
-        </p>
-      ) : mutation.isPending ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">正在保存设置…</p>
-      ) : null}
-    </div>
-  );
+  return `${location} · 仅同步 AI 回复`;
 }
 
 function SessionConversationContent({
@@ -794,7 +734,10 @@ function SessionConversationContent({
     [details?.tasks],
   );
   const activities = useMemo(
-    () => reduceAppServerActivityStream(details?.activities ?? []),
+    () =>
+      reduceAppServerActivityStream(details?.activities ?? []).filter(
+        (activity) => activity.kind === "assistant_message",
+      ),
     [details?.activities],
   );
   const timeline = useMemo(
@@ -903,9 +846,6 @@ function SessionConversationContent({
               ? sessionContentDescription(currentSession)
               : "加载会话历史"}
           </DialogDescription>
-          {currentSession ? (
-            <ProcessDetailsSyncToggle session={currentSession} />
-          ) : null}
         </DialogHeader>
       ) : (
         <header className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
@@ -933,9 +873,6 @@ function SessionConversationContent({
               ? sessionContentDescription(currentSession)
               : "从左侧选择一个 Thread 查看上下文"}
           </p>
-          {currentSession ? (
-            <ProcessDetailsSyncToggle session={currentSession} />
-          ) : null}
         </header>
       )}
 
@@ -974,9 +911,7 @@ function SessionConversationContent({
             <BotIcon className="size-7 text-muted-foreground" />
             <p className="text-sm font-medium">还没有同步的会话记录</p>
             <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-              {currentSession?.sync_process_details === false
-                ? "Bridge 只会同步对话回复与结构化问题；你也可以直接发送下一项任务。"
-                : "Bridge 回传的实时过程，以及启用后导入的 Codex 历史消息、回复和思考摘要会显示在这里。你也可以直接发送下一项任务。"}
+              Bridge 只会同步 AI 回复；结构化问题仍通过独立流程显示。你也可以直接发送下一项任务。
             </p>
           </div>
         ) : (

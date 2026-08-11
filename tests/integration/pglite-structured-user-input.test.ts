@@ -160,28 +160,6 @@ describe("structured Web user input migration", () => {
     await database?.close();
   });
 
-  it("defaults process-detail synchronization on and exposes preference updates", async () => {
-    const initial = await database.query<{
-      session: { sync_process_details: boolean };
-    }>(
-      "select public._session_payload($1::uuid) as session",
-      [sessionId],
-    );
-    expect(initial.rows[0].session.sync_process_details).toBe(true);
-
-    await database.query(
-      "update public.ai_sessions set sync_process_details = false where id = $1::uuid",
-      [sessionId],
-    );
-    const updated = await database.query<{
-      session: { sync_process_details: boolean };
-    }>(
-      "select public._session_payload($1::uuid) as session",
-      [sessionId],
-    );
-    expect(updated.rows[0].session.sync_process_details).toBe(false);
-  });
-
   it("retains the claim, accepts Web answers, and clears secrets on completion", async () => {
     const registered = await database.query<{
       response: { request: { id: string; status: string } };

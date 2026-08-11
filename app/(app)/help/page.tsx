@@ -150,7 +150,7 @@ export default function HelpPage() {
           AI Task Board 是会话优先的任务控制台：外部 AI 会话（ChatGPT、Claude、
           Codex、Gemini 或自定义 Agent）先在 CLI / APP 中建立上下文，再通过本机
           Bridge 或 REST API 同步工作；Web Console 可以向指定的存活会话发送
-          下一任务，并查看回复、思考摘要与工具过程。
+          下一任务，并查看 AI 回复。
         </p>
       </header>
 
@@ -193,8 +193,7 @@ export default function HelpPage() {
         <p className="text-sm leading-relaxed text-muted-foreground">
           Bridge 是运行在 Codex 设备上的常驻 companion。一个进程代表一台设备和一个
           AI Connection，通过 stdio 启动本机 Codex App Server，并为每个允许的本地
-          thread 同步独立会话；AI 回复、提供方公开的思考摘要、命令、文件变更、工具
-          与搜索过程会近实时显示在网页控制台。
+          thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -203,8 +202,9 @@ CODEX_THREAD_SCOPE='cwd' \\
 CODEX_BRIDGE_WEB_CONFIG='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
+CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-codex-bridge@0.7.0`}</CopyableCodeBlock>
+npx --yes ai-task-board-codex-bridge@0.8.0`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -220,13 +220,14 @@ npx --yes ai-task-board-codex-bridge@0.7.0`}</CopyableCodeBlock>
           </li>
           <li>
             本机显式允许 Web 配置后，Workspace Owner 可以在“AI 连接 → Bridge 设置”
-            动态启停、切换标题与历史同步，并降低 thread/并发/历史上限；工作目录、
-            thread 范围、权限、审批策略和本机最大值仍只能在设备上配置。
+            动态启停、切换标题与历史同步，并调整 thread/并发/历史上限。Bridge 0.8
+            额外设置 <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
+            后，还可在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
           </li>
           <li>
-            0.7 可用 <code>CODEX_WORKING_DIRECTORIES</code> 在一个 Bridge 中配置多个
-            精确 cwd；会话页按设备、工作目录和 Thread 分层展示，新建时只把本机已上报的
-            目录 key 返回 Bridge，不允许网页提交任意路径。
+            未授权 Web 路径管理时，仍用 <code>CODEX_WORKING_DIRECTORIES</code> 在设备配置
+            多个精确 cwd。无论目录来自设备启动配置还是网页期望值，新建 Thread 都只把
+            Bridge 已验证并上报的目录 key 返回设备，不能在单条命令中注入任意路径。
           </li>
           <li>
             Bridge 通过认证 SSE 接收不含任务数据的近实时唤醒，再用 REST
@@ -237,11 +238,11 @@ npx --yes ai-task-board-codex-bridge@0.7.0`}</CopyableCodeBlock>
             心跳只刷新在线时间或租约，也不会写入对话与任务事件。
           </li>
           <li>
-            看板只展示 Harness 明确提供的思考摘要，不读取或伪造模型隐藏思维链；
-            经设备与网页双重授权后，可补录最近完成 turn 的历史白名单。
+            看板不同步思考、命令、工具调用或用量；经设备与网页双重授权后，
+            也只补录最近完成 turn 的 AI 最终回复。
           </li>
           <li>
-            0.7 保留 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
+            0.8 保留 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
             可靠的运行中 steer/interrupt。默认安全权限模式会限制 sandbox，审批则在
             设备端自动接受与当前活跃 turn 关联的受支持请求。
           </li>

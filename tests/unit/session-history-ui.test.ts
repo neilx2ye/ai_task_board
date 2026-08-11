@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
   HistorySyncStatus,
-  ProcessDetailsSyncToggle,
+  SessionConversationPanel,
   historySyncUiState,
 } from "@/components/session-conversation-dialog";
 import type { SessionListItem } from "@/lib/types/domain";
@@ -56,24 +56,33 @@ describe("session history UI state", () => {
     expect(markup).toContain("本次上限 50 turns");
   });
 
-  it("renders a per-session process-detail switch in its disabled state", () => {
+  it("describes the fixed reply-only policy without a process-detail switch", () => {
     const queryClient = new QueryClient();
     const markup = renderToStaticMarkup(
       createElement(
         QueryClientProvider,
         { client: queryClient },
-        createElement(ProcessDetailsSyncToggle, {
+        createElement(SessionConversationPanel, {
           session: {
             id: "session-private",
-            sync_process_details: false,
-          } as SessionListItem,
+            name: "Private thread",
+            status: "online",
+            archived_at: null,
+            inventory_active: true,
+            last_seen_at: new Date().toISOString(),
+            working_directory: "/workspace/project",
+            connection: {
+              name: "Codex device",
+              bridge_version: null,
+            },
+          } as unknown as SessionListItem,
         }),
       ),
     );
 
-    expect(markup).toContain('role="switch"');
-    expect(markup).toContain('data-process-details-sync="disabled"');
-    expect(markup).toContain("同步过程详情");
-    expect(markup).toContain("仅同步 AI 回复与结构化问题");
+    expect(markup).toContain("Codex device › /workspace/project · 仅同步 AI 回复");
+    expect(markup).not.toContain('role="switch"');
+    expect(markup).not.toContain("sync-process-details");
+    expect(markup).not.toContain("同步过程详情");
   });
 });

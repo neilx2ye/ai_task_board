@@ -618,7 +618,7 @@ describe("Codex Bridge history sync", () => {
     }
   });
 
-  it("omits reasoning history when process-detail synchronization is disabled", async () => {
+  it("imports only AI replies", async () => {
     const reports: Array<{
       sync: HistorySyncReport;
       items: HistoryImportItem[];
@@ -689,7 +689,6 @@ describe("Codex Bridge history sync", () => {
       {
         sessionId: "session-private",
         thread: { id: "thread-private", source: "cli", createdAt: 100 },
-        syncProcessDetails: false,
       },
     ]);
 
@@ -703,7 +702,7 @@ describe("Codex Bridge history sync", () => {
 
     expect(
       reports.flatMap((report) => report.items).map((item) => item.kind),
-    ).toEqual(["user_message", "assistant_message"]);
+    ).toEqual(["assistant_message"]);
     synchronizer.stop();
     controller.abort(new Error("test complete"));
     await expect(running).resolves.toBeUndefined();

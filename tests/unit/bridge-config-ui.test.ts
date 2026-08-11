@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { BRIDGE_HISTORY_RETENTION_NOTICE } from "@/components/bridge-config-dialog";
+import {
+  BRIDGE_HISTORY_RETENTION_NOTICE,
+  isAbsoluteWorkingDirectoryPath,
+  validateWorkingDirectories,
+} from "@/components/bridge-config-dialog";
 import {
   bridgeConfigMutationFingerprint,
   bridgeConfigSyncState,
   bridgeSupportsHistorySync,
   bridgeSupportsRemoteConfiguration,
+  bridgeSupportsWorkingDirectoryConfiguration,
   supportsBridgeSettings,
   type BridgeConfiguration,
 } from "@/hooks/use-bridge-config";
@@ -23,6 +28,7 @@ function configuration(
       max_concurrent_turns: 2,
       sync_history: false,
       history_turn_limit: 50,
+      working_directories: null,
     },
     applied: {
       version: 3,
@@ -33,6 +39,13 @@ function configuration(
         max_concurrent_turns: 2,
         sync_history: false,
         history_turn_limit: 50,
+        working_directories: [
+          {
+            directory_key: "default",
+            name: "project",
+            working_directory: "/srv/project",
+          },
+        ],
       },
       constraints: {
         remote_configuration_enabled: true,
@@ -41,6 +54,7 @@ function configuration(
         max_concurrent_turns: 2,
         allow_history_sync: false,
         max_history_turns: 50,
+        allow_working_directory_configuration: false,
         thread_scope: "cwd",
         working_directory: "/srv/project",
         fixed_thread: false,
@@ -90,6 +104,9 @@ describe("Bridge configuration UI model", () => {
     expect(bridgeSupportsHistorySync("0.3.9")).toBe(false);
     expect(bridgeSupportsHistorySync("0.4.0")).toBe(true);
     expect(bridgeSupportsHistorySync("1.0.0")).toBe(true);
+    expect(bridgeSupportsWorkingDirectoryConfiguration("0.7.9")).toBe(false);
+    expect(bridgeSupportsWorkingDirectoryConfiguration("0.8.0")).toBe(true);
+    expect(bridgeSupportsWorkingDirectoryConfiguration("1.0.0")).toBe(true);
   });
 
   it("distinguishes pending, local blocking, errors, and local caps", () => {
@@ -137,6 +154,7 @@ describe("Bridge configuration UI model", () => {
       max_concurrent_turns: 4,
       sync_history: true,
       history_turn_limit: 50,
+      working_directories: null,
     };
     const first = bridgeConfigMutationFingerprint("conn-1", input);
     expect(bridgeConfigMutationFingerprint("conn-1", { ...input })).toBe(first);
@@ -152,5 +170,56 @@ describe("Bridge configuration UI model", () => {
         history_turn_limit: 40,
       }),
     ).not.toBe(first);
+    expect(
+      bridgeConfigMutationFingerprint("conn-1", {
+        ...input,
+        working_directories: [
+          {
+            directory_key: "docs",
+            name: "Docs",
+            working_directory: "/srv/docs",
+          },
+        ],
+      }),
+    ).not.toBe(first);
+  });
+
+  it("validates Web-managed project paths before submitting", () => {
+    expect(isAbsoluteWorkingDirectoryPath("/srv/project")).toBe(true);
+    expect(isAbsoluteWorkingDirectoryPath("C:\\work\\project")).toBe(true);
+    expect(isAbsoluteWorkingDirectoryPath("relative/project")).toBe(false);
+
+    const valid = [
+      {
+        directory_key: "main",
+        name: "Main app",
+        working_directory: "/srv/main",
+      },
+      {
+        directory_key: "docs",
+        name: "Docs",
+        working_directory: "/srv/docs",
+      },
+    ];
+    expect(validateWorkingDirectories(valid)).toBeNull();
+    expect(
+      validateWorkingDirectories([
+        ...valid,
+        {
+          directory_key: "docs",
+          name: "Duplicate",
+          working_directory: "/srv/duplicate",
+        },
+      ]),
+    ).toContain("标识不能重复");
+    expect(
+      validateWorkingDirectories([
+        {
+          directory_key: "relative",
+          name: "Relative",
+          working_directory: "work/project",
+        },
+      ]),
+    ).toContain("绝对工作路径");
   });
 });

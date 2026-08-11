@@ -156,6 +156,7 @@ describe("Codex Bridge Web Thread management", () => {
               max_concurrent_turns: 2,
               sync_history: false,
               history_turn_limit: 10,
+              working_directories: null,
             },
             applied: null,
             runtime: { online: true, lease_expires_at: null },
@@ -297,6 +298,160 @@ describe("Codex Bridge Web Thread management", () => {
     expect(stderr).toContain(
       'THREAD_RENAME {"threadId":"thread-existing","name":"Renamed from Web"}',
     );
+    expect(stderr).toContain(
+      'THREAD_DELETE {"threadId":"thread-existing"}',
+    );
+  }, 20_000);
+
+  it("deletes a locally managed Thread whose Board Session is already fenced", async () => {
+    const command: ThreadCommand = {
+      id: "44444444-4444-4444-8444-444444444444",
+      action: "delete",
+      name: null,
+      external_thread_id: "thread-existing",
+    };
+    const completions: Array<Record<string, unknown>> = [];
+    const inventories: Array<Array<Record<string, unknown>>> = [];
+    let commandAvailable = true;
+    let taskClaims = 0;
+    let stdout = "";
+    let stderr = "";
+
+    const server = createServer(async (request, response) => {
+      const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
+      if (pathname === "/api/ai/config") {
+        const status = await bodyOf(request);
+        json(response, {
+          configuration: {
+            connection_id: "connection-fenced-delete",
+            version: 1,
+            desired: {
+              enabled: true,
+              include_thread_titles: false,
+              max_threads: 10,
+              max_concurrent_turns: 2,
+              sync_history: false,
+              history_turn_limit: 10,
+            },
+            applied: null,
+            runtime: { online: true, lease_expires_at: null },
+            updated_at: new Date().toISOString(),
+            echoed_runtime: status.runtime_instance_id,
+          },
+        });
+        return;
+      }
+      if (pathname === "/api/ai/sessions/sync") {
+        const body = await bodyOf(request);
+        const threads = body.threads as Array<Record<string, unknown>>;
+        inventories.push(threads);
+        json(response, {
+          sessions: threads.map((thread) => ({
+            id: `session-${String(thread.external_conversation_ref)}`,
+            external_conversation_ref: thread.external_conversation_ref,
+            deletion_requested_at: new Date().toISOString(),
+          })),
+        });
+        return;
+      }
+      if (pathname === "/api/ai/thread-commands/claim") {
+        await bodyOf(request);
+        json(response, {
+          command: commandAvailable ? command : null,
+        });
+        commandAvailable = false;
+        return;
+      }
+      if (
+        pathname ===
+        "/api/ai/thread-commands/44444444-4444-4444-8444-444444444444/complete"
+      ) {
+        completions.push(await bodyOf(request));
+        json(response, { command });
+        return;
+      }
+      if (pathname === "/api/ai/tasks/claim-next") {
+        taskClaims += 1;
+        await bodyOf(request);
+        response.writeHead(403, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: {
+              code: "SESSION_NOT_AUTHORIZED",
+              message: "The AI session is not authorized",
+            },
+          }),
+        );
+        return;
+      }
+      if (request.method !== "GET") await bodyOf(request);
+      json(response, {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No test port");
+
+    temporaryDirectory = await mkdtemp(
+      path.join(tmpdir(), "atb-fenced-delete-test-"),
+    );
+    const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
+    await writeFile(fakeCodex, FAKE_CODEX, "utf8");
+    await chmod(fakeCodex, 0o755);
+    child = spawn(
+      path.resolve("node_modules/.bin/tsx"),
+      [path.resolve("packages/codex-bridge/src/cli.ts")],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
+          AI_TASK_BOARD_CONNECTION_TOKEN: "atb_fenced_delete_token",
+          AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS: "1000",
+          AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
+          AI_TASK_BOARD_POLL_INTERVAL_MS: "500",
+          CODEX_BINARY: fakeCodex,
+          CODEX_WORKING_DIRECTORY: temporaryDirectory,
+          CODEX_BRIDGE_WEB_CONFIG: "true",
+          CODEX_THREAD_ID: "",
+          CODEX_THREAD_SCOPE: "all",
+          CODEX_MAX_THREADS: "10",
+          CODEX_MAX_CONCURRENT_TURNS: "2",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    try {
+      await waitUntil(
+        () =>
+          completions.length === 1 &&
+          inventories.some((threads) => threads.length === 0),
+        () =>
+          `fenced deletion was not reconciled\nstdout:\n${stdout}\nstderr:\n${stderr}\n` +
+          `completions=${JSON.stringify(completions)}\n` +
+          `inventories=${JSON.stringify(inventories)}`,
+      );
+      expect(child.exitCode).toBeNull();
+    } finally {
+      await stopChild(child);
+      child = null;
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+
+    expect(completions[0]).toMatchObject({
+      succeeded: true,
+      external_thread_id: "thread-existing",
+    });
+    expect(taskClaims).toBe(0);
     expect(stderr).toContain(
       'THREAD_DELETE {"threadId":"thread-existing"}',
     );

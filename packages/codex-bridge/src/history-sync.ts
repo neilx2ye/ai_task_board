@@ -92,8 +92,6 @@ export type HistoryImportResponse = {
 export type HistorySyncTarget = {
   sessionId: string;
   thread: AppServerThread;
-  /** Defaults on for compatibility with Board versions before this setting. */
-  syncProcessDetails?: boolean;
 };
 
 export type HistoryScanResult = {
@@ -889,9 +887,9 @@ export class HistorySynchronizer {
           complete ? null : (result.nextCursor ?? HISTORY_SAFETY_CAP_CURSOR),
         error: null,
       };
-      const importableItems = target.syncProcessDetails === false
-        ? result.items.filter((item) => item.kind !== "reasoning")
-        : result.items;
+      const importableItems = result.items.filter(
+        (item) => item.kind === "assistant_message",
+      );
       const batches = splitHistoryImportItems(
         this.options.runtimeInstanceId,
         importableItems,
@@ -988,7 +986,6 @@ export class HistorySynchronizer {
       target.sessionId,
       updatedMarker,
       turnLimit,
-      target.syncProcessDetails !== false,
     ]);
   }
 

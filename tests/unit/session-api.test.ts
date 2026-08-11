@@ -22,7 +22,6 @@ const domainMocks = vi.hoisted(() => ({
   getSessionConversation: vi.fn(),
   renameThread: vi.fn(),
   deleteThread: vi.fn(),
-  updateSessionProcessDetailsSync: vi.fn(),
   reportSessionActivity: vi.fn(),
   syncSessions: vi.fn(),
 }));
@@ -38,8 +37,6 @@ vi.mock("@/lib/domain/users", () => ({
   getSessionConversation: domainMocks.getSessionConversation,
   renameThread: domainMocks.renameThread,
   deleteThread: domainMocks.deleteThread,
-  updateSessionProcessDetailsSync:
-    domainMocks.updateSessionProcessDetailsSync,
 }));
 vi.mock("@/lib/domain/bridge-directories", () => ({
   listBridgeDirectories: domainMocks.listBridgeDirectories,
@@ -69,7 +66,6 @@ import {
   GET as getConversation,
   PATCH as renameThread,
 } from "@/app/api/user/sessions/[sessionId]/route";
-import { PATCH as updateProcessDetailsSync } from "@/app/api/user/sessions/[sessionId]/process-details/route";
 import { POST as createTurn } from "@/app/api/user/sessions/[sessionId]/turns/route";
 import { AppError } from "@/lib/domain/errors";
 import {
@@ -130,10 +126,6 @@ beforeEach(() => {
   domainMocks.listBridgeDirectories.mockResolvedValue({ directories: [] });
   domainMocks.renameThread.mockResolvedValue({ command: { id: "rename" } });
   domainMocks.deleteThread.mockResolvedValue({ command: { id: "delete" } });
-  domainMocks.updateSessionProcessDetailsSync.mockResolvedValue({
-    id: sessionId,
-    sync_process_details: false,
-  });
   domainMocks.createSessionTurn.mockResolvedValue({ task: { id: taskId } });
   domainMocks.reportSessionActivity.mockResolvedValue({
     activity: { id: 1, kind: "reasoning" },
@@ -384,34 +376,6 @@ describe("session conversation REST API", () => {
       sessionId,
       "web/thread/delete-1",
     );
-  });
-
-  it("updates process-detail synchronization for a workspace member", async () => {
-    const request = new Request(
-      `http://localhost/api/user/sessions/${sessionId}/process-details`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sync_process_details: false }),
-      },
-    );
-
-    const response = await updateProcessDetailsSync(request, {
-      params: Promise.resolve({ sessionId }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(routeMocks.userContextForRequest).toHaveBeenCalledWith(request);
-    expect(domainMocks.updateSessionProcessDetailsSync).toHaveBeenCalledWith(
-      userContext,
-      sessionId,
-      { sync_process_details: false },
-    );
-    expect(await responseJson(response)).toMatchObject({
-      data: {
-        session: { id: sessionId, sync_process_details: false },
-      },
-    });
   });
 
   it("passes an exact bigint string cursor without numeric coercion", async () => {

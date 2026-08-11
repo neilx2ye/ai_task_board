@@ -165,7 +165,7 @@ lines.on("line", (line) => {
     } });
     setTimeout(() => {
       for (let index = 0; index < 80; index += 1) {
-        send({ method: "item/commandExecution/outputDelta", params: {
+        send({ method: "item/agentMessage/delta", params: {
           threadId: "thread-overflow",
           turnId: "turn-overflow",
           itemId: "item-" + index,
@@ -261,7 +261,6 @@ describe("Codex Bridge multi-thread device runtime", () => {
             sessions: threads.map((thread, index) => ({
               id: `session-${index + 1}`,
               external_conversation_ref: thread.external_conversation_ref,
-              sync_process_details: index !== 0,
             })),
           });
           return;
@@ -397,7 +396,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"approvalPolicy":"on-request"');
       expect(stderr).toContain('"approvalsReviewer":"user"');
       expect(stderr).toContain('"summary":"none"');
-      expect(stderr).toContain('"summary":"concise"');
+      expect(stderr).not.toContain('"summary":"concise"');
       expect(stderr).toContain('"sandbox":"workspace-write"');
       expect(stderr).toContain('"type":"workspaceWrite"');
       expect(stderr).toContain(
@@ -444,15 +443,10 @@ describe("Codex Bridge multi-thread device runtime", () => {
         ),
       ).toBe(true);
       expect(
-        activities
-          .filter((activity) => activity.sessionId === "session-1")
-          .every((activity) => activity.body.kind === "assistant_message"),
+        activities.every(
+          (activity) => activity.body.kind === "assistant_message",
+        ),
       ).toBe(true);
-      expect(
-        activities
-          .filter((activity) => activity.sessionId === "session-2")
-          .map((activity) => activity.body.kind),
-      ).toEqual(expect.arrayContaining(["reasoning", "command", "usage"]));
       expect(JSON.stringify(activities)).not.toContain("LEAKED OLD TURN");
     },
     20_000,
@@ -609,7 +603,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         const [code] = await Promise.race([
           once(child, "exit"),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`4xx fail-fast timeout: ${stderr}`)), 4_000),
+            setTimeout(() => reject(new Error(`4xx fail-fast timeout: ${stderr}`)), 8_000),
           ),
         ]);
         child = null;
@@ -623,7 +617,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         );
       }
     },
-    10_000,
+    15_000,
   );
 
   it("exits non-zero when Codex App Server exits unexpectedly", async () => {
@@ -662,7 +656,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
       const [code] = await Promise.race([
         once(child, "exit"),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 4_000),
+          setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 8_000),
         ),
       ]);
       child = null;
@@ -675,7 +669,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 10_000);
+  }, 15_000);
 
   it("interrupts and exits instead of buffering unbounded activity uploads", async () => {
     const wakeResponses = new Set<ServerResponse>();

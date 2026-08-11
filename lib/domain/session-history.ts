@@ -14,9 +14,10 @@ export async function importSessionHistory(
   context: AISessionContext,
   input: ImportSessionHistoryInput,
 ) {
-  const items = context.syncProcessDetails === false
-    ? input.items.filter((item) => item.kind !== "reasoning")
-    : input.items;
+  // History follows the same fixed policy as live activity: only final AI
+  // replies cross the persistence boundary. Filtering here keeps imports safe
+  // when an older Bridge still sends user messages or reasoning summaries.
+  const items = input.items.filter((item) => item.kind === "assistant_message");
   return callDomainRpc("import_session_history", {
     p_workspace_id: context.workspaceId,
     p_connection_id: context.connectionId,

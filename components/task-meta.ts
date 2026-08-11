@@ -121,6 +121,7 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   task_released: "释放任务",
   task_cancelled: "取消任务",
   task_reopened: "重新打开",
+  legacy_task_unbound: "修正为未绑定历史任务",
   session_assigned: "指定会话",
   session_unassigned: "解除指定",
   message_posted: "新消息",

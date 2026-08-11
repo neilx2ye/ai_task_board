@@ -272,10 +272,10 @@ export async function reportSessionActivity(
   input: ReportSessionActivityInput,
   idempotencyKey: string,
 ): Promise<unknown> {
-  if (
-    context.syncProcessDetails === false &&
-    input.kind !== "assistant_message"
-  ) {
+  // The conversation log intentionally stores model replies only. Keep this
+  // server-side guard even though first-party Bridges also filter locally so
+  // older or custom adapters cannot re-enable process-detail uploads.
+  if (input.kind !== "assistant_message") {
     return { activity: null, message: null, suppressed: true };
   }
   return callDomainRpc("report_session_activity", {

@@ -62,7 +62,7 @@ export async function authorizeAISession(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("ai_sessions")
-    .select("id, sync_process_details")
+    .select("id")
     .eq("id", sessionId)
     .eq("connection_id", auth.connectionId)
     .eq("workspace_id", auth.workspaceId)
@@ -74,7 +74,6 @@ export async function authorizeAISession(
   return {
     ...auth,
     sessionId: data.id,
-    syncProcessDetails: data.sync_process_details,
   };
 }
 

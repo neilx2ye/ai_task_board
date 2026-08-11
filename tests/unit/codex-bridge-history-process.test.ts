@@ -147,7 +147,8 @@ describe("Codex Bridge history process", () => {
               max_threads: 1,
               max_concurrent_turns: 1,
               sync_history: true,
-              history_turn_limit: 3
+              history_turn_limit: 3,
+              working_directories: null
             },
             applied: null,
             updated_at: new Date().toISOString()
@@ -177,7 +178,7 @@ describe("Codex Bridge history process", () => {
           },
           history_sync: {
             ...sync,
-            imported_items: 3,
+            imported_items: Array.isArray(body.items) ? body.items.length : 0,
             started_at: new Date().toISOString(),
             completed_at: sync.status === "syncing" ? null : new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -288,10 +289,11 @@ describe("Codex Bridge history process", () => {
         allImported.map((item) => [String(item.external_ref), item] as const),
       ).values(),
     ];
-    expect(imported).toMatchObject([
-      { kind: "user_message", content: "Local historical prompt" },
-      { kind: "reasoning", content: "Provider summary" },
-      { kind: "assistant_message", content: "Local historical answer" },
+    expect(imported).toEqual([
+      expect.objectContaining({
+        kind: "assistant_message",
+        content: "Local historical answer",
+      }),
     ]);
     const serialized = JSON.stringify(imported);
     expect(serialized).not.toContain("Board live");

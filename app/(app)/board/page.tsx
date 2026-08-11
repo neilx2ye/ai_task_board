@@ -1,20 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowRightIcon, BotIcon, PlusIcon } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
-import { SessionConversationDialog } from "@/components/session-conversation-dialog";
 import { TaskCard } from "@/components/task-card";
-import { TaskFormDialog } from "@/components/task-form-dialog";
-import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
+import { TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useSessions } from "@/hooks/use-sessions";
 import { useTasks } from "@/hooks/use-tasks";
-import { calculateLeafProgress } from "@/lib/domain/task-rules";
-import { isSessionAlive } from "@/lib/domain/session-presence";
+import {
+  calculateLeafProgress,
+  taskBoardStatus,
+} from "@/lib/domain/task-rules";
 import { cn } from "@/components/utils";
 import type {
   AISessionRow,
@@ -22,7 +19,6 @@ import type {
   TaskRow,
   TaskStatus,
 } from "@/lib/types/database";
-import type { SessionListItem } from "@/lib/types/domain";
 
 type ColumnDef = {
   id: string;
@@ -127,9 +123,6 @@ function buildLatestQuestions(
 export default function BoardPage() {
   const tasksQuery = useTasks();
   const sessionsQuery = useSessions();
-  const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
-  const [conversationSession, setConversationSession] =
-    useState<SessionListItem | null>(null);
   const [visibleFilters, setVisibleFilters] = useState<Set<TaskStatus>>(
     () => new Set(),
   );
@@ -142,13 +135,18 @@ export default function BoardPage() {
     () => sessionsQuery.data ?? [],
     [sessionsQuery.data],
   );
-  const liveSessions = useMemo(
-    () => sessions.filter((session) => isSessionAlive(session)),
-    [sessions],
-  );
 
   const taskById = useMemo(
     () => new Map(tasks.map((task) => [task.id, task])),
+    [tasks],
+  );
+  const aggregateTaskIds = useMemo(
+    () =>
+      new Set(
+        tasks
+          .map((task) => task.parent_task_id)
+          .filter((taskId): taskId is string => taskId !== null),
+      ),
     [tasks],
   );
   const sessionById = useMemo(
@@ -182,143 +180,6 @@ export default function BoardPage() {
         </p>
       </div>
 
-      <section className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">存活会话</h2>
-            <p className="text-xs text-muted-foreground">
-              选择已经在 CLI 或 APP 中建立好上下文的会话，再预留任务。
-            </p>
-          </div>
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/sessions">
-              管理会话
-              <ArrowRightIcon />
-            </Link>
-          </Button>
-        </div>
-
-        {sessionsQuery.isLoading ? (
-          <LoadingBlock label="确认会话心跳…" />
-        ) : liveSessions.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {liveSessions.map((session) => {
-              const statusMeta = SESSION_STATUS_META[session.status];
-              const currentTask = session.current_task;
-              const taskStatusMeta = currentTask
-                ? TASK_STATUS_META[
-                    currentTask.awaiting_user_input
-                      ? "waiting_user"
-                      : currentTask.status
-                  ]
-                : null;
-              return (
-                <article
-                  key={session.id}
-                  className="relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-md border border-border bg-background p-3 transition-shadow hover:shadow-md focus-within:shadow-md"
-                >
-                  <button
-                    type="button"
-                    aria-haspopup="dialog"
-                    aria-label={`打开会话「${session.name}」`}
-                    onClick={() => setConversationSession(session)}
-                    className="absolute inset-0 z-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-                  />
-                  <div className="pointer-events-none relative z-10 flex items-start gap-2">
-                    <span className="mt-0.5 rounded-md bg-indigo-50 p-1.5 text-indigo-700">
-                      <BotIcon className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-sm font-medium">{session.name}</h3>
-                        <Badge className={cn("shrink-0", statusMeta.badgeClass)}>
-                          {statusMeta.label}
-                        </Badge>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pointer-events-none relative z-10 flex min-h-14 flex-col gap-1.5 border-t border-border pt-3">
-                    <span className="text-xs text-muted-foreground">当前 / 下一任务</span>
-                    {currentTask ? (
-                      <>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="min-w-0 flex-1 text-sm leading-snug font-medium break-words">
-                            {currentTask.title}
-                          </span>
-                          {taskStatusMeta ? (
-                            <Badge className={cn("shrink-0", taskStatusMeta.badgeClass)}>
-                              {taskStatusMeta.label}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        {currentTask.progress_percent_estimate != null ? (
-                          <div className="flex items-center gap-2">
-                            <div
-                              role="progressbar"
-                              aria-label={`${currentTask.title} 的 AI 估计进度`}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                              aria-valuenow={currentTask.progress_percent_estimate}
-                              className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
-                            >
-                              <div
-                                className="h-full rounded-full bg-indigo-500"
-                                style={{ width: `${currentTask.progress_percent_estimate}%` }}
-                              />
-                            </div>
-                            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                              {currentTask.progress_percent_estimate}%
-                            </span>
-                          </div>
-                        ) : null}
-                        {currentTask.progress_note ? (
-                          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                            {currentTask.progress_note}
-                          </p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">当前空闲</span>
-                    )}
-                  </div>
-
-                  <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      已预留 {session.queued_task_count} 项
-                    </span>
-                    <Button
-                      size="sm"
-                      className="pointer-events-auto"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setTargetSessionId(session.id);
-                      }}
-                      aria-label={`给 ${session.name} 预留任务`}
-                    >
-                      <PlusIcon />
-                      预留任务
-                    </Button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-dashed border-border px-3 py-4">
-            <div>
-              <p className="text-sm font-medium">当前没有存活的 AI 会话</p>
-              <p className="text-xs text-muted-foreground">
-                先从 CLI 或 APP 注册会话并发送心跳，才能从 Web Console 定向派发。
-              </p>
-            </div>
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/connections">配置 AI 连接</Link>
-            </Button>
-          </div>
-        )}
-      </section>
-
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">全部任务 · {tasks.length}</p>
 
@@ -327,7 +188,10 @@ export default function BoardPage() {
           {FILTER_STATUSES.map((status) => {
             const meta = TASK_STATUS_META[status];
             const active = visibleFilters.has(status);
-            const count = tasks.filter((task) => task.status === status).length;
+            const count = tasks.filter(
+              (task) =>
+                taskBoardStatus(task, aggregateTaskIds.has(task.id)) === status,
+            ).length;
             return (
               <button
                 key={status}
@@ -369,7 +233,12 @@ export default function BoardPage() {
               const columnTasks = sortTasks(
                 tasks.filter((task) =>
                   column.statuses.includes(
-                    latestQuestions.has(task.id) ? "waiting_user" : task.status,
+                    latestQuestions.has(task.id)
+                      ? "waiting_user"
+                      : taskBoardStatus(
+                          task,
+                          aggregateTaskIds.has(task.id),
+                        ),
                   ),
                 ),
               );
@@ -398,6 +267,10 @@ export default function BoardPage() {
                         sessionById={sessionById}
                         childStats={childStats.get(task.id)}
                         latestQuestion={latestQuestions.get(task.id) ?? null}
+                        displayStatus={taskBoardStatus(
+                          task,
+                          aggregateTaskIds.has(task.id),
+                        )}
                       />
                     ))}
                     {columnTasks.length === 0 ? (
@@ -417,7 +290,13 @@ export default function BoardPage() {
                 (status) => {
                   const meta = TASK_STATUS_META[status];
                   const filtered = sortTasks(
-                    tasks.filter((task) => task.status === status),
+                    tasks.filter(
+                      (task) =>
+                        taskBoardStatus(
+                          task,
+                          aggregateTaskIds.has(task.id),
+                        ) === status,
+                    ),
                   );
                   return (
                     <section
@@ -443,6 +322,7 @@ export default function BoardPage() {
                             taskById={taskById}
                             sessionById={sessionById}
                             childStats={childStats.get(task.id)}
+                            displayStatus={status}
                           />
                         ))}
                         {filtered.length === 0 ? (
@@ -461,28 +341,11 @@ export default function BoardPage() {
           {tasks.length === 0 ? (
             <EmptyState
               title="还没有会话任务"
-              description="在上方选择一个存活会话，为它预留第一项任务。"
+              description="前往“AI 会话”选择已有上下文的会话并发送第一项任务。"
             />
           ) : null}
         </>
       )}
-
-      <SessionConversationDialog
-        session={conversationSession}
-        open={conversationSession !== null}
-        onOpenChange={(open) => {
-          if (!open) setConversationSession(null);
-        }}
-      />
-
-      <TaskFormDialog
-        open={targetSessionId !== null}
-        onOpenChange={(open) => {
-          if (!open) setTargetSessionId(null);
-        }}
-        initialSessionId={targetSessionId}
-        lockInitialSession
-      />
     </div>
   );
 }

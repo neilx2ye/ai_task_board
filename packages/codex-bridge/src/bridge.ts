@@ -31,7 +31,10 @@ import {
 import {
   managedDirectoryForWorkingDirectory,
   type ManagedWorkingDirectory,
+  parseRemoteWorkingDirectories,
   parseWorkingDirectories,
+  type RemoteWorkingDirectory,
+  remoteWorkingDirectories,
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
@@ -39,11 +42,14 @@ export {
   isExactWorkingDirectory,
   managedDirectoryForWorkingDirectory,
   type ManagedWorkingDirectory,
+  parseRemoteWorkingDirectories,
   parseWorkingDirectories,
+  type RemoteWorkingDirectory,
+  remoteWorkingDirectories,
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "0.7.0";
+const BRIDGE_VERSION = "0.8.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -64,7 +70,7 @@ type ClaimedTask = {
 type Session = {
   id: string;
   external_conversation_ref?: string | null;
-  sync_process_details?: boolean;
+  deletion_requested_at?: string | null;
 };
 
 type ClaimResponse = { task: ClaimedTask | null };
@@ -137,6 +143,8 @@ export type EffectiveBridgeConfiguration = {
   maxConcurrentTurns: number;
   syncHistory: boolean;
   historyTurnLimit: number;
+  workingDirectory: string;
+  workingDirectories: ManagedWorkingDirectory[];
 };
 
 export type RemoteBridgeConfigurationDesired = {
@@ -148,12 +156,15 @@ export type RemoteBridgeConfigurationDesired = {
   sync_history?: boolean;
   /** Optional only for compatibility with a Board that has not initialized 0.4 defaults yet. */
   history_turn_limit?: number;
+  /** Missing is normalized to null for compatibility with Boards before 0.8. */
+  working_directories: RemoteWorkingDirectory[] | null;
 };
 
 export type RemoteBridgeConfigurationConstraints = {
   remote_configuration_enabled: boolean;
   allow_thread_titles: boolean;
   allow_history_sync: boolean;
+  allow_working_directory_configuration: boolean;
   max_threads: number;
   max_concurrent_turns: number;
   max_history_turns: number;
@@ -173,6 +184,8 @@ export type BridgeConfiguration = {
   boardUrl: string;
   connectionToken: string;
   threadIdFilter: string | null;
+  readonly localWorkingDirectory: string;
+  readonly localWorkingDirectories: readonly ManagedWorkingDirectory[];
   workingDirectory: string;
   workingDirectories: ManagedWorkingDirectory[];
   sessionNamePrefix: string | null;
@@ -195,6 +208,7 @@ export type BridgeConfiguration = {
   localIncludeThreadTitles: boolean;
   allowRemoteThreadTitles: boolean;
   allowHistorySync: boolean;
+  allowRemoteWorkingDirectories: boolean;
   localMaxThreads: number;
   localMaxConcurrentTurns: number;
   localMaxHistoryTurns: number;
@@ -285,10 +299,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function syncsProcessDetails(session: Session): boolean {
-  return session.sync_process_details !== false;
 }
 
 export function parseStructuredUserInputRequest(
@@ -412,6 +422,12 @@ function parseBoolean(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
+function copyWorkingDirectories(
+  directories: readonly ManagedWorkingDirectory[],
+): ManagedWorkingDirectory[] {
+  return directories.map((directory) => ({ ...directory }));
+}
+
 export function appendBoundedPrefix(
   current: string,
   addition: string,
@@ -524,20 +540,24 @@ export function loadConfiguration(
   const legacyWorkingDirectory = path.resolve(
     environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
   );
-  const workingDirectories = parseWorkingDirectories(
+  const localWorkingDirectories = parseWorkingDirectories(
     environment.CODEX_WORKING_DIRECTORIES,
     legacyWorkingDirectory,
   );
+  const localWorkingDirectory =
+    localWorkingDirectories[0]?.workingDirectory ?? legacyWorkingDirectory;
 
   return {
     boardUrl,
     connectionToken,
     threadIdFilter: environment.CODEX_THREAD_ID?.trim() || null,
-    // The first allowlisted directory is the App Server startup/default-create
-    // cwd. Without the new list this is exactly the legacy single cwd.
-    workingDirectory:
-      workingDirectories[0]?.workingDirectory ?? legacyWorkingDirectory,
-    workingDirectories,
+    // The local list is an immutable device startup boundary. The effective
+    // list begins as a copy and may later be replaced by an explicitly gated
+    // Web configuration without losing the local fallback.
+    localWorkingDirectory,
+    localWorkingDirectories: copyWorkingDirectories(localWorkingDirectories),
+    workingDirectory: localWorkingDirectory,
+    workingDirectories: copyWorkingDirectories(localWorkingDirectories),
     sessionNamePrefix: environment.CODEX_SESSION_NAME?.trim() || null,
     model: environment.CODEX_MODEL?.trim() || null,
     capabilities: parseList(
@@ -585,6 +605,9 @@ export function loadConfiguration(
     allowHistorySync: parseBoolean(
       environment.CODEX_BRIDGE_ALLOW_HISTORY_SYNC,
     ),
+    allowRemoteWorkingDirectories: parseBoolean(
+      environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES,
+    ),
     localMaxThreads,
     localMaxConcurrentTurns,
     localMaxHistoryTurns,
@@ -605,6 +628,10 @@ export function effectiveBridgeConfiguration(
     maxConcurrentTurns: configuration.maxConcurrentTurns,
     syncHistory: configuration.syncHistory,
     historyTurnLimit: configuration.historyTurnLimit,
+    workingDirectory: configuration.workingDirectory,
+    workingDirectories: copyWorkingDirectories(
+      configuration.workingDirectories,
+    ),
   };
 }
 
@@ -615,11 +642,13 @@ export function bridgeConfigurationConstraints(
     remote_configuration_enabled: configuration.webConfigurationEnabled,
     allow_thread_titles: configuration.allowRemoteThreadTitles,
     allow_history_sync: configuration.allowHistorySync,
+    allow_working_directory_configuration:
+      configuration.allowRemoteWorkingDirectories,
     max_threads: configuration.localMaxThreads,
     max_concurrent_turns: configuration.localMaxConcurrentTurns,
     max_history_turns: configuration.localMaxHistoryTurns,
     thread_scope: configuration.threadScope,
-    working_directory: configuration.workingDirectory,
+    working_directory: configuration.localWorkingDirectory,
     fixed_thread: configuration.threadIdFilter !== null,
     permission_mode: configuration.permissionMode,
     approval_mode: configuration.approvalMode,
@@ -681,6 +710,26 @@ export function resolveRemoteConfiguration(
       "看板请求同步历史，但设备未启用 CODEX_BRIDGE_ALLOW_HISTORY_SYNC",
     );
   }
+  let workingDirectories = copyWorkingDirectories(
+    configuration.localWorkingDirectories,
+  );
+  if (
+    desired.working_directories !== null &&
+    desired.working_directories !== undefined
+  ) {
+    if (configuration.allowRemoteWorkingDirectories) {
+      workingDirectories = parseRemoteWorkingDirectories(
+        desired.working_directories,
+      );
+    } else {
+      warnings.push(
+        "看板请求配置工作目录，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES；继续使用本机启动目录",
+      );
+    }
+  }
+  const workingDirectory =
+    workingDirectories[0]?.workingDirectory ??
+    configuration.localWorkingDirectory;
   return {
     effective: {
       enabled: desired.enabled,
@@ -704,6 +753,8 @@ export function resolveRemoteConfiguration(
         "history_turn_limit",
         warnings,
       ),
+      workingDirectory,
+      workingDirectories,
     },
     warnings,
   };
@@ -749,6 +800,13 @@ function isPersistentClientError(error: unknown): boolean {
     status < 500 &&
     status !== 408 &&
     status !== 429;
+}
+
+function isSessionNotAuthorizedError(error: unknown): boolean {
+  return (
+    errorStatus(error) === 403 &&
+    (error as { code?: string } | null)?.code === "SESSION_NOT_AUTHORIZED"
+  );
 }
 
 class WorkerRetirementDeferredError extends Error {}
@@ -819,6 +877,11 @@ function remoteDesiredFromEffective(
     max_concurrent_turns: effective.maxConcurrentTurns,
     sync_history: effective.syncHistory,
     history_turn_limit: effective.historyTurnLimit,
+    // Effective reports always carry the concrete non-empty list, even when
+    // the Board desired value was null and the local startup list won.
+    working_directories: remoteWorkingDirectories(
+      effective.workingDirectories,
+    ),
   };
 }
 
@@ -856,6 +919,10 @@ function parseRemoteConfigurationResponse(
           desired.history_turn_limit === undefined
             ? 50
             : (desired.history_turn_limit as number),
+        working_directories:
+          desired.working_directories === undefined
+            ? null
+            : (desired.working_directories as RemoteWorkingDirectory[] | null),
       },
       applied: configuration.applied,
       updated_at: stringValue(configuration.updated_at) ?? "",
@@ -2026,9 +2093,9 @@ class SessionWorker {
           threadId: this.thread.id,
           clientUserMessageId: task.id,
           input: [{ type: "text", text, text_elements: [] }],
-          // Avoid generating summary output when this Session only retains
-          // replies; otherwise make readable summaries deterministic.
-          summary: syncsProcessDetails(this.session) ? "concise" : "none",
+          // The Board persists AI replies only, so do not ask Codex to produce
+          // a reasoning summary that would be discarded.
+          summary: "none",
           ...(this.configuration.permissionMode === "safe"
             ? {
                 cwd: workspaceRoot,
@@ -2399,12 +2466,7 @@ class SessionWorker {
   ): Promise<void> {
     const task = this.activeClaim;
     if (!task) return;
-    if (
-      activity.kind !== "assistant_message" &&
-      !syncsProcessDetails(this.session)
-    ) {
-      return;
-    }
+    if (activity.kind !== "assistant_message") return;
     await this.board.request("/api/ai/sessions/activity", {
       method: "POST",
       sessionId: this.session.id,
@@ -2513,6 +2575,7 @@ class DeviceBridge {
   private readonly limiter: TurnLimiter;
   private readonly workers = new Map<string, SessionWorker>();
   private readonly workerRuns = new Map<string, Promise<void>>();
+  private managedThreadIds = new Set<string>();
   private readonly historySynchronizer: HistorySynchronizer;
   private historySyncPromise: Promise<void> | null = null;
   private historyConfigurationReady = false;
@@ -2935,12 +2998,26 @@ class DeviceBridge {
         return reconciled;
       }
 
-      const resolved = resolveRemoteConfiguration(
-        this.configuration,
-        remote.desired,
-      );
       const previousEffective = effectiveBridgeConfiguration(this.configuration);
       const previousEffectiveKnown = this.effectiveConfigurationKnown;
+      let resolved: ReturnType<typeof resolveRemoteConfiguration>;
+      try {
+        resolved = resolveRemoteConfiguration(
+          this.configuration,
+          remote.desired,
+        );
+      } catch (error) {
+        // Validation failures happen before any effective state is mutated.
+        // Keep reporting the last concrete state/version, but surface the
+        // rejected version to the Board so Web does not wait indefinitely.
+        this.configurationError =
+          `应用 version=${remote.version} 失败：${errorMessage(error)}`;
+        process.stderr.write(`${this.configurationError}\n`);
+        await this
+          .exchangeRemoteConfiguration()
+          .catch(() => undefined);
+        throw error;
+      }
       this.historyConfigurationReady = false;
       this.historySynchronizer.configurationChanged();
       this.configuration.enabled = resolved.effective.enabled;
@@ -2951,6 +3028,11 @@ class DeviceBridge {
         resolved.effective.maxConcurrentTurns;
       this.configuration.syncHistory = resolved.effective.syncHistory;
       this.configuration.historyTurnLimit = resolved.effective.historyTurnLimit;
+      this.configuration.workingDirectory =
+        resolved.effective.workingDirectory;
+      this.configuration.workingDirectories = copyWorkingDirectories(
+        resolved.effective.workingDirectories,
+      );
       this.limiter.resize(resolved.effective.maxConcurrentTurns);
       this.configurationError = resolved.warnings.length
         ? resolved.warnings.join("；")
@@ -2975,11 +3057,26 @@ class DeviceBridge {
             previousEffective.maxConcurrentTurns;
           this.configuration.syncHistory = previousEffective.syncHistory;
           this.configuration.historyTurnLimit = previousEffective.historyTurnLimit;
+          this.configuration.workingDirectory =
+            previousEffective.workingDirectory;
+          this.configuration.workingDirectories = copyWorkingDirectories(
+            previousEffective.workingDirectories,
+          );
           this.limiter.resize(previousEffective.maxConcurrentTurns);
           this.effectiveConfigurationKnown = previousEffectiveKnown;
           this.historyConfigurationReady =
             previousEffectiveKnown && this.appliedConfigurationVersion !== null;
         } else {
+          // Directory scope is safe to restore even if worker retirement or
+          // inventory publication made partial progress. The version remains
+          // unapplied and the next reconcile retries from the previous
+          // effective allowlist instead of leaking a failed remote directory
+          // change into thread creation or later inventory scans.
+          this.configuration.workingDirectory =
+            previousEffective.workingDirectory;
+          this.configuration.workingDirectories = copyWorkingDirectories(
+            previousEffective.workingDirectories,
+          );
           // A later failure may happen after workers were stopped. Do not claim
           // a precise effective state until a full reconciliation succeeds.
           this.effectiveConfigurationKnown = false;
@@ -3002,7 +3099,7 @@ class DeviceBridge {
       process.stdout.write(
         `已应用 Web Bridge 配置 version=${remote.version}：${
           this.configuration.enabled ? "已启用" : "已停用"
-        }，最多 ${this.configuration.maxThreads} 个 thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
+        }，${this.configuration.workingDirectories.length} 个工作目录，最多 ${this.configuration.maxThreads} 个 thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
       );
 
       response = await this.exchangeRemoteConfiguration();
@@ -3046,14 +3143,16 @@ class DeviceBridge {
       this.stopController.signal,
     );
     if (this.stopping) return;
+    this.managedThreadIds = visibleThreadIds;
     this.historySynchronizer.updateTargets(
       threads.flatMap((thread) => {
         const session = sessions.get(thread.id);
-        return session && isInteractiveHistoryThread(thread)
+        return session &&
+          !session.deletion_requested_at &&
+          isInteractiveHistoryThread(thread)
           ? [{
               thread,
               sessionId: session.id,
-              syncProcessDetails: syncsProcessDetails(session),
             }]
           : [];
       }),
@@ -3066,6 +3165,15 @@ class DeviceBridge {
         continue;
       }
       const existingWorker = this.workers.get(thread.id);
+      if (session.deletion_requested_at) {
+        existingWorker?.updateSession(session);
+        if (!existingWorker) {
+          process.stdout.write(
+            `Thread ${thread.id} 正在等待 Web 删除指令，暂不启动 worker\n`,
+          );
+        }
+        continue;
+      }
       if (existingWorker) {
         existingWorker.updateSession(session);
         continue;
@@ -3086,7 +3194,11 @@ class DeviceBridge {
             `Thread worker ${thread.id} 已退出：${errorMessage(error)}\n`,
           );
           this.workers.delete(thread.id);
-          if (isPersistentClientError(error)) {
+          if (isSessionNotAuthorizedError(error)) {
+            process.stderr.write(
+              `Thread ${thread.id} 已被看板停用；保留 Bridge 运行以完成待处理管理指令\n`,
+            );
+          } else if (isPersistentClientError(error)) {
             this.markFatal(actionableBoardError(error));
           }
         }
@@ -3152,7 +3264,7 @@ class DeviceBridge {
       if (this.configuration.threadIdFilter) {
         throw new Error("固定 Thread 模式不支持从 Web 新建 Thread");
       }
-      if (this.workers.size >= this.configuration.maxThreads) {
+      if (this.managedThreadIds.size >= this.configuration.maxThreads) {
         throw new Error("已达到 Bridge 的 Thread 数量上限");
       }
       const name = stringValue(command.name);
@@ -3176,15 +3288,17 @@ class DeviceBridge {
           `新 Thread 已创建，但本机名称同步失败：${errorMessage(error)}\n`,
         );
       }
+      this.managedThreadIds.add(threadId);
       return threadId;
     }
 
     const threadId = stringValue(command.external_thread_id);
     const worker = threadId ? this.workers.get(threadId) : null;
     if (!threadId) throw new Error("Thread 指令缺少目标 ID");
+    const managed = this.managedThreadIds.has(threadId);
 
     if (command.action === "rename") {
-      if (!worker) {
+      if (!managed) {
         throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
       }
       const name = stringValue(command.name);
@@ -3199,20 +3313,22 @@ class DeviceBridge {
     // A delete may be reclaimed after the previous Bridge deleted the local
     // Thread but crashed before acknowledging the command. Absence from the
     // freshly synced managed inventory makes that replay a successful no-op.
-    if (!worker && (command.attempt_count ?? 1) > 1) return threadId;
-    if (!worker) {
+    if (!managed && (command.attempt_count ?? 1) > 1) return threadId;
+    if (!managed) {
       throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
     }
-    if (worker.retirementBlocked) {
+    if (worker?.retirementBlocked) {
       throw new WorkerRetirementDeferredError(
         "Thread 正在启动或执行 turn，暂时不能删除",
       );
     }
-    await stopWorkersForRetirement(
-      [{ threadId, worker }],
-      "用户从 Web Console 删除了 Codex Thread",
-    );
-    this.workers.delete(threadId);
+    if (worker) {
+      await stopWorkersForRetirement(
+        [{ threadId, worker }],
+        "用户从 Web Console 删除了 Codex Thread",
+      );
+      this.workers.delete(threadId);
+    }
     try {
       await this.appServer.threadDelete({ threadId });
     } catch (error) {
@@ -3222,6 +3338,7 @@ class DeviceBridge {
       // Older compatible Codex builds expose archive but not hard delete.
       await this.appServer.threadArchive({ threadId });
     }
+    this.managedThreadIds.delete(threadId);
     return threadId;
   }
 
@@ -3314,7 +3431,11 @@ async function main(): Promise<void> {
   const appServer = await CodexAppServerClient.connect({
     binary: configuration.codexBinary,
     args: ["app-server", "--stdio"],
-    cwd: configuration.workingDirectory,
+    // The App Server process is launched before any remote desired version is
+    // fetched. Keep its process cwd tied to the immutable local startup value;
+    // thread/start and every safe turn still receive the effective cwd
+    // explicitly.
+    cwd: configuration.localWorkingDirectory,
     unsetEnv: ["AI_TASK_BOARD_CONNECTION_TOKEN"],
     clientInfo: {
       name: "ai_task_board_bridge",

@@ -13,6 +13,35 @@ export type ClaimCandidate = {
   created_at: string;
 };
 
+export type BoardTaskState = {
+  status: TaskStatus;
+  assigned_session_id: string | null;
+};
+
+/**
+ * `ready` only means "reserved" when a runnable leaf is actually bound to a
+ * session. Older rows (or maintenance orphans) can still be `ready` without a
+ * session; present those as historical unbound work instead of implying that
+ * some AI conversation will receive them. Aggregate parents are exempt because
+ * their `ready` state is derived from assigned descendants.
+ *
+ * This is a board projection only. In particular, it never guesses that a task
+ * completed from text, activity timestamps, or session presence.
+ */
+export function taskBoardStatus(
+  task: BoardTaskState,
+  hasChildren = false,
+): TaskStatus {
+  if (
+    task.status === "ready" &&
+    task.assigned_session_id === null &&
+    !hasChildren
+  ) {
+    return "inbox";
+  }
+  return task.status;
+}
+
 /**
  * Mirrors the parent display precedence enforced by the database. This is for
  * rendering/tests only; mutations must still go through a domain RPC.

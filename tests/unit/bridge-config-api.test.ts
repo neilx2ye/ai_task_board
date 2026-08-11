@@ -24,6 +24,7 @@ const configuration = {
       max_concurrent_turns: 2,
       sync_history: false,
       history_turn_limit: 50,
+      working_directories: null,
     },
     applied: null,
     runtime: { online: false, lease_expires_at: null },
@@ -119,6 +120,18 @@ describe("owner Bridge configuration API", () => {
         max_concurrent_turns: 4,
         sync_history: true,
         history_turn_limit: 75,
+        working_directories: [
+          {
+            directory_key: "main",
+            name: "Main project",
+            working_directory: "/srv/main",
+          },
+          {
+            directory_key: "docs",
+            name: "Docs",
+            working_directory: "/srv/docs",
+          },
+        ],
       },
       {
         method: "PATCH",
@@ -141,6 +154,18 @@ describe("owner Bridge configuration API", () => {
         max_concurrent_turns: 4,
         sync_history: true,
         history_turn_limit: 75,
+        working_directories: [
+          {
+            directory_key: "main",
+            name: "Main project",
+            working_directory: "/srv/main",
+          },
+          {
+            directory_key: "docs",
+            name: "Docs",
+            working_directory: "/srv/docs",
+          },
+        ],
       },
       "web/bridge-config/3",
     );
@@ -153,6 +178,9 @@ describe("owner Bridge configuration API", () => {
       include_thread_titles: false,
       max_threads: 0,
       max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
     },
     {
       expected_version: 3,
@@ -160,6 +188,9 @@ describe("owner Bridge configuration API", () => {
       include_thread_titles: false,
       max_threads: 50,
       max_concurrent_turns: 33,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
     },
     {
       expected_version: 3,
@@ -167,6 +198,135 @@ describe("owner Bridge configuration API", () => {
       include_thread_titles: false,
       max_threads: 50,
       max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "same",
+          name: "Main",
+          working_directory: "/srv/main",
+        },
+        {
+          directory_key: "same",
+          name: "Docs",
+          working_directory: "/srv/docs",
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: "/srv/shared",
+        },
+        {
+          directory_key: "docs",
+          name: "Docs",
+          working_directory: "/srv/shared",
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "../escape",
+          name: "Invalid key",
+          working_directory: "/srv/main",
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: "/srv/main",
+          unexpected: true,
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "main",
+          name: "n".repeat(201),
+          working_directory: "/srv/main",
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: `/${"p".repeat(4096)}`,
+        },
+      ],
+    },
+    {
+      expected_version: 3,
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
       unexpected: true,
     },
   ])("rejects an invalid desired configuration %#", async (body) => {
@@ -205,6 +365,7 @@ describe("owner Bridge configuration API", () => {
           max_concurrent_turns: 2,
           sync_history: false,
           history_turn_limit: 50,
+          working_directories: null,
         },
         {
           method: "PATCH",
@@ -278,11 +439,73 @@ describe("AI Bridge configuration exchange API", () => {
           ...constraints,
           allow_history_sync: false,
           max_history_turns: 50,
+          allow_working_directory_configuration: false,
         },
         error: null,
       },
     );
     expect(await responseJson(response)).toEqual({ data: configuration });
+  });
+
+  it("accepts a concrete effective directory report even when Web management is locally disabled", async () => {
+    const workingDirectories = [
+      {
+        directory_key: "main",
+        name: "Main project",
+        working_directory: "/srv/main",
+      },
+    ];
+    const request = jsonRequest(
+      "/api/ai/config",
+      {
+        runtime_instance_id: runtimeInstanceId,
+        report_sequence: 2,
+        lease_seconds: 60,
+        applied_version: 3,
+        effective: {
+          enabled: true,
+          include_thread_titles: false,
+          max_threads: 50,
+          max_concurrent_turns: 2,
+          working_directories: workingDirectories,
+        },
+        constraints: {
+          ...constraints,
+          allow_working_directory_configuration: false,
+        },
+        error: null,
+      },
+      { headers: { Authorization: "Bearer atb_test" } },
+    );
+    const response = await exchangeConfig(request);
+
+    expect(response.status).toBe(200);
+    expect(domainMocks.exchangeBridgeConfiguration).toHaveBeenCalledWith(
+      aiContext,
+      {
+        runtime_instance_id: runtimeInstanceId,
+        report_sequence: 2,
+        lease_seconds: 60,
+        release_runtime: false,
+        applied_version: 3,
+        effective: {
+          enabled: true,
+          include_thread_titles: false,
+          max_threads: 50,
+          max_concurrent_turns: 2,
+          sync_history: false,
+          history_turn_limit: 50,
+          working_directories: workingDirectories,
+        },
+        constraints: {
+          ...constraints,
+          allow_history_sync: false,
+          max_history_turns: 50,
+          allow_working_directory_configuration: false,
+        },
+        error: null,
+      },
+    );
   });
 
   it("authenticates before consuming a malformed body", async () => {

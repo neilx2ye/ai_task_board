@@ -31,6 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSessions } from "@/hooks/use-sessions";
 import { apiFetch } from "@/hooks/api-client";
 import { findPendingQuestion } from "@/hooks/pending-question";
+import { taskBoardStatus } from "@/lib/domain/task-rules";
 import {
   useCancelTask,
   usePostTaskMessage,
@@ -183,7 +184,9 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     (request) => request.status === "pending",
   );
   const statusMeta = TASK_STATUS_META[
-    task.awaiting_user_input || hasStructuredWait ? "waiting_user" : task.status
+    task.awaiting_user_input || hasStructuredWait
+      ? "waiting_user"
+      : taskBoardStatus(task, children.length > 0)
   ];
   const priority = priorityLevelOf(task.priority);
   const claimedSession = task.claimed_by_session_id

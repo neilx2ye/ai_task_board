@@ -24,7 +24,6 @@ const context: AISessionContext = {
   sessionId: "22222222-2222-4222-8222-222222222222",
   tokenHash: "connection-token-hash",
   workspaceId: "33333333-3333-4333-8333-333333333333",
-  syncProcessDetails: false,
 };
 
 const activity: ReportSessionActivityInput = {
@@ -100,15 +99,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("per-session process-detail synchronization", () => {
-  it("suppresses non-assistant live activity before any database call", async () => {
+describe("assistant-only session synchronization", () => {
+  it("always suppresses non-assistant live activity before any database call", async () => {
     await expect(
       reportSessionActivity(context, activity, "activity/reasoning-1"),
     ).resolves.toEqual({ activity: null, message: null, suppressed: true });
     expect(rpcMocks.callDomainRpc).not.toHaveBeenCalled();
   });
 
-  it("continues storing assistant replies while process details are disabled", async () => {
+  it("stores assistant replies", async () => {
     await reportSessionActivity(
       context,
       {
@@ -129,13 +128,13 @@ describe("per-session process-detail synchronization", () => {
     );
   });
 
-  it("removes reasoning from history batches but preserves the conversation", async () => {
+  it("removes every non-assistant item from history batches", async () => {
     await importSessionHistory(context, history);
 
     expect(rpcMocks.callDomainRpc).toHaveBeenCalledWith(
       "import_session_history",
       expect.objectContaining({
-        p_items: [history.items[0], history.items[2]],
+        p_items: [history.items[2]],
       }),
     );
   });

@@ -1,7 +1,13 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import { AlertTriangleIcon, CheckCircle2Icon, Clock3Icon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  CheckCircle2Icon,
+  Clock3Icon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import { formatDateTime } from "@/components/utils";
 import { Button } from "@/components/ui/button";
@@ -21,6 +27,7 @@ import {
   bridgeConfigSyncState,
   bridgeSupportsHistorySync,
   bridgeSupportsRemoteConfiguration,
+  bridgeSupportsWorkingDirectoryConfiguration,
   useBridgeConfig,
   useUpdateBridgeConfig,
   type BridgeConfigConstraints,
@@ -38,6 +45,69 @@ type BridgeConnection = {
 
 export const BRIDGE_HISTORY_RETENTION_NOTICE =
   "关闭历史同步或降低 Turn 上限，只会停止或收窄后续导入，不会删除已经上传的历史。";
+
+type WorkingDirectoryInput = NonNullable<
+  BridgeDesiredConfig["working_directories"]
+>[number];
+
+const DIRECTORY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+export function isAbsoluteWorkingDirectoryPath(value: string): boolean {
+  const path = value.trim();
+  return (
+    path.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(path) ||
+    path.startsWith("\\\\")
+  );
+}
+
+export function validateWorkingDirectories(
+  directories: readonly WorkingDirectoryInput[],
+): string | null {
+  if (directories.length < 1 || directories.length > 100) {
+    return "Web 管理模式必须包含 1 到 100 个工作目录";
+  }
+  const keys = new Set<string>();
+  const paths = new Set<string>();
+  for (const [index, directory] of directories.entries()) {
+    const label = `第 ${index + 1} 个项目`;
+    const key = directory.directory_key.trim();
+    const name = directory.name.trim();
+    const workingDirectory = directory.working_directory.trim();
+    if (!DIRECTORY_KEY_PATTERN.test(key)) {
+      return `${label}的标识需以字母或数字开头，且只能包含字母、数字、点、下划线或连字符（最多 100 个字符）`;
+    }
+    if (!name || name.length > 200) {
+      return `${label}的名称必须为 1 到 200 个字符`;
+    }
+    if (
+      !workingDirectory ||
+      workingDirectory.length > 4_096 ||
+      !isAbsoluteWorkingDirectoryPath(workingDirectory)
+    ) {
+      return `${label}必须填写有效的绝对工作路径`;
+    }
+    if (keys.has(key)) return `项目标识不能重复：${key}`;
+    if (paths.has(workingDirectory)) {
+      return `工作路径不能重复：${workingDirectory}`;
+    }
+    keys.add(key);
+    paths.add(workingDirectory);
+  }
+  return null;
+}
+
+function nextDirectoryKey(
+  directories: readonly WorkingDirectoryInput[],
+): string {
+  const keys = new Set(directories.map((directory) => directory.directory_key));
+  if (!keys.has("project")) return "project";
+  for (let suffix = 2; suffix <= 100; suffix += 1) {
+    const candidate = `project-${suffix}`;
+    if (!keys.has(candidate)) return candidate;
+  }
+  return `project-${Date.now().toString(36)}`;
+}
 
 const STATUS_COPY: Record<
   BridgeConfigSyncState,
@@ -161,6 +231,14 @@ function EffectiveValues({
   effective: BridgeDesiredConfig | null;
   reported: boolean;
 }) {
+  const desiredDirectorySummary = desired.working_directories
+    ? `${desired.working_directories.length} 个 Web 项目`
+    : "设备本机配置";
+  const effectiveDirectorySummary = effective
+    ? effective.working_directories
+      ? `${effective.working_directories.length} 个项目`
+      : "设备本机配置"
+    : "等待上报";
   const rows = [
     [
       "Bridge",
@@ -192,6 +270,7 @@ function EffectiveValues({
       String(desired.history_turn_limit ?? 50),
       effective ? String(effective.history_turn_limit ?? 50) : "等待上报",
     ],
+    ["工作目录", desiredDirectorySummary, effectiveDirectorySummary],
   ];
 
   return (
@@ -251,6 +330,14 @@ function LocalConstraints({
         <dt className="text-muted-foreground">Web 配置入口</dt>
         <dd className="mt-0.5 font-medium">
           {constraints.remote_configuration_enabled ? "本机允许" : "本机禁止"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Web 工作目录</dt>
+        <dd className="mt-0.5 font-medium">
+          {constraints.allow_working_directory_configuration
+            ? "本机允许"
+            : "本机未授权"}
         </dd>
       </div>
       <div>
@@ -350,6 +437,21 @@ function BridgeConfigForm({
   const [historyTurnLimit, setHistoryTurnLimit] = useState(
     String(configuration.desired.history_turn_limit ?? 50),
   );
+  const [manageWorkingDirectories, setManageWorkingDirectories] = useState(
+    configuration.desired.working_directories !== null,
+  );
+  const [workingDirectories, setWorkingDirectories] = useState<
+    WorkingDirectoryInput[]
+  >(
+    configuration.desired.working_directories ??
+      directories
+        .filter((directory) => directory.inventory_active)
+        .map((directory) => ({
+          directory_key: directory.directory_key,
+          name: directory.name,
+          working_directory: directory.working_directory,
+        })),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const constraints = configuration.applied?.constraints ?? null;
@@ -363,6 +465,40 @@ function BridgeConfigForm({
   // local authorization or temporarily reports from an older Bridge.
   const historyToggleDisabled =
     (!historySupported || historySyncBlocked) && !syncHistory;
+  const workingDirectoriesSupported =
+    bridgeSupportsWorkingDirectoryConfiguration(connection.bridge_version);
+  const workingDirectoriesBlocked =
+    constraints?.allow_working_directory_configuration !== true;
+  // An already-saved Web list must remain reversible when the device removes
+  // its local authorization or an older Bridge temporarily reconnects.
+  const workingDirectoriesToggleDisabled =
+    (!workingDirectoriesSupported || workingDirectoriesBlocked) &&
+    !manageWorkingDirectories;
+
+  const changeWorkingDirectory = (
+    index: number,
+    field: keyof WorkingDirectoryInput,
+    value: string,
+  ) => {
+    setWorkingDirectories((current) =>
+      current.map((directory, directoryIndex) =>
+        directoryIndex === index
+          ? { ...directory, [field]: value }
+          : directory,
+      ),
+    );
+  };
+
+  const addWorkingDirectory = () => {
+    setWorkingDirectories((current) => [
+      ...current,
+      {
+        directory_key: nextDirectoryKey(current),
+        name: "",
+        working_directory: "",
+      },
+    ]);
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -372,6 +508,20 @@ function BridgeConfigForm({
     const parsedMaxThreads = Number(maxThreads);
     const parsedMaxConcurrentTurns = Number(maxConcurrentTurns);
     const parsedHistoryTurnLimit = Number(historyTurnLimit);
+    const normalizedWorkingDirectories = workingDirectories.map((directory) => ({
+      directory_key: directory.directory_key.trim(),
+      name: directory.name.trim(),
+      working_directory: directory.working_directory.trim(),
+    }));
+    if (manageWorkingDirectories) {
+      const directoryError = validateWorkingDirectories(
+        normalizedWorkingDirectories,
+      );
+      if (directoryError) {
+        setError(directoryError);
+        return;
+      }
+    }
     if (
       !Number.isInteger(parsedMaxThreads) ||
       parsedMaxThreads < 1 ||
@@ -406,6 +556,9 @@ function BridgeConfigForm({
         max_concurrent_turns: parsedMaxConcurrentTurns,
         sync_history: syncHistory,
         history_turn_limit: parsedHistoryTurnLimit,
+        working_directories: manageWorkingDirectories
+          ? normalizedWorkingDirectories
+          : null,
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -470,8 +623,8 @@ function BridgeConfigForm({
           <span>
             <span className="block text-sm font-medium">同步 Codex Thread 历史</span>
             <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
-              会上传最近的用户消息、AI 回复和可展示思考摘要；当前 Workspace
-              的所有成员都可以查看，且必须先在设备上明确授权。
+              只会上传最近的 AI 最终回复；当前 Workspace 的所有成员
+              都可以查看，且必须先在设备上明确授权。
             </span>
             <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
               {BRIDGE_HISTORY_RETENTION_NOTICE}
@@ -521,6 +674,173 @@ function BridgeConfigForm({
             className="mt-0.5 size-4 shrink-0 accent-indigo-600"
           />
         </label>
+
+        <div
+          className={`rounded-md border border-border px-3 py-3 ${
+            workingDirectoriesToggleDisabled ? "opacity-60" : ""
+          }`}
+        >
+          <label
+            htmlFor={`${fieldId}-working-directories`}
+            className={`flex items-start justify-between gap-4 ${
+              workingDirectoriesToggleDisabled
+                ? "cursor-not-allowed"
+                : "cursor-pointer"
+            }`}
+          >
+            <span>
+              <span className="block text-sm font-medium">
+                由 Web 管理项目工作目录
+              </span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
+                目录会成为 Codex 可工作的本机范围；只有设备显式授权后才会应用。
+              </span>
+              {!workingDirectoriesSupported ? (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  需要 Bridge 0.8.0 或更高版本。
+                </span>
+              ) : workingDirectoriesBlocked ? (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {constraints
+                    ? "本机尚未授权；需在设备设置 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true。"
+                    : "等待设备上报授权；需先设置 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true。"}
+                </span>
+              ) : (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  关闭后恢复使用设备启动时的 CODEX_WORKING_DIRECTORIES 配置。
+                </span>
+              )}
+            </span>
+            <input
+              id={`${fieldId}-working-directories`}
+              type="checkbox"
+              role="switch"
+              checked={manageWorkingDirectories}
+              disabled={workingDirectoriesToggleDisabled}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setManageWorkingDirectories(checked);
+                if (!checked || workingDirectories.length > 0) return;
+                const activeDirectories = directories
+                  .filter((directory) => directory.inventory_active)
+                  .map((directory) => ({
+                    directory_key: directory.directory_key,
+                    name: directory.name,
+                    working_directory: directory.working_directory,
+                  }));
+                setWorkingDirectories(
+                  activeDirectories.length > 0
+                    ? activeDirectories
+                    : [
+                        {
+                          directory_key: "project",
+                          name: "",
+                          working_directory: "",
+                        },
+                      ],
+                );
+              }}
+              className="mt-0.5 size-4 shrink-0 accent-indigo-600"
+            />
+          </label>
+
+          {manageWorkingDirectories ? (
+            <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
+              {workingDirectories.map((directory, index) => (
+                <div
+                  key={index}
+                  className="grid gap-2 rounded-md bg-muted/50 p-3 sm:grid-cols-2"
+                >
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${fieldId}-directory-${index}-name`}>
+                      项目名称
+                    </Label>
+                    <Input
+                      id={`${fieldId}-directory-${index}-name`}
+                      required
+                      maxLength={200}
+                      value={directory.name}
+                      placeholder="例如：AI Task Board"
+                      onChange={(event) =>
+                        changeWorkingDirectory(index, "name", event.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${fieldId}-directory-${index}-key`}>
+                      稳定标识
+                    </Label>
+                    <Input
+                      id={`${fieldId}-directory-${index}-key`}
+                      required
+                      maxLength={100}
+                      pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}"
+                      value={directory.directory_key}
+                      placeholder="ai-task-board"
+                      onChange={(event) =>
+                        changeWorkingDirectory(
+                          index,
+                          "directory_key",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor={`${fieldId}-directory-${index}-path`}>
+                        本机绝对路径
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`删除项目 ${directory.name || index + 1}`}
+                        onClick={() =>
+                          setWorkingDirectories((current) =>
+                            current.filter(
+                              (_item, directoryIndex) => directoryIndex !== index,
+                            ),
+                          )
+                        }
+                      >
+                        <Trash2Icon className="size-4" />
+                        删除
+                      </Button>
+                    </div>
+                    <Input
+                      id={`${fieldId}-directory-${index}-path`}
+                      required
+                      maxLength={4096}
+                      value={directory.working_directory}
+                      placeholder="/absolute/path/to/project"
+                      spellCheck={false}
+                      className="font-mono text-xs"
+                      onChange={(event) =>
+                        changeWorkingDirectory(
+                          index,
+                          "working_directory",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={workingDirectories.length >= 100}
+                onClick={addWorkingDirectory}
+                className="self-start"
+              >
+                <PlusIcon className="size-4" />
+                添加项目目录
+              </Button>
+            </div>
+          ) : null}
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
@@ -588,6 +908,9 @@ function BridgeConfigForm({
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">设备本地安全边界</h3>
         <LocalConstraints constraints={constraints} />
+        <h4 className="pt-1 text-xs font-medium text-muted-foreground">
+          设备实际上报的工作目录
+        </h4>
         <LocalDirectories directories={directories} />
       </div>
 

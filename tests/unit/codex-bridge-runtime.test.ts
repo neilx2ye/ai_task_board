@@ -1,4 +1,5 @@
 import { getEventListeners } from "node:events";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -9,7 +10,9 @@ import {
   isExactWorkingDirectory,
   loadConfiguration,
   managedDirectoryForWorkingDirectory,
+  parseRemoteWorkingDirectories,
   parseWorkingDirectories,
+  remoteWorkingDirectories,
   resolveRemoteConfiguration,
   stopWorkersForRetirement,
   TurnLimiter,
@@ -73,6 +76,10 @@ describe("Codex Bridge runtime primitives", () => {
     });
     expect(configuration.workingDirectory).toBe("/workspace/main");
     expect(configuration.workingDirectories).toHaveLength(2);
+    expect(configuration.localWorkingDirectory).toBe("/workspace/main");
+    expect(configuration.localWorkingDirectories).toEqual(
+      configuration.workingDirectories,
+    );
 
     expect(() =>
       parseWorkingDirectories(
@@ -83,6 +90,91 @@ describe("Codex Bridge runtime primitives", () => {
         "/workspace/fallback",
       ),
     ).toThrow("重复 key");
+  });
+
+  it("strictly validates absolute Board-provided working directories", () => {
+    const directories = parseRemoteWorkingDirectories([
+      {
+        directory_key: "root",
+        name: "Repository root",
+        working_directory: process.cwd(),
+      },
+      {
+        directory_key: "packages",
+        name: "Packages",
+        working_directory: path.resolve("packages"),
+      },
+    ]);
+
+    expect(remoteWorkingDirectories(directories)).toEqual([
+      {
+        directory_key: "root",
+        name: "Repository root",
+        working_directory: process.cwd(),
+      },
+      {
+        directory_key: "packages",
+        name: "Packages",
+        working_directory: path.resolve("packages"),
+      },
+    ]);
+    expect(() =>
+      parseRemoteWorkingDirectories([
+        {
+          directory_key: "relative",
+          name: "Relative",
+          working_directory: "packages",
+        },
+      ]),
+    ).toThrow("必须是绝对路径");
+    expect(() =>
+      parseRemoteWorkingDirectories([
+        {
+          directory_key: "file",
+          name: "File",
+          working_directory: path.resolve("package.json"),
+        },
+      ]),
+    ).toThrow("不存在或不是目录");
+    expect(() =>
+      parseRemoteWorkingDirectories([
+        {
+          directory_key: "one",
+          name: "One",
+          working_directory: process.cwd(),
+        },
+        {
+          directory_key: "two",
+          name: "Two",
+          working_directory: process.cwd(),
+        },
+      ]),
+    ).toThrow("重复路径");
+    expect(() => parseRemoteWorkingDirectories([])).toThrow("1 到 100");
+    expect(() =>
+      parseRemoteWorkingDirectories([
+        {
+          directory_key: "same",
+          name: "Repository root",
+          working_directory: process.cwd(),
+        },
+        {
+          directory_key: "same",
+          name: "Packages",
+          working_directory: path.resolve("packages"),
+        },
+      ]),
+    ).toThrow("重复 key");
+    expect(() =>
+      parseRemoteWorkingDirectories([
+        {
+          directory_key: "root",
+          name: "Repository root",
+          working_directory: process.cwd(),
+          path: process.cwd(),
+        },
+      ]),
+    ).toThrow("未知字段");
   });
 
   it("removes delay abort listeners after normal completion", async () => {
@@ -149,6 +241,13 @@ describe("Codex Bridge runtime primitives", () => {
       include_thread_titles: true,
       max_threads: 500,
       max_concurrent_turns: 32,
+      working_directories: [
+        {
+          directory_key: "remote",
+          name: "Remote",
+          working_directory: "/workspace/remote",
+        },
+      ],
       // Extra fields from an untrusted response cannot expand local authority.
       thread_scope: "all",
       permission_mode: "inherit",
@@ -161,11 +260,23 @@ describe("Codex Bridge runtime primitives", () => {
       maxConcurrentTurns: 3,
       syncHistory: false,
       historyTurnLimit: 50,
+      workingDirectory: "/workspace/safe",
+      workingDirectories: [
+        {
+          key: "default",
+          name: "safe",
+          workingDirectory: "/workspace/safe",
+        },
+      ],
     });
-    expect(resolved.warnings).toHaveLength(3);
+    expect(resolved.warnings).toHaveLength(4);
+    expect(resolved.warnings).toContainEqual(
+      expect.stringContaining("CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES"),
+    );
     expect(bridgeConfigurationConstraints(configuration)).toMatchObject({
       remote_configuration_enabled: false,
       allow_thread_titles: false,
+      allow_working_directory_configuration: false,
       max_threads: 5,
       max_concurrent_turns: 3,
       allow_history_sync: false,
@@ -193,6 +304,63 @@ describe("Codex Bridge runtime primitives", () => {
     expect(configuration.localMaxHistoryTurns).toBe(50);
   });
 
+  it("applies Board working directories only behind the explicit local gate", () => {
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_WORKING_DIRECTORY: process.cwd(),
+      CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES: "true",
+    });
+    const resolved = resolveRemoteConfiguration(configuration, {
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 1,
+      max_concurrent_turns: 1,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: [
+        {
+          directory_key: "packages",
+          name: "Packages",
+          working_directory: path.resolve("packages"),
+        },
+      ],
+    });
+
+    expect(configuration.localWorkingDirectory).toBe(process.cwd());
+    expect(configuration.workingDirectory).toBe(process.cwd());
+    expect(resolved.effective.workingDirectory).toBe(path.resolve("packages"));
+    expect(resolved.effective.workingDirectories).toEqual([
+      {
+        key: "packages",
+        name: "Packages",
+        workingDirectory: path.resolve("packages"),
+      },
+    ]);
+    expect(resolved.warnings).toEqual([]);
+    expect(bridgeConfigurationConstraints(configuration)).toMatchObject({
+      allow_working_directory_configuration: true,
+      working_directory: process.cwd(),
+    });
+
+    configuration.workingDirectory = resolved.effective.workingDirectory;
+    configuration.workingDirectories =
+      resolved.effective.workingDirectories;
+    const reverted = resolveRemoteConfiguration(configuration, {
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 1,
+      max_concurrent_turns: 1,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
+    });
+    expect(reverted.effective.workingDirectory).toBe(process.cwd());
+    expect(reverted.effective.workingDirectories).toEqual(
+      configuration.localWorkingDirectories,
+    );
+  });
+
   it("keeps history sync opt-in local and clamps the remote turn budget", () => {
     const denied = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
@@ -206,6 +374,7 @@ describe("Codex Bridge runtime primitives", () => {
       max_concurrent_turns: 1,
       sync_history: true,
       history_turn_limit: 500,
+      working_directories: null,
     });
     expect(deniedResult.effective).toMatchObject({
       syncHistory: false,
@@ -230,6 +399,7 @@ describe("Codex Bridge runtime primitives", () => {
         max_concurrent_turns: 1,
         sync_history: true,
         history_turn_limit: 80,
+        working_directories: null,
       }).effective,
     ).toMatchObject({ syncHistory: true, historyTurnLimit: 80 });
   });
@@ -246,6 +416,7 @@ describe("Codex Bridge runtime primitives", () => {
       include_thread_titles: true,
       max_threads: 1,
       max_concurrent_turns: 1,
+      working_directories: null,
     });
 
     expect(configuration.webConfigurationEnabled).toBe(true);

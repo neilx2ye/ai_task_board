@@ -21,6 +21,7 @@ Optional environment variables:
   CODEX_BRIDGE_WEB_CONFIG          true lets the Board adjust gated runtime settings
   CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
   CODEX_BRIDGE_ALLOW_HISTORY_SYNC  true lets Web enable bounded history upload
+  CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES  true lets Web replace the directory list
   CODEX_BRIDGE_MAX_HISTORY_TURNS   Local history limit ceiling (1..200, default: 50)
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities

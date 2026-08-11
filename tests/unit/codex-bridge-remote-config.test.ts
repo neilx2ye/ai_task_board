@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -72,6 +72,11 @@ type Desired = {
   include_thread_titles: boolean;
   max_threads: number;
   max_concurrent_turns: number;
+  working_directories: Array<{
+    directory_key: string;
+    name: string;
+    working_directory: string;
+  }> | null;
 };
 
 function json(response: ServerResponse, data: unknown, status = 200): void {
@@ -128,9 +133,11 @@ describe("Codex Bridge Web configuration", () => {
       include_thread_titles: false,
       max_threads: 40,
       max_concurrent_turns: 20,
+      working_directories: null,
     };
     const configurationStatuses: Array<Record<string, unknown>> = [];
     const inventories: Array<Array<Record<string, unknown>>> = [];
+    const directoryInventories: Array<Array<Record<string, unknown>>> = [];
     const wakeResponses = new Set<ServerResponse>();
     let failNextEmptySync = false;
     const server = createServer(async (request, response) => {
@@ -152,6 +159,9 @@ describe("Codex Bridge Web configuration", () => {
         const body = await bodyOf(request);
         const threads = body.threads as Array<Record<string, unknown>>;
         inventories.push(threads);
+        directoryInventories.push(
+          body.directories as Array<Record<string, unknown>>,
+        );
         if (threads.length === 0 && failNextEmptySync) {
           failNextEmptySync = false;
           response.writeHead(500, { "Content-Type": "application/json" });
@@ -186,6 +196,8 @@ describe("Codex Bridge Web configuration", () => {
     if (!address || typeof address === "string") throw new Error("No test port");
 
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "atb-config-test-"));
+    const remoteDirectory = path.join(temporaryDirectory, "remote-project");
+    await mkdir(remoteDirectory);
     const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
     await writeFile(fakeCodex, FAKE_CODEX, "utf8");
     await chmod(fakeCodex, 0o755);
@@ -204,6 +216,7 @@ describe("Codex Bridge Web configuration", () => {
           CODEX_BINARY: fakeCodex,
           CODEX_BRIDGE_WEB_CONFIG: "true",
           CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
+          CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES: "true",
           CODEX_BRIDGE_INCLUDE_THREAD_TITLES: "false",
           CODEX_MAX_THREADS: "4",
           CODEX_MAX_CONCURRENT_TURNS: "3",
@@ -242,6 +255,13 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: true,
         max_threads: 4,
         max_concurrent_turns: 2,
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
       };
       const titleChangeStart = inventories.length;
       await waitUntil(
@@ -253,6 +273,13 @@ describe("Codex Bridge Web configuration", () => {
           ),
         () => `title change was not synced\n${stdout}\n${stderr}`,
       );
+      expect(directoryInventories.slice(titleChangeStart)).toContainEqual([
+        {
+          directory_key: "remote",
+          name: "Remote project",
+          working_directory: remoteDirectory,
+        },
+      ]);
 
       version = 3;
       desired = { ...desired, enabled: false };
@@ -290,6 +317,39 @@ describe("Codex Bridge Web configuration", () => {
         () => configurationStatuses.some((status) => status.applied_version === 4),
         () => `version 4 was not re-reported\n${stdout}\n${stderr}`,
       );
+
+      version = 5;
+      desired = {
+        ...desired,
+        working_directories: [
+          {
+            directory_key: "missing",
+            name: "Missing project",
+            working_directory: path.join(
+              temporaryDirectory,
+              "does-not-exist",
+            ),
+          },
+        ],
+      };
+      const invalidStart = configurationStatuses.length;
+      await waitUntil(
+        () =>
+          configurationStatuses.slice(invalidStart).some(
+            (status) =>
+              status.applied_version === 4 &&
+              String(status.error).includes("应用 version=5 失败") &&
+              String(status.error).includes("不存在或不是目录") &&
+              Array.isArray(
+                (status.effective as Record<string, unknown> | null)
+                  ?.working_directories,
+              ),
+          ),
+        () => `invalid directory config was not rejected and reported\n${stdout}\n${stderr}`,
+      );
+      expect(
+        configurationStatuses.some((status) => status.applied_version === 5),
+      ).toBe(false);
     } finally {
       await stopChild(child);
       child = null;
@@ -301,6 +361,11 @@ describe("Codex Bridge Web configuration", () => {
 
     const finalStatus = configurationStatuses.find(
       (status) => status.applied_version === 4,
+    );
+    const rejectedStatus = configurationStatuses.find(
+      (status) =>
+        status.applied_version === 4 &&
+        String(status.error).includes("应用 version=5 失败"),
     );
     expect(
       configurationStatuses.find((status) => status.applied_version === 1),
@@ -322,10 +387,18 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: true,
         max_threads: 4,
         max_concurrent_turns: 2,
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
       },
       constraints: {
         remote_configuration_enabled: true,
         allow_thread_titles: true,
+        allow_working_directory_configuration: true,
         max_threads: 4,
         max_concurrent_turns: 3,
         thread_scope: "all",
@@ -335,6 +408,17 @@ describe("Codex Bridge Web configuration", () => {
         approval_mode: "decline",
       },
       error: null,
+    });
+    expect(rejectedStatus).toMatchObject({
+      effective: {
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
+      },
     });
     expect(new Set(configurationStatuses.map((status) => status.runtime_instance_id))).toHaveLength(1);
     const sequences = configurationStatuses.map((status) => Number(status.report_sequence));
@@ -356,6 +440,7 @@ describe("Codex Bridge Web configuration", () => {
       include_thread_titles: false,
       max_threads: 2,
       max_concurrent_turns: 2,
+      working_directories: null,
     };
     let availableTasks = 1;
     let claimedTasks = 0;
@@ -550,6 +635,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -708,6 +794,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -797,6 +884,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -884,6 +972,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -1077,10 +1166,18 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: false,
         max_threads: 4,
         max_concurrent_turns: 3,
+        working_directories: [
+          {
+            directory_key: "default",
+            name: path.basename(temporaryDirectory),
+            working_directory: temporaryDirectory,
+          },
+        ],
       },
       constraints: {
         remote_configuration_enabled: false,
         allow_thread_titles: false,
+        allow_working_directory_configuration: false,
         fixed_thread: false,
       },
       error: null,

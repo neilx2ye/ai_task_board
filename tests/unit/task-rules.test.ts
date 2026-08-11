@@ -7,6 +7,7 @@ import {
   hasRequiredCapabilities,
   isTaskStatusTransitionAllowed,
   matchesCapabilities,
+  taskBoardStatus,
 } from "@/lib/domain/task-rules";
 import type { TaskStatus } from "@/lib/types/database";
 
@@ -21,6 +22,38 @@ const statuses: TaskStatus[] = [
   "failed",
   "cancelled",
 ];
+
+describe("board task status", () => {
+  it("does not present an unassigned legacy leaf as reserved", () => {
+    expect(
+      taskBoardStatus({ status: "ready", assigned_session_id: null }),
+    ).toBe("inbox");
+  });
+
+  it("keeps assigned leaves and aggregate parents in the reserved flow", () => {
+    expect(
+      taskBoardStatus({
+        status: "ready",
+        assigned_session_id: "session-1",
+      }),
+    ).toBe("ready");
+    expect(
+      taskBoardStatus(
+        { status: "ready", assigned_session_id: null },
+        true,
+      ),
+    ).toBe("ready");
+  });
+
+  it("does not infer completion for any terminal or active status", () => {
+    expect(
+      taskBoardStatus({ status: "running", assigned_session_id: null }),
+    ).toBe("running");
+    expect(
+      taskBoardStatus({ status: "completed", assigned_session_id: null }),
+    ).toBe("completed");
+  });
+});
 
 describe("parent status aggregation", () => {
   it.each([

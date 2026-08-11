@@ -46,7 +46,6 @@ import type {
   RenameConnectionInput,
   RenameThreadInput,
   ReplyToTaskInput,
-  SessionProcessDetailsSyncInput,
   AnswerTaskUserInputRequestInput,
   UpdateTaskInput,
 } from "@/lib/validation/user";
@@ -606,26 +605,6 @@ export async function deleteThread(
     },
     idempotencyKey,
   );
-}
-
-export async function updateSessionProcessDetailsSync(
-  context: UserWorkspaceContext,
-  sessionId: string,
-  input: SessionProcessDetailsSyncInput,
-): Promise<AISessionRow> {
-  const { data, error } = await createAdminClient()
-    .from("ai_sessions")
-    .update({ sync_process_details: input.sync_process_details })
-    .eq("workspace_id", context.workspaceId)
-    .eq("id", sessionId)
-    .is("deletion_requested_at", null)
-    .select("*")
-    .maybeSingle();
-  if (error) throw mapDatabaseError(error);
-  if (!data) {
-    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
-  }
-  return data;
 }
 
 export async function listSessions(context: UserWorkspaceContext) {
