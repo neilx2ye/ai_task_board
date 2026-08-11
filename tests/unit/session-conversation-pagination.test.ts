@@ -20,6 +20,7 @@ function page(
     history_sync: null,
     tasks: [],
     messages: [],
+    input_requests: [],
     events: [],
     activities: ids.map((id) => ({
       id,

@@ -31,7 +31,10 @@ export function TaskCard({
   childStats,
   latestQuestion,
 }: Props) {
-  const statusMeta = TASK_STATUS_META[task.status];
+  const effectivelyWaiting = latestQuestion != null;
+  const statusMeta = TASK_STATUS_META[
+    effectivelyWaiting ? "waiting_user" : task.status
+  ];
   const priority = priorityLevelOf(task.priority);
   const session =
     (task.claimed_by_session_id
@@ -47,7 +50,7 @@ export function TaskCard({
   // waiting 聚合卡上的问题可能来自后代叶子：直接导航到问题所属任务，
   // 避免用户进入错误目标后再找子任务。
   const questionFromDescendant =
-    task.status === "waiting_user" &&
+    effectivelyWaiting &&
     latestQuestion != null &&
     latestQuestion.task_id !== task.id;
   const href =
@@ -84,7 +87,7 @@ export function TaskCard({
             </p>
           ) : null}
 
-          {task.status === "waiting_user" && latestQuestion ? (
+          {effectivelyWaiting && latestQuestion ? (
             <p className="line-clamp-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">
               {questionFromDescendant ? (
                 <span className="mr-1 font-medium">
@@ -99,7 +102,7 @@ export function TaskCard({
               {task.progress_note}
             </p>
           ) : null}
-          {task.status === "running" && task.progress_note ? (
+          {task.status === "running" && !effectivelyWaiting && task.progress_note ? (
             <p className="line-clamp-2 text-xs text-muted-foreground">
               {task.progress_note}
             </p>

@@ -9,7 +9,7 @@ streams supported progress back to the Board.
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Run the 0.4 CLI
+## Run the 0.6 CLI
 
 Node.js 18 or newer and a compatible, logged-in `codex` CLI are required. Run
 the Bridge as the same OS user that owns the local Codex data and workspaces:
@@ -18,7 +18,7 @@ the Bridge as the same OS user that owns the local Codex data and workspaces:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.4.1
+npx --yes ai-task-board-codex-bridge@0.6.0
 ```
 
 `CODEX_THREAD_ID` is optional. By default, `CODEX_THREAD_SCOPE=cwd` manages only
@@ -29,7 +29,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.4.1
+npx --yes ai-task-board-codex-bridge@0.6.0
 ```
 
 `CODEX_MAX_THREADS` controls the inventory limit, while
@@ -84,11 +84,26 @@ at least every 10 seconds, and a local safety deadline stops workers before a
 lease can expire during a prolonged Board outage. The deprecated-Board 404
 fallback cannot provide this single-runtime fence.
 
+## Web Thread management
+
+Bridge 0.5 lets a Workspace owner create, rename, and delete Codex Threads from
+the Web Console. The Board stores each request as a leased command; only the
+Bridge process holding that connection's runtime lease may execute it. New
+Threads always use the locally configured `CODEX_WORKING_DIRECTORY`, and the
+Web cannot choose an arbitrary device path. Rename and delete commands only
+target Threads already present in the Bridge's managed inventory. Fixed
+`CODEX_THREAD_ID` mode rejects create and delete commands.
+
+A delete request is accepted only when the Thread has no active or reserved
+work. It immediately hides and fences the Board Session, then calls the Codex
+App Server's hard-delete method. Compatible older App Server builds that lack
+hard delete fall back to archive. Board audit/history rows are retained.
+
 ## Optional bounded history sync
 
 History upload is off by default and requires both
 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` on the device and `sync_history=true` in
-Web configuration. Bridge 0.4 scans at most the configured number of recent
+Web configuration. Bridge 0.5 scans at most the configured number of recent
 completed turns for ordinary CLI/VS Code threads in a separate, cancellable,
 bounded background loop. Runtime-lease renewal, inventory, and live turns do
 not wait for this scan.
@@ -135,17 +150,23 @@ Web approval flow. Messages sent while a thread is busy queue as later Tasks.
 Execution is at-least-once, so irreversible actions still need their own
 idempotency or explicit human confirmation.
 
+Version 0.6 forwards blocking Codex `requestUserInput` prompts to the Web
+Console as structured controls. The App Server request, turn, task claim, and
+heartbeats remain active while the Bridge polls; submitting the Web answer
+resolves that same request instead of creating a later turn. Answer values are
+kept out of public messages, and secret inputs are cleared when the claim ends.
+
 Keep the Connection Token in a secret store or protected environment file. Do
 not pass it as a command-line argument. The Bridge removes that token from the
 App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
-upgraded before starting 0.4; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.4.1`
+upgraded before starting 0.6; there is no 404 fallback to the old registration
+API. For persistent use, pin version `0.6.0`
 in systemd, launchd, or another process manager; the npm CLI does not install or
 enable a service itself. Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.4.1 --help` for the complete
+Use `npx --yes ai-task-board-codex-bridge@0.6.0 --help` for the complete
 environment-variable list.

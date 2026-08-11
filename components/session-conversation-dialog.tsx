@@ -22,6 +22,8 @@ import {
   TerminalIcon,
   UserIcon,
   WrenchIcon,
+  XIcon,
+  ZapIcon,
 } from "lucide-react";
 
 import { ErrorState, LoadingBlock } from "@/components/states";
@@ -31,6 +33,12 @@ import {
   SESSION_STATUS_META,
 } from "@/components/task-meta";
 import { reduceAppServerActivityStream } from "@/components/session-activity-stream";
+import { StructuredUserInputForm } from "@/components/structured-user-input-form";
+import {
+  activityDetailsData,
+  summarizeTokenUsage,
+  type TokenUsageSummary,
+} from "@/components/session-activity-present";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -403,7 +411,9 @@ function ReasoningSummary({
   activity: SessionActivityItem;
   task: string | null;
 }) {
-  const data = formattedData(activity.data);
+  // data 里通常只有 app-server 协议信封字段，剥离后为空则不展示详情区。
+  const data = activityDetailsData(activity.data);
+  const formatted = data === null ? null : JSON.stringify(data, null, 2);
 
   return (
     <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5">
@@ -421,11 +431,82 @@ function ReasoningSummary({
             {activity.content}
           </p>
         ) : null}
-        {data ? (
+        {formatted ? (
           <details className="mt-2 text-xs text-amber-950">
             <summary className="cursor-pointer font-medium">查看结构化摘要</summary>
             <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-amber-100/70 p-2 whitespace-pre-wrap">
-              {data}
+              {formatted}
+            </pre>
+          </details>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const TOKEN_USAGE_ROWS: ReadonlyArray<{
+  key: keyof Omit<TokenUsageSummary, "contextWindow">;
+  label: string;
+}> = [
+  { key: "input", label: "输入" },
+  { key: "cachedInput", label: "缓存命中" },
+  { key: "output", label: "输出" },
+  { key: "reasoningOutput", label: "其中思考输出" },
+  { key: "total", label: "总计" },
+];
+
+function UsageActivity({
+  activity,
+  task,
+}: {
+  activity: SessionActivityItem;
+  task: string | null;
+}) {
+  const summary = summarizeTokenUsage(activity.data);
+  const raw = formattedData(activity.data);
+
+  return (
+    <div className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+      <ZapIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{ACTIVITY_LABEL.usage}</p>
+        <TimelineMeta
+          actorType={activity.actor_type}
+          task={task}
+          createdAt={sessionActivityOccurredAt(activity)}
+          historySource={isCodexHistoryActivity(activity)}
+        />
+        {summary ? (
+          <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {TOKEN_USAGE_ROWS.filter(({ key }) => summary[key] !== null).map(
+              ({ key, label }) => (
+                <div key={key} className="flex items-baseline gap-1">
+                  <dt>{label}</dt>
+                  <dd className="font-medium text-foreground tabular-nums">
+                    {(summary[key] as number).toLocaleString()}
+                  </dd>
+                </div>
+              ),
+            )}
+            {summary.contextWindow !== null ? (
+              <div className="flex items-baseline gap-1">
+                <dt>上下文窗口</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {summary.contextWindow.toLocaleString()}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            用量字段无法识别，请展开原始数据查看。
+          </p>
+        )}
+        {raw ? (
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer font-medium">查看原始数据</summary>
+            <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-background/80 p-2 whitespace-pre-wrap">
+              {raw}
             </pre>
           </details>
         ) : null}
@@ -515,6 +596,9 @@ function ActivityItem({
   }
   if (activity.kind === "reasoning") {
     return <ReasoningSummary activity={activity} task={task} />;
+  }
+  if (activity.kind === "usage") {
+    return <UsageActivity activity={activity} task={task} />;
   }
   if (TOOL_ACTIVITY_KINDS.has(activity.kind)) {
     return <ToolActivity activity={activity} task={task} />;
@@ -613,10 +697,12 @@ function SessionConversationContent({
   session,
   active,
   presentation,
+  onClose,
 }: {
   session: SessionListItem | null;
   active: boolean;
   presentation: "dialog" | "panel";
+  onClose?: () => void;
 }) {
   const sessionId = session?.id ?? null;
   const conversationQuery = useSessionConversation(sessionId);
@@ -652,6 +738,17 @@ function SessionConversationContent({
         details?.events ?? [],
       ),
     [activities, details?.events, details?.messages],
+  );
+  const pendingStructuredRequest = useMemo(
+    () =>
+      [...(details?.input_requests ?? [])]
+        .reverse()
+        .find(
+          (request) =>
+            request.status === "pending" &&
+            taskById.get(request.task_id)?.awaiting_user_input === true,
+        ) ?? null,
+    [details?.input_requests, taskById],
   );
   const latestTimelineKey = timeline.at(-1)?.key ?? null;
   const latestActivityId = details?.activities.at(-1)?.id ?? null;
@@ -723,7 +820,8 @@ function SessionConversationContent({
     ? effectiveSessionStatus(currentSession)
     : "offline";
   const statusMeta = SESSION_STATUS_META[sessionStatus];
-  const canSend = currentSession ? isSessionAlive(currentSession) : false;
+  const sessionAlive = currentSession ? isSessionAlive(currentSession) : false;
+  const canSend = sessionAlive && !pendingStructuredRequest;
 
   return (
     <>
@@ -742,10 +840,23 @@ function SessionConversationContent({
       ) : (
         <header className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="min-w-0 truncate text-base font-semibold">
+            <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
               {currentSession?.name ?? "选择一个 Thread"}
             </h2>
             <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+            {onClose ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                aria-label={`关闭 Thread「${currentSession?.name ?? ""}」面板`}
+                title="关闭面板（取消选中并清除已同步历史）"
+                className="-mr-2 size-7 shrink-0"
+              >
+                <XIcon className="size-4" />
+              </Button>
+            ) : null}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {currentSession
@@ -842,6 +953,14 @@ function SessionConversationContent({
                 </li>
               ))}
             </ol>
+            {pendingStructuredRequest ? (
+              <StructuredUserInputForm
+                request={pendingStructuredRequest}
+                sourceTaskTitle={
+                  taskById.get(pendingStructuredRequest.task_id)?.title ?? null
+                }
+              />
+            ) : null}
           </div>
         )}
       </div>
@@ -852,9 +971,13 @@ function SessionConversationContent({
           className="shrink-0 border-t border-border bg-card px-3 py-3 sm:px-6 sm:py-4"
         >
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-2">
-            {!canSend ? (
+            {!sessionAlive ? (
               <p className="text-xs text-amber-700">
                 会话当前离线。恢复心跳后才能发送下一项任务。
+              </p>
+            ) : pendingStructuredRequest ? (
+              <p className="text-xs text-amber-700">
+                当前 turn 正在等待上方结构化回答，提交后会原地继续。
               </p>
             ) : null}
             {sendError ? (
@@ -905,9 +1028,11 @@ function SessionConversationContent({
 export function SessionConversationPanel({
   session,
   className,
+  onClose,
 }: {
   session: SessionListItem | null;
   className?: string;
+  onClose?: () => void;
 }) {
   return (
     <section
@@ -922,6 +1047,7 @@ export function SessionConversationPanel({
         session={session}
         active
         presentation="panel"
+        onClose={onClose}
       />
     </section>
   );

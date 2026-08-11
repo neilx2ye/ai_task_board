@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 
 import { SessionConversationPanel } from "@/components/session-conversation-dialog";
@@ -8,11 +9,21 @@ import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
 import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
+import {
+  CreateThreadDialog,
+  DeleteThreadDialog,
+  RenameThreadDialog,
+} from "@/components/thread-management-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useSessions } from "@/hooks/use-sessions";
+import {
+  supportsWebThreadManagement,
+  useConnections,
+} from "@/hooks/use-connections";
+import { useWorkspace } from "@/hooks/use-workspace";
 import {
   effectiveSessionStatus,
   isConnectionAlive,
@@ -30,8 +41,13 @@ type ConnectionGroup = {
 
 function groupSessionsByConnection(
   sessions: SessionListItem[],
+  connections: SessionConnectionSummary[] = [],
 ): ConnectionGroup[] {
   const groups = new Map<string, ConnectionGroup>();
+
+  for (const connection of connections) {
+    groups.set(connection.id, { connection, sessions: [] });
+  }
 
   for (const session of sessions) {
     const existing = groups.get(session.connection.id);
@@ -62,7 +78,11 @@ function SessionListRow({
   const alive = isSessionAlive(session);
   const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
   const task = session.current_task;
-  const taskStatusMeta = task ? TASK_STATUS_META[task.status] : null;
+  const taskStatusMeta = task
+    ? TASK_STATUS_META[
+        task.awaiting_user_input ? "waiting_user" : task.status
+      ]
+    : null;
 
   return (
     <div
@@ -73,8 +93,9 @@ function SessionListRow({
     >
       <button
         type="button"
-        aria-current={selected ? "page" : undefined}
-        aria-label={`打开 Thread「${session.name}」`}
+        aria-pressed={selected}
+        aria-label={`${selected ? "取消选中" : "选中"} Thread「${session.name}」`}
+        title={selected ? "取消选中并清除已同步历史" : "在控制台打开"}
         onClick={onSelect}
         className="min-w-0 flex-1 cursor-pointer px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
       >
@@ -134,14 +155,26 @@ function SessionListRow({
 
 export default function SessionsPage() {
   const sessionsQuery = useSessions();
+  const workspaceQuery = useWorkspace();
+  const isOwner = workspaceQuery.data?.role === "owner";
+  const connectionsQuery = useConnections(isOwner);
   const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    null,
-  );
+  // 按点选顺序保存选中的 Thread；只有选中的才会挂载面板并同步历史。
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
   const [pickerConnectionId, setPickerConnectionId] = useState<string | null>(
     null,
   );
+  const [createConnectionId, setCreateConnectionId] = useState<string | null>(
+    null,
+  );
+  const [renameSession, setRenameSession] = useState<SessionListItem | null>(
+    null,
+  );
+  const [deleteSession, setDeleteSession] = useState<SessionListItem | null>(
+    null,
+  );
+  const [notice, setNotice] = useState<string | null>(null);
 
   const sessions = useMemo(
     () =>
@@ -152,8 +185,21 @@ export default function SessionsPage() {
     [sessionsQuery.data],
   );
   const connectionGroups = useMemo(
-    () => groupSessionsByConnection(sessions),
-    [sessions],
+    () =>
+      groupSessionsByConnection(
+        sessions,
+        (connectionsQuery.data ?? [])
+          .filter((connection) => connection.bridge_version !== null)
+          .map((connection) => ({
+            id: connection.id,
+            name: connection.name,
+            platform: connection.platform,
+            last_seen_at: connection.last_seen_at,
+            bridge_version: connection.bridge_version,
+            revoked_at: connection.revoked_at,
+          })),
+      ),
+    [connectionsQuery.data, sessions],
   );
   const pickerGroup = useMemo(
     () =>
@@ -164,12 +210,39 @@ export default function SessionsPage() {
         : null,
     [pickerConnectionId, connectionGroups],
   );
-  const selectedSession = useMemo(
+  const selectedSessions = useMemo(
     () =>
-      selectedSessionId
-        ? (sessions.find((session) => session.id === selectedSessionId) ?? null)
-        : (sessions[0] ?? null),
-    [selectedSessionId, sessions],
+      selectedSessionIds
+        .map((id) => sessions.find((session) => session.id === id))
+        .filter(
+          (session): session is SessionListItem => session !== undefined,
+        ),
+    [selectedSessionIds, sessions],
+  );
+  const queryClient = useQueryClient();
+  /** 取消选中：面板随之卸载，同时清掉该 Thread 已同步的历史缓存。 */
+  const deselectSession = (sessionId: string) => {
+    setSelectedSessionIds((prev) => prev.filter((id) => id !== sessionId));
+    queryClient.removeQueries({
+      queryKey: ["sessions", sessionId],
+      exact: true,
+    });
+  };
+  const toggleSessionSelected = (sessionId: string) => {
+    if (selectedSessionIds.includes(sessionId)) {
+      deselectSession(sessionId);
+    } else {
+      setSelectedSessionIds((prev) => [...prev, sessionId]);
+    }
+  };
+  const createGroup = useMemo(
+    () =>
+      createConnectionId
+        ? (connectionGroups.find(
+            (group) => group.connection.id === createConnectionId,
+          ) ?? null)
+        : null,
+    [connectionGroups, createConnectionId],
   );
 
   return (
@@ -177,9 +250,26 @@ export default function SessionsPage() {
       <div className="shrink-0">
         <h1 className="text-xl font-semibold tracking-tight">AI 会话</h1>
         <p className="text-sm text-muted-foreground">
-          按设备切换 Thread，在同一控制台查看上下文、执行过程并继续发送任务。
+          按设备组织 Thread，点击选中后在右侧并排查看上下文、执行过程并继续发送任务。
         </p>
       </div>
+
+      {notice ? (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800"
+        >
+          <span>{notice}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setNotice(null)}
+          >
+            知道了
+          </Button>
+        </div>
+      ) : null}
 
       {sessionsQuery.error ? (
         <ErrorState
@@ -188,7 +278,7 @@ export default function SessionsPage() {
         />
       ) : sessionsQuery.isLoading ? (
         <LoadingBlock label="加载 AI 会话…" />
-      ) : sessions.length === 0 ? (
+      ) : connectionGroups.length === 0 ? (
         <EmptyState
           icon={<BotIcon className="size-6" />}
           title="还没有 AI 会话"
@@ -201,7 +291,7 @@ export default function SessionsPage() {
               <div>
                 <h2 className="text-sm font-semibold">设备与 Threads</h2>
                 <p className="text-xs text-muted-foreground">
-                  选择一个上下文继续工作
+                  点击选中，可多选并排查看
                 </p>
               </div>
               <Badge variant="secondary" className="tabular-nums">
@@ -218,6 +308,8 @@ export default function SessionsPage() {
                   );
                   const hiddenCount =
                     groupSessions.length - visibleSessions.length;
+                  const canManage =
+                    isOwner && supportsWebThreadManagement(connection);
                   return (
                     <section
                       key={connection.id}
@@ -246,6 +338,21 @@ export default function SessionsPage() {
                           <Badge variant="outline" className="tabular-nums">
                             {groupSessions.length}
                           </Badge>
+                          {canManage ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 shrink-0"
+                              onClick={() =>
+                                setCreateConnectionId(connection.id)
+                              }
+                              aria-label={`在「${connection.name}」新建 Thread`}
+                              title="新建 Thread"
+                            >
+                              <PlusIcon className="size-3.5" />
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="ghost"
@@ -271,8 +378,8 @@ export default function SessionsPage() {
                           <SessionListRow
                             key={session.id}
                             session={session}
-                            selected={session.id === selectedSession?.id}
-                            onSelect={() => setSelectedSessionId(session.id)}
+                            selected={selectedSessionIds.includes(session.id)}
+                            onSelect={() => toggleSessionSelected(session.id)}
                             onReserve={() => setTargetSessionId(session.id)}
                           />
                         ))}
@@ -285,6 +392,15 @@ export default function SessionsPage() {
                             <ListFilterIcon className="size-3.5 shrink-0" />
                             已收纳 {hiddenCount} 个 Thread · 点击管理
                           </button>
+                        ) : groupSessions.length === 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setPickerConnectionId(connection.id)}
+                            className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-3 text-left text-xs text-muted-foreground transition-colors outline-none hover:bg-secondary/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                          >
+                            <ListFilterIcon className="size-3.5 shrink-0" />
+                            暂无 Thread · 点击管理
+                          </button>
                         ) : null}
                       </div>
                     </section>
@@ -295,10 +411,27 @@ export default function SessionsPage() {
           </aside>
 
           <div id="session-console" className="min-h-0">
-            <SessionConversationPanel
-              key={selectedSession?.id ?? "no-session"}
-              session={selectedSession}
-            />
+            {selectedSessions.length === 0 ? (
+              <div className="flex h-full items-center justify-center p-6">
+                <EmptyState
+                  icon={<BotIcon className="size-6" />}
+                  title="没有选中的 Thread"
+                  description="在左侧点击 Thread 即可打开对话面板，可多选并排查看；再次点击或关闭面板会取消选中，并清除已同步的历史记录。"
+                  className="w-full max-w-md"
+                />
+              </div>
+            ) : (
+              <div className="flex h-full min-h-0 flex-col divide-y divide-border lg:flex-row lg:divide-x lg:divide-y-0 lg:overflow-x-auto">
+                {selectedSessions.map((session) => (
+                  <SessionConversationPanel
+                    key={session.id}
+                    session={session}
+                    onClose={() => deselectSession(session.id)}
+                    className="min-w-0 flex-1 lg:min-w-[24rem]"
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -320,12 +453,81 @@ export default function SessionsPage() {
         connection={pickerGroup?.connection ?? null}
         sessions={pickerGroup?.sessions ?? []}
         visibleIds={visibleIds}
+        canManage={
+          Boolean(isOwner && pickerGroup) &&
+          supportsWebThreadManagement(
+            pickerGroup?.connection ?? { bridge_version: null },
+          )
+        }
         onToggle={setSessionVisible}
+        onCreate={() => {
+          if (!pickerGroup) return;
+          setCreateConnectionId(pickerGroup.connection.id);
+          setPickerConnectionId(null);
+        }}
+        onRename={(session) => {
+          setRenameSession(session);
+          setPickerConnectionId(null);
+        }}
+        onDelete={(session) => {
+          setDeleteSession(session);
+          setPickerConnectionId(null);
+        }}
         onOpen={(sessionId) => {
-          setSelectedSessionId(sessionId);
+          setSelectedSessionIds((prev) =>
+            prev.includes(sessionId) ? prev : [...prev, sessionId],
+          );
           setPickerConnectionId(null);
         }}
       />
+
+      {createGroup ? (
+        <CreateThreadDialog
+          connection={createGroup.connection}
+          workingDirectory={
+            createGroup.sessions.find((session) => session.working_directory)
+              ?.working_directory ?? null
+          }
+          open
+          onOpenChange={(open) => {
+            if (!open) setCreateConnectionId(null);
+          }}
+          onSubmitted={() =>
+            setNotice(
+              "新建请求已提交；在线 Bridge 处理并同步后，Thread 会自动出现在列表中。",
+            )
+          }
+        />
+      ) : null}
+
+      {renameSession ? (
+        <RenameThreadDialog
+          session={renameSession}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRenameSession(null);
+          }}
+          onSubmitted={() =>
+            setNotice("Thread 名称已更新，并已提交给 Bridge 同步到本机 Codex。")
+          }
+        />
+      ) : null}
+
+      {deleteSession ? (
+        <DeleteThreadDialog
+          session={deleteSession}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDeleteSession(null);
+          }}
+          onSubmitted={() => {
+            deselectSession(deleteSession.id);
+            setNotice(
+              "Thread 已从 Console 隐藏，并已提交给在线 Bridge 从本机 Codex 删除。",
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 }

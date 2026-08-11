@@ -28,9 +28,20 @@ export function activeConnections(
   return connections.filter((connection) => connection.revoked_at === null);
 }
 
-export function useConnections() {
+export function supportsWebThreadManagement(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= 5;
+}
+
+export function useConnections(enabled = true) {
   return useQuery({
     queryKey: CONNECTIONS_KEY,
+    enabled,
     queryFn: async () => {
       const data = await apiFetch<{ connections?: PublicConnection[] }>(
         "/api/user/connections",
@@ -48,6 +59,7 @@ function useConnectionMutation<TInput, TResult>(
     mutationFn: fn,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 }
@@ -58,6 +70,15 @@ export function useCreateConnection() {
       method: "POST",
       json: input,
     }),
+  );
+}
+
+export function useRenameConnection(connectionId: string) {
+  return useConnectionMutation((input: { name: string }) =>
+    apiFetch<{ connection: PublicConnection }>(
+      `/api/user/connections/${connectionId}`,
+      { method: "PATCH", json: input },
+    ),
   );
 }
 
@@ -84,6 +105,7 @@ export function useRevokeConnection(connectionId: string) {
         old?.filter((connection) => connection.id !== connectionId),
       );
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 }

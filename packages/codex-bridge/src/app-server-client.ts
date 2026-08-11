@@ -148,6 +148,22 @@ export interface AppServerThreadResumeParams {
 
 export type AppServerThreadResumeResponse = AppServerThreadStartResponse;
 
+export interface AppServerThreadSetNameParams {
+  threadId: string;
+  name: string;
+}
+
+export type AppServerThreadSetNameResponse = Record<string, never>;
+
+export interface AppServerThreadDeleteParams {
+  threadId: string;
+}
+
+export type AppServerThreadDeleteResponse = Record<string, never>;
+
+export type AppServerThreadArchiveParams = AppServerThreadDeleteParams;
+export type AppServerThreadArchiveResponse = Record<string, never>;
+
 export interface AppServerTurnStartParams {
   threadId: string;
   input: AppServerUserInput[];
@@ -358,7 +374,7 @@ export class CodexAppServerClient {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
         title: "AI Task Board Codex Bridge",
-        version: "0.4.1",
+        version: "0.6.0",
       },
       capabilities: options.capabilities ?? null,
     };
@@ -586,6 +602,27 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerThreadResumeResponse> {
     return this.initializedRequest("thread/resume", params, options);
+  }
+
+  async threadSetName(
+    params: AppServerThreadSetNameParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadSetNameResponse> {
+    return this.initializedRequest("thread/name/set", params, options);
+  }
+
+  async threadDelete(
+    params: AppServerThreadDeleteParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadDeleteResponse> {
+    return this.initializedRequest("thread/delete", params, options);
+  }
+
+  async threadArchive(
+    params: AppServerThreadArchiveParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadArchiveResponse> {
+    return this.initializedRequest("thread/archive", params, options);
   }
 
   async turnStart(

@@ -345,6 +345,16 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/request-user-input" \
 
 任务进入 `waiting_user` 并结束当前租约。用户在任务详情页回复后，任务恢复为 `ready`；它仍只属于原会话，该会话必须重新接收并取得新的 `claim_token`。
 
+### Codex Bridge 结构化问题（保留原 turn）
+
+Bridge 0.6 对 App Server 的 blocking `item/tool/requestUserInput` 使用专用流程，不调用上面的旧文字提问接口：
+
+1. `POST /api/ai/tasks/user-input-requests` 持久化问题、把任务标记为 `awaiting_user_input=true`，但任务仍保持 `running`、原 `claim_token` 和租约。
+2. Web Console 在任务详情或 Thread 对话面板显示单选/文本/敏感输入控件，通过 `POST /api/user/tasks/:taskId/input-requests/:requestId/answer` 提交。
+3. Bridge 通过 `POST /api/ai/tasks/user-input-requests/:requestId/poll` 等待答案，并把协议要求的 `answers` 返回给仍处于等待中的同一个 App Server 请求。
+
+答案值不写入公开任务消息；敏感回答不会出现在 Web 查询或 Realtime 载荷中。任务结束、取消、释放或 claim 更换时，服务端会清除保存的答案。Bridge 等待期间仍须续租 claim。
+
 ## 6. 完成、失败或释放
 
 推荐在完成时原子领取下一项任务：

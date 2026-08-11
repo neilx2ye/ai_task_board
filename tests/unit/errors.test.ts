@@ -23,6 +23,8 @@ describe("stable API error mapping", () => {
     ["VERSION_CONFLICT", 409],
     ["BRIDGE_INSTANCE_CONFLICT", 409],
     ["HISTORY_SYNC_NOT_ALLOWED", 403],
+    ["THREAD_MANAGEMENT_NOT_SUPPORTED", 409],
+    ["THREAD_NOT_IDLE", 409],
   ] as const)("maps database marker %s to HTTP %s", (code, status) => {
     const error = mapDatabaseError({ message: `rpc rejected: ${code}` });
 
@@ -47,6 +49,8 @@ describe("stable API error mapping", () => {
       "VERSION_CONFLICT",
       "BRIDGE_INSTANCE_CONFLICT",
       "HISTORY_SYNC_NOT_ALLOWED",
+      "THREAD_MANAGEMENT_NOT_SUPPORTED",
+      "THREAD_NOT_IDLE",
     ]);
   });
 

@@ -1,7 +1,20 @@
-import { getSessionConversation } from "@/lib/domain/users";
-import { apiSuccess, withApiHandler } from "@/lib/http/api";
-import { userContextForRequest } from "@/lib/http/user-route";
 import {
+  deleteThread,
+  getSessionConversation,
+  renameThread,
+} from "@/lib/domain/users";
+import {
+  apiSuccess,
+  parseJson,
+  requireIdempotencyKey,
+  withApiHandler,
+} from "@/lib/http/api";
+import {
+  ownerContextForRequest,
+  userContextForRequest,
+} from "@/lib/http/user-route";
+import {
+  renameThreadSchema,
   sessionConversationQuerySchema,
   sessionParamsSchema,
 } from "@/lib/validation/user";
@@ -24,6 +37,36 @@ export async function GET(request: Request, route: RouteContext) {
           limit: query.limit,
         },
       ),
+    );
+  });
+}
+
+export async function PATCH(request: Request, route: RouteContext) {
+  return withApiHandler(async () => {
+    const { sessionId } = sessionParamsSchema.parse(await route.params);
+    const input = await parseJson(request, renameThreadSchema);
+    return apiSuccess(
+      await renameThread(
+        await ownerContextForRequest(request),
+        sessionId,
+        input,
+        requireIdempotencyKey(request),
+      ),
+      202,
+    );
+  });
+}
+
+export async function DELETE(request: Request, route: RouteContext) {
+  return withApiHandler(async () => {
+    const { sessionId } = sessionParamsSchema.parse(await route.params);
+    return apiSuccess(
+      await deleteThread(
+        await ownerContextForRequest(request),
+        sessionId,
+        requireIdempotencyKey(request),
+      ),
+      202,
     );
   });
 }

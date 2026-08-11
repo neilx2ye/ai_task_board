@@ -6,6 +6,7 @@ import type {
   TaskEventRow,
   TaskMessageRow,
   TaskRow,
+  TaskUserInputRequestRow,
   SessionActivityRow,
   SessionHistorySync,
 } from "@/lib/types/database";
@@ -43,6 +44,7 @@ export type TaskDetails = {
   messages: TaskMessageRow[];
   events: TaskEventRow[];
   artifacts: ArtifactRow[];
+  input_requests: TaskUserInputRequestRow[];
 };
 
 export type TaskUpdates = {
@@ -82,6 +84,7 @@ export type SessionCurrentTaskSummary = Pick<
   | "progress_note"
   | "progress_percent_estimate"
   | "updated_at"
+  | "awaiting_user_input"
 >;
 
 export type SessionListItem = AISessionRow & {
@@ -104,6 +107,7 @@ export type SessionConversation = {
   session: SessionListItem;
   tasks: TaskRow[];
   messages: TaskMessageRow[];
+  input_requests: TaskUserInputRequestRow[];
   events: TaskEventRow[];
   activities: SessionActivityItem[];
   history_sync: SessionHistorySync | null;

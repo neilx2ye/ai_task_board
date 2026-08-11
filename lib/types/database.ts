@@ -20,6 +20,12 @@ export type TaskStatus =
 export type MemberRole = "owner" | "member";
 export type ActorType = "user" | "ai" | "system";
 export type SessionStatus = "online" | "busy" | "waiting" | "offline";
+export type AIThreadCommandAction = "create" | "rename" | "delete";
+export type AIThreadCommandStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
 export type SessionActivityKind =
   | "user_message"
   | "assistant_message"
@@ -218,6 +224,8 @@ export type AISessionRow = {
   working_directory: string | null;
   archived_at: string | null;
   inventory_active: boolean;
+  user_name: string | null;
+  deletion_requested_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -237,7 +245,49 @@ export type AISessionInsert = {
   working_directory?: string | null;
   archived_at?: string | null;
   inventory_active?: boolean;
+  user_name?: string | null;
+  deletion_requested_at?: string | null;
   created_at?: string;
+  updated_at?: string;
+};
+
+export type AIThreadCommandRow = {
+  id: string;
+  workspace_id: string;
+  connection_id: string;
+  session_id: string | null;
+  action: AIThreadCommandAction;
+  name: string | null;
+  external_thread_id: string | null;
+  status: AIThreadCommandStatus;
+  attempt_count: number;
+  requested_by_user_id: string | null;
+  runtime_instance_id: string | null;
+  lease_expires_at: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type AIThreadCommandInsert = {
+  id?: string;
+  workspace_id: string;
+  connection_id: string;
+  session_id?: string | null;
+  action: AIThreadCommandAction;
+  name?: string | null;
+  external_thread_id?: string | null;
+  status?: AIThreadCommandStatus;
+  attempt_count?: number;
+  requested_by_user_id?: string | null;
+  runtime_instance_id?: string | null;
+  lease_expires_at?: string | null;
+  error?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
   updated_at?: string;
 };
 
@@ -256,6 +306,7 @@ export type TaskRow = {
   claimed_by_session_id: string | null;
   claimed_at: string | null;
   lease_expires_at: string | null;
+  awaiting_user_input: boolean;
   required_capabilities: string[];
   external_source: string | null;
   external_task_ref: string | null;
@@ -292,6 +343,7 @@ export type TaskInsert = {
   claim_token_hash?: string | null;
   claimed_at?: string | null;
   lease_expires_at?: string | null;
+  awaiting_user_input?: boolean;
   required_capabilities?: string[];
   external_source?: string | null;
   external_task_ref?: string | null;
@@ -343,6 +395,73 @@ export type TaskMessageInsert = {
   requires_response?: boolean;
   read_at?: string | null;
   created_at?: string;
+};
+
+export type TaskUserInputRequestStatus =
+  | "pending"
+  | "answered"
+  | "consumed"
+  | "cancelled";
+
+export type TaskUserInputOption = {
+  label: string;
+  description: string;
+};
+
+export type TaskUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options: TaskUserInputOption[] | null;
+  isOther: boolean;
+  isSecret: boolean;
+};
+
+export type TaskUserInputAnswers = Record<string, string[]>;
+
+/** Safe projection returned to Web clients; answer values are intentionally absent. */
+export type TaskUserInputRequestRow = {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  session_id: string;
+  message_id: string;
+  external_request_id: string;
+  turn_id: string;
+  item_id: string;
+  is_blocking: boolean;
+  status: TaskUserInputRequestStatus;
+  questions: TaskUserInputQuestion[];
+  answered_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Secret-bearing service-role database shape. Never return it from an HTTP API. */
+export type TaskUserInputRequestDatabaseRow = TaskUserInputRequestRow & {
+  claim_token_hash: string;
+  answers: TaskUserInputAnswers | null;
+  answered_by_user_id: string | null;
+};
+
+export type TaskUserInputRequestInsert = {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  session_id: string;
+  message_id: string;
+  external_request_id: string;
+  turn_id: string;
+  item_id: string;
+  is_blocking?: boolean;
+  status?: TaskUserInputRequestStatus;
+  questions: TaskUserInputQuestion[];
+  claim_token_hash: string;
+  answers?: TaskUserInputAnswers | null;
+  answered_by_user_id?: string | null;
+  answered_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type TaskEventRow = {
@@ -552,6 +671,20 @@ type MessageResponse = {
   task: TaskRpcPayload;
   message: TaskMessageRow;
 };
+type TaskUserInputRequestResponse = {
+  task: TaskRpcPayload;
+  request: TaskUserInputRequestRow;
+};
+type TaskUserInputAnswerResponse = TaskUserInputRequestResponse & {
+  message: TaskMessageRow;
+};
+type TaskUserInputPollResponse = {
+  request: {
+    id: string;
+    status: TaskUserInputRequestStatus;
+    answers: TaskUserInputAnswers | null;
+  };
+};
 type SessionTurnResponse = MessageResponse & {
   activity: SessionActivityRow;
 };
@@ -576,6 +709,9 @@ type CompleteAndClaimNextResponse = CompleteResponse & {
   next_task: TaskRpcPayload | null;
 };
 type ConnectionResponse = { connection: PublicAIConnectionRow };
+export type AIThreadCommandResponse = {
+  command: AIThreadCommandRow | null;
+};
 type ArtifactResponse = { artifact: ArtifactRow };
 
 export type BridgeDesiredConfiguration = {
@@ -760,6 +896,27 @@ export interface Database {
           },
         ]
       >;
+      ai_thread_commands: TableDefinition<
+        AIThreadCommandRow,
+        AIThreadCommandInsert,
+        Partial<AIThreadCommandRow>,
+        [
+          {
+            foreignKeyName: "ai_thread_commands_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_thread_commands_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
       tasks: TableDefinition<
         TaskDatabaseRow,
         TaskInsert,
@@ -845,6 +1002,34 @@ export interface Database {
           {
             foreignKeyName: "task_messages_reply_fk";
             columns: ["workspace_id", "reply_to_message_id"];
+            isOneToOne: false;
+            referencedRelation: "task_messages";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      task_user_input_requests: TableDefinition<
+        TaskUserInputRequestDatabaseRow,
+        TaskUserInputRequestInsert,
+        Partial<TaskUserInputRequestDatabaseRow>,
+        [
+          {
+            foreignKeyName: "task_user_input_requests_task_fk";
+            columns: ["workspace_id", "task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "task_user_input_requests_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "task_user_input_requests_message_fk";
+            columns: ["workspace_id", "message_id"];
             isOneToOne: false;
             referencedRelation: "task_messages";
             referencedColumns: ["workspace_id", "id"];
@@ -1079,6 +1264,28 @@ export interface Database {
           };
         Returns: MessageResponse;
       };
+      register_task_user_input_request: {
+        Args: AISessionArgs &
+          IdempotencyArgs & {
+            p_task_id: string;
+            p_claim_token_hash: string;
+            p_request_id: string;
+            p_external_request_id: string;
+            p_turn_id: string;
+            p_item_id: string;
+            p_is_blocking: boolean;
+            p_questions: Json;
+          };
+        Returns: TaskUserInputRequestResponse;
+      };
+      poll_task_user_input_request: {
+        Args: AISessionArgs & {
+          p_task_id: string;
+          p_claim_token_hash: string;
+          p_request_id: string;
+        };
+        Returns: TaskUserInputPollResponse;
+      };
       complete_task_and_claim_next: {
         Args: AISessionArgs &
           IdempotencyArgs & {
@@ -1223,6 +1430,15 @@ export interface Database {
           };
         Returns: MessageResponse;
       };
+      answer_task_user_input_request: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_task_id: string;
+            p_request_id: string;
+            p_answers: Json;
+          };
+        Returns: TaskUserInputAnswerResponse;
+      };
       release_task_by_user: {
         Args: UserTaskCommandArgs;
         Returns: TaskResponse;
@@ -1272,6 +1488,42 @@ export interface Database {
             p_token_hash: string;
           };
         Returns: ConnectionResponse;
+      };
+      rename_ai_connection: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_connection_id: string;
+            p_name: string;
+          };
+        Returns: ConnectionResponse;
+      };
+      enqueue_ai_thread_command: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      claim_ai_thread_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_lease_seconds: number;
+        };
+        Returns: AIThreadCommandResponse;
+      };
+      complete_ai_thread_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_command_id: string;
+          p_succeeded: boolean;
+          p_external_thread_id: string | null;
+          p_error: string | null;
+        };
+        Returns: AIThreadCommandResponse;
       };
       update_ai_connection_bridge_config: {
         Args: UserArgs &

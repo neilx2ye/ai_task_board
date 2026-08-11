@@ -108,7 +108,8 @@ function buildLatestQuestions(
       message.sender_type !== "ai" ||
       !message.requires_response ||
       message.read_at !== null ||
-      taskById.get(message.task_id)?.status !== "waiting_user"
+      (taskById.get(message.task_id)?.status !== "waiting_user" &&
+        taskById.get(message.task_id)?.awaiting_user_input !== true)
     ) {
       continue;
     }
@@ -205,7 +206,11 @@ export default function BoardPage() {
               const statusMeta = SESSION_STATUS_META[session.status];
               const currentTask = session.current_task;
               const taskStatusMeta = currentTask
-                ? TASK_STATUS_META[currentTask.status]
+                ? TASK_STATUS_META[
+                    currentTask.awaiting_user_input
+                      ? "waiting_user"
+                      : currentTask.status
+                  ]
                 : null;
               return (
                 <article
@@ -362,7 +367,11 @@ export default function BoardPage() {
           <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {COLUMNS.map((column) => {
               const columnTasks = sortTasks(
-                tasks.filter((task) => column.statuses.includes(task.status)),
+                tasks.filter((task) =>
+                  column.statuses.includes(
+                    latestQuestions.has(task.id) ? "waiting_user" : task.status,
+                  ),
+                ),
               );
               return (
                 <section

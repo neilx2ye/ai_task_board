@@ -11,6 +11,7 @@ import { useRef } from "react";
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
 import type { SessionConversation, SessionListItem } from "@/lib/types/domain";
+import type { AIThreadCommandRow } from "@/lib/types/database";
 
 const SESSIONS_KEY = ["sessions"] as const;
 const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
@@ -132,6 +133,10 @@ export function mergeSessionConversationPages(
       pages.flatMap((page) => page.messages),
       (message) => message.id,
     ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    input_requests: valuesById(
+      pages.flatMap((page) => page.input_requests ?? []),
+      (request) => request.id,
+    ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
     events: valuesById(
       pages.flatMap((page) => page.events),
       (event) => String(event.id),
@@ -184,6 +189,62 @@ export function useCreateSessionTurn(sessionId: string) {
     },
     onSettled: (_result, _error, input) => {
       requestKeys.current.delete(input);
+    },
+  });
+}
+
+type ThreadCommandResult = { command: AIThreadCommandRow };
+
+export function useCreateThread(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string }) =>
+      apiFetch<ThreadCommandResult>(
+        `/api/user/connections/${connectionId}/threads`,
+        { method: "POST", json: input },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+    },
+  });
+}
+
+export function useRenameThread(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string }) =>
+      apiFetch<ThreadCommandResult>(`/api/user/sessions/${sessionId}`, {
+        method: "PATCH",
+        json: input,
+      }),
+    onSuccess: (_result, input) => {
+      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
+        current?.map((session) =>
+          session.id === sessionId
+            ? { ...session, name: input.name, user_name: input.name }
+            : session,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+    },
+  });
+}
+
+export function useDeleteThread(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<ThreadCommandResult>(`/api/user/sessions/${sessionId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
+        current?.filter((session) => session.id !== sessionId),
+      );
+      queryClient.removeQueries({ queryKey: sessionKey(sessionId), exact: true });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 }

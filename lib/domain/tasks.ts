@@ -23,6 +23,8 @@ import type {
   ReportProgressInput,
   ReportSessionActivityInput,
   RequestUserInputInput,
+  RegisterTaskUserInputRequestInput,
+  PollTaskUserInputRequestInput,
 } from "@/lib/validation/ai";
 
 const DEFAULT_LEASE_SECONDS = 15 * 60;
@@ -48,7 +50,10 @@ type CompletionParameters = Pick<
 >;
 
 export const SAFE_TASK_COLUMNS =
-  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+
+export const SAFE_TASK_USER_INPUT_REQUEST_COLUMNS =
+  "id, workspace_id, task_id, session_id, message_id, external_request_id, turn_id, item_id, is_blocking, status, questions, answered_at, created_at, updated_at" as const;
 
 function requestMetadata(
   operation: string,
@@ -212,6 +217,41 @@ export async function requestUserInput(
   });
 }
 
+export async function registerTaskUserInputRequest(
+  context: AISessionContext,
+  input: RegisterTaskUserInputRequestInput,
+  idempotencyKey: string,
+): Promise<unknown> {
+  return callDomainRpc("register_task_user_input_request", {
+    ...aiContext(context),
+    p_task_id: input.task_id,
+    p_claim_token_hash: hashToken(input.claim_token, "claim"),
+    p_request_id: input.request_id,
+    p_external_request_id: input.external_request_id,
+    p_turn_id: input.turn_id,
+    p_item_id: input.item_id,
+    p_is_blocking: input.is_blocking,
+    p_questions: input.questions,
+    ...requestMetadata(
+      "register_task_user_input_request",
+      input,
+      idempotencyKey,
+    ),
+  });
+}
+
+export async function pollTaskUserInputRequest(
+  context: AISessionContext,
+  input: PollTaskUserInputRequestInput,
+): Promise<unknown> {
+  return callDomainRpc("poll_task_user_input_request", {
+    ...aiContext(context),
+    p_task_id: input.task_id,
+    p_claim_token_hash: hashToken(input.claim_token, "claim"),
+    p_request_id: input.request_id,
+  });
+}
+
 export async function postTaskMessage(
   context: AISessionContext,
   input: PostTaskMessageInput,
@@ -369,7 +409,7 @@ export async function loadTaskRelations(
     }
   }
   const activityTaskIds = [task.id, ...descendantRows.map((row) => row.id)];
-  const [parentResult, childrenResult, dependenciesResult, messagesResult, eventsResult, artifactsResult] =
+  const [parentResult, childrenResult, dependenciesResult, messagesResult, eventsResult, artifactsResult, inputRequestsResult] =
     await Promise.all([
       task.parent_task_id
         ? admin
@@ -404,6 +444,13 @@ export async function loadTaskRelations(
         .eq("workspace_id", workspaceId)
         .in("task_id", activityTaskIds)
         .order("created_at"),
+      admin
+        .from("task_user_input_requests")
+        .select(SAFE_TASK_USER_INPUT_REQUEST_COLUMNS)
+        .eq("workspace_id", workspaceId)
+        .eq("status", "pending")
+        .in("task_id", activityTaskIds)
+        .order("created_at"),
     ]);
 
   const firstError = [
@@ -413,6 +460,7 @@ export async function loadTaskRelations(
     messagesResult.error,
     eventsResult.error,
     artifactsResult.error,
+    inputRequestsResult.error,
   ].find(Boolean);
   if (firstError) throw mapDatabaseError(firstError);
 
@@ -437,6 +485,7 @@ export async function loadTaskRelations(
     messages: messagesResult.data ?? [],
     events: eventsResult.data ?? [],
     artifacts: artifactsResult.data ?? [],
+    input_requests: inputRequestsResult.data ?? [],
   };
 }
 

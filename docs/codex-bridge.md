@@ -1,6 +1,6 @@
 # Codex Bridge
 
-Codex Bridge 0.4 是运行在 Codex 设备上的常驻 companion。一个 Bridge 进程对应一台设备上的一个 AI Connection；它通过 stdio 启动本机 `codex app-server`，自动发现多个未归档的顶层 Codex thread，并为每个 thread 在 AI Task Board 中同步一个独立 Session。
+Codex Bridge 0.6 是运行在 Codex 设备上的常驻 companion。一个 Bridge 进程对应一台设备上的一个 AI Connection；它通过 stdio 启动本机 `codex app-server`，自动发现多个未归档的顶层 Codex thread，并为每个 thread 在 AI Task Board 中同步一个独立 Session。
 
 网页向某个 Session 发送消息后，Bridge 会把任务交给对应的本地 thread，并近实时回传 AI 回复增量、Codex 明确提供的思考摘要、命令输出和工具过程。Bridge 直接使用 Board REST API 与认证 SSE，不依赖 Board MCP。
 
@@ -27,15 +27,15 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 
 ## 准备条件
 
-1. Board 已先升级到 0.4 所需的 Session 清单、活动、历史导入和 Bridge 配置 API 与数据库 migration。Bridge 不会把同步 API 的 `404` 回退为旧版逐 Session 注册，版本不匹配会直接启动失败。
+1. Board 已先应用仓库当前的 Session 清单、活动、历史导入、Bridge 配置和 Web Thread 指令 API 与数据库 migration。Bridge 不会把同步 API 的 `404` 回退为旧版逐 Session 注册，版本不匹配会直接启动失败。
 2. 在网页“AI 连接”中创建或选择一个 Codex Connection，并保存只显示一次的 `atb_...` Connection Token。
 3. 设备已安装兼容的 `codex` CLI，当前系统用户已经登录，且 `codex app-server --stdio` 可以启动。
-4. 本机已有至少一个 Codex thread。当前版本会发现、恢复和管理既有 thread，但尚不从网页创建新 thread。
+4. 若本机已有 Codex thread，当前版本会自动发现并恢复；没有既有 thread 时，Workspace Owner 可在网页使用设备侧 `CODEX_WORKING_DIRECTORY` 创建第一个 Thread（固定 `CODEX_THREAD_ID` 模式除外）。
 5. 当前用户能够访问这些 thread 对应的工作目录；运行 npx 还需要 Node.js 18 或更高版本。
 
 设备只需能通过 HTTPS 访问 `AI_TASK_BOARD_URL`，无需克隆 Board 仓库，也无需允许公网反向连接设备。
 
-## 启动 0.4 CLI
+## 启动 0.6 CLI
 
 下面的设备级配置不固定 thread：
 
@@ -44,7 +44,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
 CODEX_MAX_CONCURRENT_TURNS='2' \
-npx --yes ai-task-board-codex-bridge@0.4.1
+npx --yes ai-task-board-codex-bridge@0.6.0
 ```
 
 默认 `CODEX_THREAD_SCOPE=cwd`：未设置 `CODEX_THREAD_ID` 时，只发现记录 cwd 与 `CODEX_WORKING_DIRECTORY` **完全相同**的顶层 thread（不会自动包含子目录）。如确需跨项目管理，必须显式设置高风险选项 `CODEX_THREAD_SCOPE=all`。要精确限定一个既有 thread，可设置兼容过滤器；它会覆盖 cwd/all 范围：
@@ -54,7 +54,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-codex-bridge@0.4.1
+npx --yes ai-task-board-codex-bridge@0.6.0
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -94,6 +94,12 @@ npx --yes ai-task-board-codex-bridge@0.4.1
 
 网页配置不能扩大本机安全边界：数量与并发会夹紧到 `CODEX_MAX_THREADS`、`CODEX_MAX_CONCURRENT_TURNS`，标题与历史分别必须获得本机授权，历史数量还会夹紧到 `CODEX_BRIDGE_MAX_HISTORY_TURNS`；工作目录、`cwd/all` 范围、固定 thread、Codex 路径、Connection Token、权限模式与审批模式始终只由设备环境决定。网页停用 Bridge 时，进程仍保持在线以接收后续配置，但会先安全停止 worker、释放任务，再提交空的权威 thread 清单并取消后台历史扫描。
 
+## Web Console 管理 Threads
+
+Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新建、重命名和删除 Codex Thread。操作先作为持久化指令写入 Board，只有持有该 Connection 当前运行租约的 Bridge 才能领取并执行，因此多个进程不会同时修改同一设备。新 Thread 固定使用设备侧 `CODEX_WORKING_DIRECTORY`；网页不能指定其他本机路径。重命名与删除也只能针对当前 Bridge 清单内的受管 Thread。设置了固定 `CODEX_THREAD_ID` 时，新建和删除会被拒绝。
+
+删除只允许空闲且没有已预留任务的 Thread。请求被接受后，Board Session 会立即隐藏并停止接收新任务，再由 Bridge 调用 Codex App Server 的硬删除接口；缺少硬删除方法的兼容 App Server 会退化为归档。看板中的审计与已同步历史仍保留。
+
 ## 旧历史同步与隐私边界
 
 历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=notLoaded`）取得有界 turn 清单，再用 `thread/items/list` 分页读取持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
@@ -128,7 +134,7 @@ After=network-online.target
 Type=simple
 WorkingDirectory=/path/to/a/safe/start-directory
 EnvironmentFile=%h/.config/ai-task-board/codex-bridge.env
-ExecStart=/absolute/path/to/npx --yes ai-task-board-codex-bridge@0.4.1
+ExecStart=/absolute/path/to/npx --yes ai-task-board-codex-bridge@0.6.0
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
@@ -156,7 +162,8 @@ systemctl --user enable --now ai-task-board-codex-bridge.service
 5. 每个 Session 建立自己的认证 SSE 唤醒流并保持心跳。SSE 只传固定的 `ready` / `wake` 提示，真正的任务仍通过 REST 原子领取；断线时自适应轮询兜底。
 6. 每个 thread 一次只执行一张 Task。有效的设备级并发上限限制不同 thread 同时运行的 turn 数，多余工作继续排队。
 7. Bridge 调用 `thread/resume` 和 `turn/start`，再消费 App Server 的 JSONL 通知。AI 文本、思考摘要和命令输出 delta 会按约 500 毫秒或 8 KiB 聚合后上传，完成事件也会持久化。
-8. `turn/completed` 后，最后一条 AI 消息用于完成 Task；错误会把 Task 标记为失败。Bridge 随后继续处理对应 Session 队列。
+8. 若 App Server 在 turn 中发出 blocking `item/tool/requestUserInput`，Bridge 将结构化问题持久化到 Board 并保持原请求等待；Web 选择框提交后，Bridge 把答案返回该请求，同一个 turn 原地继续。等待期间 Task claim 和心跳均不释放。
+9. `turn/completed` 后，最后一条 AI 消息用于完成 Task；错误会把 Task 标记为失败。Bridge 随后继续处理对应 Session 队列。
 
 网页在某个 thread 正忙时发送的新消息会创建下一张排队 Task。当前版本不会把它可靠地 steer 到当前 turn。
 
@@ -198,7 +205,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 - **没有可靠的运行中 steer。** 忙碌时的新网页消息排到下一张 Task，当前 turn 完成后才执行。
 - **没有网页审批。** 默认安全拒绝 App Server 审批；可选自动批准是设备端静态策略，不是用户逐次确认。
 - **没有可靠的网页 interrupt。** 网页状态或取消操作不能保证立即终止本地命令；停止 systemd 服务只会走尽力的 App Server interrupt。
-- **不会自动进入 `waiting_user`。** 普通 AI 回复中的问题不会自动改变 Task 状态，用户回复会成为下一张 Task。
+- **只转换协议级结构化问题。** blocking `item/tool/requestUserInput` 会自动显示 Web 选择框并保留原 turn；普通 AI 文本里的疑问句不会自动暂停，网页普通消息仍会成为下一张 Task。
 - **默认 cwd scope 不是令牌强隔离。** 默认只选 cwd 完全相同的 thread，能避免静默暴露其他项目的最近 thread；但同 UID 的 Codex/TUI/Bridge 仍共享用户级数据与进程权限。更强边界需要 `CODEX_THREAD_ID`、独立 UID 和/或 token proxy；`CODEX_THREAD_SCOPE=all` 会显式扩大到跨项目 thread。
 - **同一 thread 仍是单写入者。** 不要同时从 Bridge、TUI、IDE 或另一自动化进程提交 turn；不同 thread 才能安全并行。
 - **本机 App Server 是受信协议边界。** Bridge 会把单个活动流累计限制在 100,000 个 code unit 并分成至多约 8 KiB 的上传块，但当前 stdio JSONL reader 在解析前仍会缓冲完整单行 frame；不要把不受信任的程序伪装成 `CODEX_BINARY`。
@@ -210,7 +217,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 - 启动时报 `AI_TASK_BOARD_URL is required` 或 `AI_TASK_BOARD_CONNECTION_TOKEN is required`：确认两个必填变量位于 systemd 实际读取的环境文件中。
 - `codex app-server` 启动失败：用同一 OS 用户检查 `CODEX_BINARY`、Codex 登录和自定义 Codex home；systemd 的 PATH 通常比交互式 shell 更短。
 - 找不到任何 thread：确认当前用户确实拥有本地 Codex 数据，且默认 scope 下 thread 记录的 cwd 与 `CODEX_WORKING_DIRECTORY` 完全相同；若设置了 `CODEX_THREAD_ID`，检查 ID 是否正确且对应未归档的顶层 thread。
-- 同步或配置 API 返回 `404`：先升级 Board 数据库 migration 与 API；0.4 Bridge 不会回退到旧版注册接口。只有未启用 Web 配置时，缺少配置端点才会降级为继续使用本地配置。
+- 同步、结构化问题或配置 API 返回 `404`：先升级 Board 数据库 migration 与 API；0.6 Bridge 不会为 thread 同步或同 turn 问答回退到旧版接口。只有未启用 Web 配置时，缺少配置端点才会降级为继续使用本地配置。
 - Session 在线但没有任务：确认网页消息发到了该 thread 对应的 Session，依赖已经完成，且 `CODEX_CAPABILITIES` 满足任务要求。
 - turn 因审批失败：这是默认 `decline` 策略的预期结果。优先收紧任务或预先配置安全权限；不要为了绕过错误盲目开启自动批准。
 - 活动不是逐字符更新：Bridge 会聚合 delta，网页还依赖网络、持久化和 Realtime 失效通知；“近实时”不保证固定毫秒延迟。

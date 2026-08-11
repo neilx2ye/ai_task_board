@@ -19,6 +19,8 @@ const aiContext = {
 const domainMocks = vi.hoisted(() => ({
   createSessionTurn: vi.fn(),
   getSessionConversation: vi.fn(),
+  renameThread: vi.fn(),
+  deleteThread: vi.fn(),
   reportSessionActivity: vi.fn(),
   syncSessions: vi.fn(),
 }));
@@ -26,11 +28,14 @@ const routeMocks = vi.hoisted(() => ({
   authenticateAIRequest: vi.fn(),
   authorizeAISession: vi.fn(),
   userContextForRequest: vi.fn(),
+  ownerContextForRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/domain/users", () => ({
   createSessionTurn: domainMocks.createSessionTurn,
   getSessionConversation: domainMocks.getSessionConversation,
+  renameThread: domainMocks.renameThread,
+  deleteThread: domainMocks.deleteThread,
 }));
 vi.mock("@/lib/domain/tasks", () => ({
   reportSessionActivity: domainMocks.reportSessionActivity,
@@ -40,6 +45,7 @@ vi.mock("@/lib/domain/sessions", () => ({
 }));
 vi.mock("@/lib/http/user-route", () => ({
   userContextForRequest: routeMocks.userContextForRequest,
+  ownerContextForRequest: routeMocks.ownerContextForRequest,
 }));
 vi.mock("@/lib/auth/ai-auth", () => ({
   authenticateAIRequest: routeMocks.authenticateAIRequest,
@@ -50,7 +56,11 @@ vi.mock("@/lib/auth/ai-auth", () => ({
 
 import { POST as reportActivity } from "@/app/api/ai/sessions/activity/route";
 import { POST as syncSessions } from "@/app/api/ai/sessions/sync/route";
-import { GET as getConversation } from "@/app/api/user/sessions/[sessionId]/route";
+import {
+  DELETE as deleteThread,
+  GET as getConversation,
+  PATCH as renameThread,
+} from "@/app/api/user/sessions/[sessionId]/route";
 import { POST as createTurn } from "@/app/api/user/sessions/[sessionId]/turns/route";
 import { AppError } from "@/lib/domain/errors";
 import {
@@ -77,6 +87,10 @@ async function responseJson(response: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   routeMocks.userContextForRequest.mockResolvedValue(userContext);
+  routeMocks.ownerContextForRequest.mockResolvedValue({
+    ...userContext,
+    role: "owner",
+  });
   routeMocks.authenticateAIRequest.mockResolvedValue({
     connectionId,
     tokenHash: aiContext.tokenHash,
@@ -104,6 +118,8 @@ beforeEach(() => {
     session: { id: sessionId },
     tasks: [],
   });
+  domainMocks.renameThread.mockResolvedValue({ command: { id: "rename" } });
+  domainMocks.deleteThread.mockResolvedValue({ command: { id: "delete" } });
   domainMocks.createSessionTurn.mockResolvedValue({ task: { id: taskId } });
   domainMocks.reportSessionActivity.mockResolvedValue({
     activity: { id: 1, kind: "reasoning" },
@@ -219,6 +235,45 @@ describe("session conversation REST API", () => {
       userContext,
       sessionId,
       { beforeActivityId: undefined, limit: 100 },
+    );
+  });
+
+  it("queues a trimmed Thread rename for a Workspace owner", async () => {
+    const request = jsonRequest(
+      `/api/user/sessions/${sessionId}`,
+      { name: "  Release work  " },
+      { "Idempotency-Key": "web/thread/rename-1" },
+    );
+    const response = await renameThread(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(domainMocks.renameThread).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "owner" }),
+      sessionId,
+      { name: "Release work" },
+      "web/thread/rename-1",
+    );
+  });
+
+  it("queues a Thread deletion without consuming a request body", async () => {
+    const request = new Request(
+      `http://localhost/api/user/sessions/${sessionId}`,
+      {
+        method: "DELETE",
+        headers: { "Idempotency-Key": "web/thread/delete-1" },
+      },
+    );
+    const response = await deleteThread(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(domainMocks.deleteThread).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "owner" }),
+      sessionId,
+      "web/thread/delete-1",
     );
   });
 

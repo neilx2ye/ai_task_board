@@ -113,6 +113,8 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   session_activity_reported: "同步会话活动",
   subtasks_created: "拆分任务",
   user_input_requested: "请求用户输入",
+  structured_user_input_requested: "等待 Web 结构化回答",
+  structured_user_input_answered: "Web 结构化回答已提交",
   user_replied: "用户已回复",
   task_completed: "完成任务",
   task_failed: "任务失败",

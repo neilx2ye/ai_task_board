@@ -23,6 +23,7 @@ const FULL_TASK_ROW: TaskDatabaseRow = {
   claim_token_hash: "secret-hash",
   claimed_at: null,
   lease_expires_at: null,
+  awaiting_user_input: false,
   required_capabilities: [],
   external_source: null,
   external_task_ref: null,

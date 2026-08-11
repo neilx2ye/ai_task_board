@@ -91,6 +91,9 @@ lines.on("line", (line) => {
     "thread/resume": {
       thread: { id: message.params.threadId, resumed: true },
     },
+    "thread/name/set": {},
+    "thread/delete": {},
+    "thread/archive": {},
     "turn/start": {
       turn: { id: "turn-started", input: message.params.input },
     },
@@ -226,6 +229,15 @@ describe("CodexAppServerClient", () => {
     ).resolves.toMatchObject({
       thread: { id: "thread-existing", resumed: true },
     });
+    await expect(
+      client.threadSetName({ threadId: "thread-existing", name: "New name" }),
+    ).resolves.toEqual({});
+    await expect(
+      client.threadDelete({ threadId: "thread-existing" }),
+    ).resolves.toEqual({});
+    await expect(
+      client.threadArchive({ threadId: "thread-existing" }),
+    ).resolves.toEqual({});
     await expect(
       client.turnStart({
         threadId: "thread-existing",

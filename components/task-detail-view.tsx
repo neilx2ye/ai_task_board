@@ -16,6 +16,7 @@ import {
 import { ArtifactUpload } from "@/components/artifact-upload";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SubtaskDialog } from "@/components/subtask-dialog";
+import { StructuredUserInputForm } from "@/components/structured-user-input-form";
 import { TaskFormDialog } from "@/components/task-form-dialog";
 import {
   ACTOR_TYPE_LABEL,
@@ -71,7 +72,9 @@ function KeyValue({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function TaskLink({ task }: { task: TaskRow }) {
-  const meta = TASK_STATUS_META[task.status];
+  const meta = TASK_STATUS_META[
+    task.awaiting_user_input ? "waiting_user" : task.status
+  ];
   return (
     <Link
       href={`/tasks/${task.id}`}
@@ -161,6 +164,7 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     messages,
     events,
     artifacts,
+    input_requests: inputRequests,
   } = details;
 
   const { data: sessions } = useSessions();
@@ -175,7 +179,12 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   const [composer, setComposer] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const statusMeta = TASK_STATUS_META[task.status];
+  const hasStructuredWait = inputRequests.some(
+    (request) => request.status === "pending",
+  );
+  const statusMeta = TASK_STATUS_META[
+    task.awaiting_user_input || hasStructuredWait ? "waiting_user" : task.status
+  ];
   const priority = priorityLevelOf(task.priority);
   const claimedSession = task.claimed_by_session_id
     ? sessions?.find((session) => session.id === task.claimed_by_session_id)
@@ -206,6 +215,18 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     [messages, knownTaskById],
   );
 
+  const pendingStructuredRequest = useMemo(
+    () =>
+      [...inputRequests]
+        .reverse()
+        .find(
+          (request) =>
+            request.status === "pending" &&
+            knownTaskById.get(request.task_id)?.awaiting_user_input === true,
+        ) ?? null,
+    [inputRequests, knownTaskById],
+  );
+
   const replyTargetTaskId = pendingQuestion?.task_id ?? task.id;
   const isDescendantQuestion =
     pendingQuestion !== null && pendingQuestion.task_id !== task.id;
@@ -234,7 +255,9 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   // 拆分限制与数据库一致：等待回复 / 已取消不可拆分；
   // 只要存在领取记录（即使租约已过期）也不允许用户拆分，需先释放。
   const hasClaim = task.claimed_by_session_id !== null;
-  const subtaskBlockReason = ["waiting_user", "cancelled"].includes(task.status)
+  const subtaskBlockReason = hasStructuredWait
+    ? "任务正在当前 turn 中等待结构化回答，提交前不能拆分子任务。"
+    : ["waiting_user", "cancelled"].includes(task.status)
     ? task.status === "waiting_user"
       ? "任务正在等待回复，回复前不能拆分子任务。"
       : "已取消的任务不能拆分子任务。"
@@ -446,8 +469,23 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
           </Section>
 
           <Section
-            title={pendingQuestion ? "消息（AI 正在等待你的回复）" : "消息"}
+            title={
+              pendingStructuredRequest || pendingQuestion
+                ? "消息（AI 正在等待你的回复）"
+                : "消息"
+            }
           >
+            {pendingStructuredRequest ? (
+              <StructuredUserInputForm
+                request={pendingStructuredRequest}
+                sourceTaskTitle={
+                  pendingStructuredRequest.task_id === task.id
+                    ? null
+                    : (knownTaskById.get(pendingStructuredRequest.task_id)
+                        ?.title ?? pendingStructuredRequest.task_id)
+                }
+              />
+            ) : null}
             {sortedMessages.length > 0 ? (
               <ol className="flex flex-col gap-3">
                 {sortedMessages.map((message) => (
@@ -483,6 +521,7 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
               <p className="text-sm text-muted-foreground">暂无消息。</p>
             )}
 
+            {!pendingStructuredRequest ? (
             <form onSubmit={onSendMessage} className="flex flex-col gap-2">
               {isDescendantQuestion && pendingQuestion ? (
                 <p className="rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -520,6 +559,11 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
                 {pendingQuestion ? "回复并恢复任务" : "发送"}
               </Button>
             </form>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                当前问题必须通过上方选择框提交；普通留言会在回答后恢复。
+              </p>
+            )}
           </Section>
 
           <Section title="事件时间线">

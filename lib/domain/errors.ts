@@ -14,6 +14,8 @@ export const BUSINESS_ERROR_CODES = [
   "VERSION_CONFLICT",
   "BRIDGE_INSTANCE_CONFLICT",
   "HISTORY_SYNC_NOT_ALLOWED",
+  "THREAD_MANAGEMENT_NOT_SUPPORTED",
+  "THREAD_NOT_IDLE",
 ] as const;
 
 export type BusinessErrorCode = (typeof BUSINESS_ERROR_CODES)[number];
@@ -45,6 +47,8 @@ const statusByCode: Record<ApiErrorCode, number> = {
   VERSION_CONFLICT: 409,
   BRIDGE_INSTANCE_CONFLICT: 409,
   HISTORY_SYNC_NOT_ALLOWED: 403,
+  THREAD_MANAGEMENT_NOT_SUPPORTED: 409,
+  THREAD_NOT_IDLE: 409,
   INTERNAL_ERROR: 500,
 };
 
@@ -120,6 +124,9 @@ function messageForCode(code: BusinessErrorCode): string {
     VERSION_CONFLICT: "The configuration was changed by another request",
     BRIDGE_INSTANCE_CONFLICT: "Another Bridge runtime is active for this connection",
     HISTORY_SYNC_NOT_ALLOWED: "Codex history sync is not enabled for this Bridge",
+    THREAD_MANAGEMENT_NOT_SUPPORTED:
+      "This Bridge version does not support Web Thread management",
+    THREAD_NOT_IDLE: "The Thread still has active or queued work",
   };
   return messages[code];
 }

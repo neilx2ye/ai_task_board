@@ -74,6 +74,45 @@ export const claimOptionsSchema = z
 
 export const sessionHeartbeatSchema = z.object({}).strict();
 
+export const claimThreadCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    lease_seconds: z.number().int().min(15).max(300).default(60),
+  })
+  .strict();
+
+export const completeThreadCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    succeeded: z.boolean(),
+    external_thread_id: z.string().trim().min(1).max(500).nullable().optional(),
+    error: z.string().trim().min(1).max(2000).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.succeeded && value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A successful command cannot include an error",
+        path: ["error"],
+      });
+    }
+    if (!value.succeeded && !value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A failed command must include an error",
+        path: ["error"],
+      });
+    }
+  });
+
+export type ClaimThreadCommandInput = z.infer<
+  typeof claimThreadCommandSchema
+>;
+export type CompleteThreadCommandInput = z.infer<
+  typeof completeThreadCommandSchema
+>;
+
 export const reportCurrentTaskSchema = z
   .object({
     title: nonEmptyText.max(500),
@@ -168,6 +207,79 @@ export const reportProgressSchema = claimedTaskCommand
 
 export const requestUserInputSchema = claimedTaskCommand
   .extend({ question: nonEmptyText.max(10_000) })
+  .strict();
+
+const taskUserInputOptionSchema = z
+  .object({
+    label: nonEmptyText.max(500),
+    description: z.string().max(2_000),
+  })
+  .strict();
+
+const taskUserInputQuestionSchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    header: nonEmptyText.max(100),
+    question: nonEmptyText.max(10_000),
+    options: z.array(taskUserInputOptionSchema).min(1).max(20).nullable().default(null),
+    isOther: z.boolean().default(false),
+    isSecret: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((question, context) => {
+    if (!question.options) return;
+    const labels = new Set<string>();
+    question.options.forEach((option, index) => {
+      if (labels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate option label: ${option.label}`,
+          path: ["options", index, "label"],
+        });
+      }
+      labels.add(option.label);
+    });
+  });
+
+export const registerTaskUserInputRequestSchema = claimedTaskCommand
+  .extend({
+    request_id: uuidSchema,
+    external_request_id: nonEmptyText.max(500),
+    turn_id: nonEmptyText.max(500),
+    item_id: nonEmptyText.max(500),
+    is_blocking: z.literal(true),
+    questions: z.array(taskUserInputQuestionSchema).min(1).max(3),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const ids = new Set<string>();
+    value.questions.forEach((question, index) => {
+      if (ids.has(question.id)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate question id: ${question.id}`,
+          path: ["questions", index, "id"],
+        });
+      }
+      ids.add(question.id);
+    });
+    if (
+      new TextEncoder().encode(JSON.stringify(value.questions)).byteLength >
+      100_000
+    ) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 100_000,
+        origin: "value",
+        inclusive: true,
+        message: "Structured questions must not exceed 100 KiB",
+        path: ["questions"],
+      });
+    }
+  });
+
+export const pollTaskUserInputRequestSchema = claimedTaskCommand
+  .extend({ request_id: uuidSchema })
   .strict();
 
 export const postTaskMessageSchema = z
@@ -441,6 +553,12 @@ export type HeartbeatClaimInput = z.infer<typeof heartbeatClaimSchema>;
 export type CreateSubtasksInput = z.infer<typeof createSubtasksSchema>;
 export type ReportProgressInput = z.infer<typeof reportProgressSchema>;
 export type RequestUserInputInput = z.infer<typeof requestUserInputSchema>;
+export type RegisterTaskUserInputRequestInput = z.infer<
+  typeof registerTaskUserInputRequestSchema
+>;
+export type PollTaskUserInputRequestInput = z.infer<
+  typeof pollTaskUserInputRequestSchema
+>;
 export type PostTaskMessageInput = z.infer<typeof postTaskMessageSchema>;
 export type ReportSessionActivityInput = z.infer<typeof reportSessionActivitySchema>;
 export type ImportSessionHistoryInput = z.infer<

@@ -5,6 +5,7 @@ import {
   type AppServerIncomingRequest,
   type AppServerNotification,
   type AppServerThread,
+  AppServerRpcError,
   CodexAppServerClient,
 } from "./app-server-client.js";
 import {
@@ -28,7 +29,7 @@ import {
   WakeLatch,
 } from "./wake-client.js";
 
-const BRIDGE_VERSION = "0.4.1";
+const BRIDGE_VERSION = "0.6.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -36,6 +37,7 @@ const ACCUMULATED_TEXT_LIMIT = 100_000;
 const STREAM_TRUNCATION_MARKER = "\n…[流式输出已截断]";
 const MAX_NOTIFICATION_BACKLOG = 256;
 const MAX_ACTIVITY_BACKLOG = 64;
+const USER_INPUT_POLL_INTERVAL_MS = 1_500;
 
 type ClaimedTask = {
   id: string;
@@ -51,6 +53,30 @@ type Session = {
 };
 
 type ClaimResponse = { task: ClaimedTask | null };
+
+export type StructuredUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options: Array<{ label: string; description: string }> | null;
+  isOther: boolean;
+  isSecret: boolean;
+};
+
+export type StructuredUserInputRequest = {
+  turnId: string;
+  itemId: string;
+  isBlocking: true;
+  questions: StructuredUserInputQuestion[];
+};
+
+type UserInputPollResponse = {
+  request: {
+    id: string;
+    status: "pending" | "answered" | "consumed" | "cancelled";
+    answers: Record<string, string[]> | null;
+  };
+};
 
 type ThreadRecord = AppServerThread & {
   name?: unknown;
@@ -206,6 +232,18 @@ type SyncSessionsResponse = {
   sessions: Session[];
 };
 
+type ThreadCommand = {
+  id: string;
+  action: "create" | "rename" | "delete";
+  name: string | null;
+  external_thread_id: string | null;
+  attempt_count?: number;
+};
+
+type ThreadCommandResponse = {
+  command: ThreadCommand | null;
+};
+
 type ActivityBuffer = {
   kind: Extract<ActivityKind, "assistant_message" | "reasoning" | "command">;
   turnId: string;
@@ -223,6 +261,87 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function parseStructuredUserInputRequest(
+  value: unknown,
+): StructuredUserInputRequest {
+  if (!isRecord(value)) throw new Error("结构化问题参数无效");
+  const turnId = stringValue(value.turnId);
+  const itemId = stringValue(value.itemId);
+  if (!turnId || !itemId || value.isBlocking !== true) {
+    throw new Error("结构化问题缺少 blocking turn/item 标识");
+  }
+  if (!Array.isArray(value.questions) || value.questions.length < 1 || value.questions.length > 3) {
+    throw new Error("结构化问题数量必须为 1 到 3");
+  }
+  const ids = new Set<string>();
+  const questions = value.questions.map((candidate): StructuredUserInputQuestion => {
+    if (!isRecord(candidate)) throw new Error("结构化问题格式无效");
+    const id = stringValue(candidate.id);
+    const header = stringValue(candidate.header);
+    const question = stringValue(candidate.question);
+    if (!id || id.length > 200 || ids.has(id) || !header || !question) {
+      throw new Error("结构化问题字段无效或 id 重复");
+    }
+    ids.add(id);
+    let options: StructuredUserInputQuestion["options"] = null;
+    if (candidate.options !== null && candidate.options !== undefined) {
+      if (
+        !Array.isArray(candidate.options) ||
+        candidate.options.length < 1 ||
+        candidate.options.length > 20
+      ) {
+        throw new Error("结构化问题选项无效");
+      }
+      const labels = new Set<string>();
+      options = candidate.options.map((option) => {
+        if (!isRecord(option)) throw new Error("结构化问题选项格式无效");
+        const label = stringValue(option.label);
+        if (!label || label.length > 500 || labels.has(label)) {
+          throw new Error("结构化问题选项标签无效或重复");
+        }
+        if (typeof option.description !== "string" || option.description.length > 2_000) {
+          throw new Error("结构化问题选项说明无效");
+        }
+        labels.add(label);
+        return { label, description: option.description };
+      });
+    }
+    return {
+      id,
+      header: header.slice(0, 100),
+      question: question.slice(0, 10_000),
+      options,
+      isOther: candidate.isOther === true,
+      isSecret: candidate.isSecret === true,
+    };
+  });
+  return { turnId, itemId, isBlocking: true, questions };
+}
+
+export function parseStructuredUserInputAnswers(
+  value: unknown,
+  questions: readonly StructuredUserInputQuestion[],
+): Record<string, { answers: string[] }> {
+  if (!isRecord(value)) throw new Error("Web Console 回答格式无效");
+  const result: Record<string, { answers: string[] }> = {};
+  for (const question of questions) {
+    const candidate = value[question.id];
+    if (
+      !Array.isArray(candidate) ||
+      candidate.length !== 1 ||
+      typeof candidate[0] !== "string" ||
+      !candidate[0].trim()
+    ) {
+      throw new Error(`Web Console 未返回问题 ${question.id} 的有效答案`);
+    }
+    result[question.id] = { answers: [candidate[0]] };
+  }
+  if (Object.keys(value).length !== questions.length) {
+    throw new Error("Web Console 回答包含未知问题");
+  }
+  return result;
 }
 
 function parseList(value: string): string[] {
@@ -906,6 +1025,50 @@ class BoardClient {
     return parseRemoteConfigurationResponse(result);
   }
 
+  async claimThreadCommand(
+    runtimeInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<ThreadCommand | null> {
+    const result = await this.request<ThreadCommandResponse>(
+      "/api/ai/thread-commands/claim",
+      {
+        method: "POST",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          lease_seconds: 60,
+        },
+      },
+    );
+    return result.command;
+  }
+
+  async completeThreadCommand(
+    runtimeInstanceId: string,
+    commandId: string,
+    result:
+      | { succeeded: true; externalThreadId: string | null }
+      | { succeeded: false; error: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request<ThreadCommandResponse>(
+      `/api/ai/thread-commands/${commandId}/complete`,
+      {
+        method: "POST",
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          succeeded: result.succeeded,
+          external_thread_id:
+            result.succeeded ? result.externalThreadId : null,
+          error: result.succeeded ? null : result.error,
+        },
+      },
+    );
+  }
+
   async importHistory(
     sessionId: string,
     body: HistoryImportRequest,
@@ -1376,8 +1539,9 @@ class SessionWorker {
     const requestTurnId = notificationTurnId(params);
     const correlatedActiveTurn = Boolean(
       this.activeClaim &&
-        this.activeTurnId &&
-        requestTurnId === this.activeTurnId,
+        requestTurnId &&
+        (requestTurnId === this.activeTurnId ||
+          (this.awaitingTurnStart && this.activeTurnId === null)),
     );
     if (this.activeClaim) {
       this.trackBackgroundBoardOperation(
@@ -1386,12 +1550,17 @@ class SessionWorker {
           {
           kind: "status",
           content:
-            this.configuration.approvalMode === "decline"
+            request.method === "item/tool/requestUserInput"
+              ? "Codex 正在等待 Web Console 的结构化回答"
+              : this.configuration.approvalMode === "decline"
               ? "Codex 请求本地审批；Bridge 已按安全默认值拒绝"
               : "Codex 请求本地审批；Bridge 已按设备策略处理",
           data: {
             protocol: APP_SERVER_PROTOCOL,
-            phase: "completed",
+            phase:
+              request.method === "item/tool/requestUserInput"
+                ? "waiting_user_input"
+                : "completed",
             request_method: request.method,
             request_id: String(request.id),
             approval_mode: this.configuration.approvalMode,
@@ -1429,7 +1598,11 @@ class SessionWorker {
             : { denied: { rejection: "Web Bridge approval is not enabled" } },
         };
       case "item/tool/requestUserInput":
-        return { answers: {} };
+        return this.handleStructuredUserInput(
+          request,
+          params,
+          correlatedActiveTurn,
+        );
       case "mcpServer/elicitation/request":
         return { action: "decline", content: null, _meta: null };
       case "item/permissions/requestApproval": {
@@ -1447,6 +1620,95 @@ class SessionWorker {
       default:
         throw new Error(`Unsupported App Server request: ${request.method}`);
     }
+  }
+
+  private async handleStructuredUserInput(
+    request: AppServerIncomingRequest,
+    params: Record<string, unknown>,
+    correlatedActiveTurn: boolean,
+  ): Promise<{ answers: Record<string, { answers: string[] }> }> {
+    if (!correlatedActiveTurn || !this.activeClaim) {
+      throw new Error(
+        "Codex 结构化问题未关联到当前活动 turn，Bridge 无法安全转交",
+      );
+    }
+    const prompt = parseStructuredUserInputRequest(params);
+    const task = this.activeClaim;
+    const requestId = randomUUID();
+    const externalRequestId = String(request.id);
+
+    await this.board.request("/api/ai/tasks/user-input-requests", {
+      method: "POST",
+      sessionId: this.session.id,
+      idempotencyKey: idempotencyKey(`user-input-register/${externalRequestId}`),
+      signal: this.stopController.signal,
+      body: {
+        task_id: task.id,
+        claim_token: task.claim_token,
+        request_id: requestId,
+        external_request_id: externalRequestId,
+        turn_id: prompt.turnId,
+        item_id: prompt.itemId,
+        is_blocking: true,
+        questions: prompt.questions,
+      },
+    });
+
+    process.stdout.write(
+      `等待 Web 回答 [${shortThreadTitle(this.thread)}]：${prompt.questions
+        .map((question) => question.header)
+        .join(" / ")}\n`,
+    );
+    while (!this.stopController.signal.aborted) {
+      const response = await this.board.request<UserInputPollResponse>(
+        `/api/ai/tasks/user-input-requests/${requestId}/poll`,
+        {
+          method: "POST",
+          sessionId: this.session.id,
+          signal: this.stopController.signal,
+          body: {
+            task_id: task.id,
+            claim_token: task.claim_token,
+            request_id: requestId,
+          },
+        },
+      );
+      if (response.request.status === "answered") {
+        const answers = parseStructuredUserInputAnswers(
+          response.request.answers,
+          prompt.questions,
+        );
+        this.trackBackgroundBoardOperation(
+          this.reportActivity(
+            `request:${externalRequestId}:answered`,
+            {
+              kind: "status",
+              content: "Web Console 已提交结构化回答；原 turn 继续执行",
+              data: {
+                protocol: APP_SERVER_PROTOCOL,
+                phase: "answered",
+                request_method: request.method,
+                request_id: externalRequestId,
+                question_count: prompt.questions.length,
+                turn_continues: true,
+              },
+            },
+            { maxAttempts: 1 },
+          ),
+          `结构化回答审计 ${externalRequestId}`,
+        );
+        return { answers };
+      }
+      if (response.request.status !== "pending") {
+        throw new Error(
+          `Web Console 结构化回答已${
+            response.request.status === "cancelled" ? "取消" : "失效"
+          }`,
+        );
+      }
+      await delay(USER_INPUT_POLL_INTERVAL_MS, this.stopController.signal);
+    }
+    throw this.stopController.signal.reason ?? new Error("Codex Bridge 已停止");
   }
 
   async stop(reason = "Codex Bridge 已停止"): Promise<void> {
@@ -2198,6 +2460,7 @@ class DeviceBridge {
   private leaseSafetyDeadlineMs: number | null = null;
   private latestSuccessfulReportSequence = 0;
   private legacyConfigurationCompatibility = false;
+  private inventoryReady = false;
 
   constructor(
     private readonly configuration: BridgeConfiguration,
@@ -2313,13 +2576,34 @@ class DeviceBridge {
         }
       }
       if (this.stopping) break;
+      if (this.inventoryReady) {
+        try {
+          const inventoryChanged = await this.processThreadCommands();
+          if (inventoryChanged && !this.stopping) {
+            await this.syncWorkers();
+            nextInventorySyncAt = Date.now() + this.configuration.syncIntervalMs;
+          }
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `处理 Web Thread 管理指令失败：${errorMessage(error)}\n`,
+          );
+        }
+      }
+      if (this.stopping) break;
       const untilInventorySync = Math.max(1_000, nextInventorySyncAt - Date.now());
-      const sleepMilliseconds = this.configuration.webConfigurationEnabled
-        ? Math.min(
-            this.configuration.configurationPollIntervalMs,
-            untilInventorySync,
-          )
-        : untilInventorySync;
+      const sleepMilliseconds = Math.min(
+        this.configuration.configurationPollIntervalMs,
+        untilInventorySync,
+      );
       try {
         await delay(sleepMilliseconds, this.stopController.signal);
       } catch {
@@ -2740,6 +3024,124 @@ class DeviceBridge {
     process.stdout.write(
       `Codex Bridge 已同步 ${threads.length} 个 thread，最多并行 ${this.configuration.maxConcurrentTurns} 个 turn\n`,
     );
+    this.inventoryReady = true;
+  }
+
+  private async processThreadCommands(): Promise<boolean> {
+    let inventoryChanged = false;
+    for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
+      const command = await this.board.claimThreadCommand(
+        this.runtimeInstanceId,
+        this.stopController.signal,
+      );
+      if (!command) break;
+
+      try {
+        const externalThreadId = await this.executeThreadCommand(command);
+        await this.board.completeThreadCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: true, externalThreadId },
+          this.stopController.signal,
+        );
+        inventoryChanged = true;
+        process.stdout.write(
+          `Web Thread 指令已完成：${command.action} (${externalThreadId ?? command.id})\n`,
+        );
+      } catch (error) {
+        if (this.stopping) throw error;
+        const message = redactHarnessText(errorMessage(error), 2_000);
+        await this.board.completeThreadCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: false, error: message },
+          this.stopController.signal,
+        );
+        process.stderr.write(
+          `Web Thread 指令 ${command.action} 失败：${message}\n`,
+        );
+      }
+    }
+    return inventoryChanged;
+  }
+
+  private async executeThreadCommand(
+    command: ThreadCommand,
+  ): Promise<string | null> {
+    if (command.action === "create") {
+      if (!this.configuration.enabled) {
+        throw new Error("Bridge 已暂停，无法新建 Thread");
+      }
+      if (this.configuration.threadIdFilter) {
+        throw new Error("固定 Thread 模式不支持从 Web 新建 Thread");
+      }
+      if (this.workers.size >= this.configuration.maxThreads) {
+        throw new Error("已达到 Bridge 的 Thread 数量上限");
+      }
+      const name = stringValue(command.name);
+      if (!name) throw new Error("新建 Thread 指令缺少名称");
+      const response = await this.appServer.threadStart({
+        cwd: this.configuration.workingDirectory,
+      });
+      const threadId = stringValue(response.thread?.id);
+      if (!threadId) throw new Error("Codex App Server 未返回新 Thread ID");
+      try {
+        await this.appServer.threadSetName({ threadId, name });
+      } catch (error) {
+        // Thread creation already committed locally. Completing the command is
+        // safer than retrying thread/start and producing a duplicate; the Board
+        // keeps the requested display name even on older App Server versions.
+        process.stderr.write(
+          `新 Thread 已创建，但本机名称同步失败：${errorMessage(error)}\n`,
+        );
+      }
+      return threadId;
+    }
+
+    const threadId = stringValue(command.external_thread_id);
+    const worker = threadId ? this.workers.get(threadId) : null;
+    if (!threadId) throw new Error("Thread 指令缺少目标 ID");
+
+    if (command.action === "rename") {
+      if (!worker) {
+        throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
+      }
+      const name = stringValue(command.name);
+      if (!name) throw new Error("Thread 改名指令缺少名称");
+      await this.appServer.threadSetName({ threadId, name });
+      return threadId;
+    }
+
+    if (this.configuration.threadIdFilter) {
+      throw new Error("固定 Thread 模式不支持从 Web 删除 Thread");
+    }
+    // A delete may be reclaimed after the previous Bridge deleted the local
+    // Thread but crashed before acknowledging the command. Absence from the
+    // freshly synced managed inventory makes that replay a successful no-op.
+    if (!worker && (command.attempt_count ?? 1) > 1) return threadId;
+    if (!worker) {
+      throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
+    }
+    if (worker.retirementBlocked) {
+      throw new WorkerRetirementDeferredError(
+        "Thread 正在启动或执行 turn，暂时不能删除",
+      );
+    }
+    await stopWorkersForRetirement(
+      [{ threadId, worker }],
+      "用户从 Web Console 删除了 Codex Thread",
+    );
+    this.workers.delete(threadId);
+    try {
+      await this.appServer.threadDelete({ threadId });
+    } catch (error) {
+      if (!(error instanceof AppServerRpcError) || error.code !== -32601) {
+        throw error;
+      }
+      // Older compatible Codex builds expose archive but not hard delete.
+      await this.appServer.threadArchive({ threadId });
+    }
+    return threadId;
   }
 
   private async listThreads(): Promise<ThreadRecord[]> {

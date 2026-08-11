@@ -223,6 +223,7 @@ export const SAFE_TASK_REALTIME_COLUMNS = [
   "claimed_by_session_id",
   "claimed_at",
   "lease_expires_at",
+  "awaiting_user_input",
   "required_capabilities",
   "external_source",
   "external_task_ref",
@@ -370,36 +371,49 @@ export function patchRealtimeSessionList(
   current: readonly SessionListItem[],
   update: RealtimeSessionUpdate,
 ): SessionListItem[] {
-  return current.map((session) =>
-    session.id === update.id
-      ? {
-          ...session,
-          ...update,
-          connection: session.connection,
-          current_task: session.current_task,
-          queued_task_count: session.queued_task_count,
-        }
-      : session,
-  );
+  if (update.deletion_requested_at) {
+    return current.filter((session) => session.id !== update.id);
+  }
+  return current.map((session) => {
+    if (session.id !== update.id) return session;
+    const updated = {
+      ...session,
+      ...update,
+      connection: session.connection,
+      current_task: session.current_task,
+      queued_task_count: session.queued_task_count,
+    };
+    return {
+      ...updated,
+      name: updated.user_name ?? updated.name,
+    };
+  });
 }
 
 export function patchRealtimeSessionConversation(
   current: InfiniteData<SessionConversation, string | null>,
   update: RealtimeSessionUpdate,
 ): InfiniteData<SessionConversation, string | null> {
+  if (update.deletion_requested_at) return current;
   return {
     ...current,
     pages: current.pages.map((page) => ({
       ...page,
       session:
         page.session.id === update.id
-          ? {
-              ...page.session,
-              ...update,
-              connection: page.session.connection,
-              current_task: page.session.current_task,
-              queued_task_count: page.session.queued_task_count,
-            }
+          ? (() => {
+              const updated = {
+                ...page.session,
+                ...update,
+                connection: page.session.connection,
+                current_task: page.session.current_task,
+                queued_task_count: page.session.queued_task_count,
+              };
+              return {
+                ...updated,
+                name: updated.user_name ?? updated.name,
+              };
+            })()
           : page.session,
     })),
   };

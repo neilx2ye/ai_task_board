@@ -12,6 +12,10 @@ export const workspaceQuerySchema = z.object({ workspace_id: uuidSchema.optional
 
 export const sessionParamsSchema = z.object({ sessionId: uuidSchema }).strict();
 
+export const connectionParamsSchema = z
+  .object({ connectionId: uuidSchema })
+  .strict();
+
 const bigintCursorSchema = z
   .string()
   .regex(/^[1-9][0-9]{0,18}$/, "Expected a positive decimal cursor")
@@ -92,12 +96,60 @@ export const replyToTaskSchema = z
   })
   .strict();
 
+export const taskUserInputRequestParamsSchema = z
+  .object({ taskId: uuidSchema, requestId: uuidSchema })
+  .strict();
+
+export const answerTaskUserInputRequestSchema = z
+  .object({
+    answers: z.record(
+      z.string().trim().min(1).max(200),
+      z.array(nonEmptyText.max(10_000)).length(1),
+    ),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const count = Object.keys(value.answers).length;
+    if (count < 1 || count > 3) {
+      context.addIssue({
+        code: "custom",
+        message: "Answers must contain between 1 and 3 questions",
+        path: ["answers"],
+      });
+    }
+    if (
+      new TextEncoder().encode(JSON.stringify(value.answers)).byteLength >
+      100_000
+    ) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 100_000,
+        origin: "value",
+        inclusive: true,
+        message: "Structured answers must not exceed 100 KiB",
+        path: ["answers"],
+      });
+    }
+  });
+
 export const createConnectionSchema = z
   .object({
     workspace_id: uuidSchema.optional(),
     name: nonEmptyText.max(200),
     platform: nonEmptyText.max(100),
   })
+  .strict();
+
+export const renameConnectionSchema = z
+  .object({ name: nonEmptyText.max(200) })
+  .strict();
+
+export const createThreadSchema = z
+  .object({ name: nonEmptyText.max(200) })
+  .strict();
+
+export const renameThreadSchema = z
+  .object({ name: nonEmptyText.max(200) })
   .strict();
 
 const userSubtaskSchema = z
@@ -163,6 +215,12 @@ export const taskListQuerySchema = z
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type ReplyToTaskInput = z.infer<typeof replyToTaskSchema>;
+export type AnswerTaskUserInputRequestInput = z.infer<
+  typeof answerTaskUserInputRequestSchema
+>;
 export type CreateConnectionInput = z.infer<typeof createConnectionSchema>;
+export type RenameConnectionInput = z.infer<typeof renameConnectionSchema>;
+export type CreateThreadInput = z.infer<typeof createThreadSchema>;
+export type RenameThreadInput = z.infer<typeof renameThreadSchema>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
 export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;

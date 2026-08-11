@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeConnections,
+  supportsWebThreadManagement,
   type PublicConnection,
 } from "@/hooks/use-connections";
 
@@ -49,5 +50,20 @@ describe("activeConnections", () => {
 
   it("空输入返回空数组", () => {
     expect(activeConnections([])).toEqual([]);
+  });
+
+  it.each([
+    ["0.5.0", true],
+    ["0.12.3", true],
+    ["1.0.0", true],
+    ["0.4.99", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的 Web Thread 管理能力", (bridgeVersion, expected) => {
+    expect(
+      supportsWebThreadManagement(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
   });
 });

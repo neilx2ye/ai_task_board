@@ -19,6 +19,7 @@ import { callDomainRpc, type DomainFunctionArgs } from "@/lib/domain/rpc";
 import {
   loadTaskRelations,
   SAFE_TASK_COLUMNS,
+  SAFE_TASK_USER_INPUT_REQUEST_COLUMNS,
   sanitizeTask,
 } from "@/lib/domain/tasks";
 import { taskTitleFromPrompt } from "@/lib/domain/task-title";
@@ -38,10 +39,14 @@ import type {
 import { safeFilename, safeMimeType } from "@/lib/validation/artifacts";
 import type {
   CreateConnectionInput,
+  CreateThreadInput,
   CreateSessionTurnInput,
   CreateTaskInput,
   CreateUserSubtasksInput,
+  RenameConnectionInput,
+  RenameThreadInput,
   ReplyToTaskInput,
+  AnswerTaskUserInputRequestInput,
   UpdateTaskInput,
 } from "@/lib/validation/user";
 
@@ -56,7 +61,7 @@ type UserContextParameters = Pick<
 >;
 
 const SESSION_CARD_TASK_COLUMNS =
-  "id, title, status, progress_note, progress_percent_estimate, updated_at, assigned_session_id" as const;
+  "id, title, status, progress_note, progress_percent_estimate, updated_at, assigned_session_id, awaiting_user_input" as const;
 
 function sessionTaskSummary(
   task: Pick<
@@ -67,6 +72,7 @@ function sessionTaskSummary(
     | "progress_note"
     | "progress_percent_estimate"
     | "updated_at"
+    | "awaiting_user_input"
   >,
 ): SessionCurrentTaskSummary {
   return {
@@ -76,6 +82,7 @@ function sessionTaskSummary(
     progress_note: task.progress_note,
     progress_percent_estimate: task.progress_percent_estimate,
     updated_at: task.updated_at,
+    awaiting_user_input: task.awaiting_user_input,
   };
 }
 
@@ -160,8 +167,13 @@ async function loadSessionListItems(
 
   return sessions.map((session): SessionListItem => {
     const connection = connectionById.get(session.connection_id);
+    const currentTask = session.current_task_id
+      ? currentTaskById.get(session.current_task_id)
+      : undefined;
     return {
       ...session,
+      status: currentTask?.awaiting_user_input ? "waiting" : session.status,
+      name: session.user_name ?? session.name,
       connection: connection ?? {
         id: session.connection_id,
         name: "已撤销的连接",
@@ -171,9 +183,7 @@ async function loadSessionListItems(
         revoked_at: new Date(0).toISOString(),
       },
       current_task:
-        (session.current_task_id
-          ? currentTaskById.get(session.current_task_id)
-          : null) ??
+        currentTask ??
         waitingTaskBySession.get(session.id) ??
         nextTaskBySession.get(session.id) ??
         null,
@@ -233,7 +243,9 @@ export async function listUserTasks(
   if (error) throw mapDatabaseError(error);
   const tasks = (data ?? []).map(sanitizeTask);
   const waitingTaskIds = tasks
-    .filter((task) => task.status === "waiting_user")
+    .filter(
+      (task) => task.status === "waiting_user" || task.awaiting_user_input,
+    )
     .map((task) => task.id);
   if (!waitingTaskIds.length) return { tasks, latest_ai_messages: [] };
 
@@ -351,6 +363,26 @@ export async function replyToTask(
   });
 }
 
+export async function answerTaskUserInputRequest(
+  context: UserWorkspaceContext,
+  taskId: string,
+  requestId: string,
+  input: AnswerTaskUserInputRequestInput,
+  idempotencyKey: string,
+) {
+  return callDomainRpc("answer_task_user_input_request", {
+    ...userContext(context),
+    p_task_id: taskId,
+    p_request_id: requestId,
+    p_answers: input.answers,
+    ...commandMetadata(
+      "answer_task_user_input_request",
+      { taskId, requestId, ...input },
+      idempotencyKey,
+    ),
+  });
+}
+
 export async function postUserTaskMessage(
   context: UserWorkspaceContext,
   taskId: string,
@@ -454,6 +486,103 @@ export async function rotateConnection(
   return { connection: result.connection, token };
 }
 
+export async function renameConnection(
+  context: UserWorkspaceContext,
+  connectionId: string,
+  input: RenameConnectionInput,
+  idempotencyKey: string,
+) {
+  return callDomainRpc("rename_ai_connection", {
+    ...userContext(context),
+    p_connection_id: connectionId,
+    p_name: input.name,
+    ...commandMetadata(
+      "rename_ai_connection",
+      { connectionId, ...input },
+      idempotencyKey,
+    ),
+  });
+}
+
+async function enqueueThreadCommand(
+  context: UserWorkspaceContext,
+  input: {
+    connectionId: string;
+    sessionId: string | null;
+    action: "create" | "rename" | "delete";
+    name: string | null;
+  },
+  idempotencyKey: string,
+) {
+  const scope = `${context.workspaceId}\0${context.userId}\0enqueue_ai_thread_command\0${idempotencyKey}`;
+  return callDomainRpc("enqueue_ai_thread_command", {
+    ...userContext(context),
+    p_command_id: deriveStableUuid(scope),
+    p_connection_id: input.connectionId,
+    p_session_id: input.sessionId,
+    p_action: input.action,
+    p_name: input.name,
+    ...commandMetadata("enqueue_ai_thread_command", input, idempotencyKey),
+  });
+}
+
+export function createThread(
+  context: UserWorkspaceContext,
+  connectionId: string,
+  input: CreateThreadInput,
+  idempotencyKey: string,
+) {
+  return enqueueThreadCommand(
+    context,
+    { connectionId, sessionId: null, action: "create", name: input.name },
+    idempotencyKey,
+  );
+}
+
+async function sessionConnectionId(
+  context: UserWorkspaceContext,
+  sessionId: string,
+): Promise<string> {
+  const { data, error } = await createAdminClient()
+    .from("ai_sessions")
+    .select("connection_id")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!data) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+  return data.connection_id;
+}
+
+export async function renameThread(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  input: RenameThreadInput,
+  idempotencyKey: string,
+) {
+  const connectionId = await sessionConnectionId(context, sessionId);
+  return enqueueThreadCommand(
+    context,
+    { connectionId, sessionId, action: "rename", name: input.name },
+    idempotencyKey,
+  );
+}
+
+export async function deleteThread(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  idempotencyKey: string,
+) {
+  const connectionId = await sessionConnectionId(context, sessionId);
+  return enqueueThreadCommand(
+    context,
+    { connectionId, sessionId, action: "delete", name: null },
+    idempotencyKey,
+  );
+}
+
 export async function listSessions(context: UserWorkspaceContext) {
   const admin = createAdminClient();
   const sessions = await collectRangePages(async (from, to) => {
@@ -461,6 +590,7 @@ export async function listSessions(context: UserWorkspaceContext) {
       .from("ai_sessions")
       .select("*")
       .eq("workspace_id", context.workspaceId)
+      .is("deletion_requested_at", null)
       // Offset pagination must use immutable ordering columns. Heartbeats
       // continuously update last_seen_at and would otherwise move rows across
       // page boundaries while a multi-page snapshot is being collected.
@@ -568,6 +698,7 @@ export async function getSessionConversation(
     .select("*")
     .eq("workspace_id", context.workspaceId)
     .eq("id", sessionId)
+    .is("deletion_requested_at", null)
     .maybeSingle();
   if (sessionError) throw mapDatabaseError(sessionError);
   if (!sessionRow) {
@@ -745,6 +876,7 @@ export async function getSessionConversation(
       session,
       tasks: [],
       messages: [],
+      input_requests: [],
       events: [],
       activities,
       history_sync: historySync,
@@ -770,6 +902,20 @@ export async function getSessionConversation(
   }
   let newestMessages: TaskMessageRow[] = [];
   let newestEvents: TaskEventRow[] = [];
+  const inputRequests = includeLegacy
+    ? await collectChunkedRows(taskIds, async (taskIdBatch) => {
+        const { data, error } = await admin
+          .from("task_user_input_requests")
+          .select(SAFE_TASK_USER_INPUT_REQUEST_COLUMNS)
+          .eq("workspace_id", context.workspaceId)
+          .eq("session_id", sessionId)
+          .eq("status", "pending")
+          .in("task_id", [...taskIdBatch])
+          .order("created_at");
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      })
+    : [];
   if (includeLegacy) {
     for (const taskIdBatch of chunkValues(taskIds)) {
       const [batchMessages, batchEvents] = await Promise.all([
@@ -826,6 +972,7 @@ export async function getSessionConversation(
     // Legacy task rows are not intrinsically session-scoped. Keep user/system
     // context, but do not attribute another AI session's output to this one.
     messages: newestMessages.slice(0, legacyLimit).reverse(),
+    input_requests: inputRequests,
     events: newestEvents.slice(0, legacyLimit).reverse(),
     activities,
     history_sync: historySync,

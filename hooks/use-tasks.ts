@@ -132,6 +132,22 @@ export function usePostTaskMessage(taskId: string) {
   return useTaskAction(taskId, "messages");
 }
 
+export function useAnswerTaskUserInput(taskId: string, requestId: string) {
+  const invalidate = useTaskInvalidation();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (answers: Record<string, string[]>) =>
+      apiFetch<unknown>(
+        `/api/user/tasks/${taskId}/input-requests/${requestId}/answer`,
+        { method: "POST", json: { answers } },
+      ),
+    onSuccess: () => {
+      invalidate(taskId);
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
 export function useCancelTask(taskId: string) {
   return useTaskAction(taskId, "cancel");
 }

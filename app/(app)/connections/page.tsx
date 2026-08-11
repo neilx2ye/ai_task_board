@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import {
   CableIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   Settings2Icon,
@@ -37,6 +38,7 @@ import {
   activeConnections,
   useConnections,
   useCreateConnection,
+  useRenameConnection,
   useRevokeConnection,
   useRotateConnection,
   type ConnectionWithToken,
@@ -46,6 +48,81 @@ import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 
 const PLATFORMS = ["ChatGPT", "Claude", "Codex", "Gemini", "自定义 Agent"];
+
+function RenameConnectionDialog({
+  connection,
+  open,
+  onOpenChange,
+}: {
+  connection: PublicConnection;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const renameConnection = useRenameConnection(connection.id);
+  const [name, setName] = useState(connection.name);
+  const [error, setError] = useState<string | null>(null);
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    try {
+      await renameConnection.mutateAsync({ name: name.trim() });
+      onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "改名失败，请稍后重试");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>重命名 AI 连接</DialogTitle>
+          <DialogDescription>
+            新名称会同步显示在 AI 连接页和会话设备列表中。
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`rename-connection-${connection.id}`}>名称</Label>
+            <Input
+              id={`rename-connection-${connection.id}`}
+              required
+              autoFocus
+              maxLength={200}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          {error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              disabled={
+                renameConnection.isPending ||
+                !name.trim() ||
+                name.trim() === connection.name
+              }
+            >
+              {renameConnection.isPending ? "保存中…" : "保存名称"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function CreateConnectionDialog({
   open,
@@ -151,6 +228,7 @@ function ConnectionCard({
   const rotateConnection = useRotateConnection(connection.id);
   const revokeConnection = useRevokeConnection(connection.id);
   const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [bridgeConfigOpen, setBridgeConfigOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -208,6 +286,15 @@ function ConnectionCard({
         ) : null}
 
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={() => setRenameOpen(true)}
+          >
+            <PencilIcon />
+            重命名
+          </Button>
           {hasBridgeSettings ? (
             <Button
               variant="outline"
@@ -257,6 +344,13 @@ function ConnectionCard({
           })
         }
       />
+      {renameOpen ? (
+        <RenameConnectionDialog
+          connection={connection}
+          open
+          onOpenChange={setRenameOpen}
+        />
+      ) : null}
       <ConfirmDialog
         open={confirm === "revoke"}
         onOpenChange={(open) => !open && setConfirm(null)}
