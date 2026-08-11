@@ -288,7 +288,7 @@ export default function SessionsPage() {
           if (!open) setPickerConnectionId(null);
         }}
         connection={pickerGroup?.connection ?? null}
-        sessions={pickerGroup?.sessions ?? []}
+        projects={pickerGroup?.directories ?? []}
         visibleIds={visibleIds}
         canManage={
           Boolean(isOwner && pickerGroup) &&
