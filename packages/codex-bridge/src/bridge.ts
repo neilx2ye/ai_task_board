@@ -28,6 +28,20 @@ import {
   runSessionWakeListener,
   WakeLatch,
 } from "./wake-client.js";
+import {
+  managedDirectoryForWorkingDirectory,
+  type ManagedWorkingDirectory,
+  parseWorkingDirectories,
+  workingDirectoryForThreadCreate,
+} from "./working-directories.js";
+
+export {
+  isExactWorkingDirectory,
+  managedDirectoryForWorkingDirectory,
+  type ManagedWorkingDirectory,
+  parseWorkingDirectories,
+  workingDirectoryForThreadCreate,
+} from "./working-directories.js";
 
 const BRIDGE_VERSION = "0.7.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
@@ -115,12 +129,6 @@ type TurnResult = {
 type ApprovalMode = "decline" | "accept" | "accept-session";
 type PermissionMode = "safe" | "inherit";
 type ThreadScope = "cwd" | "all";
-
-export type ManagedWorkingDirectory = {
-  key: string;
-  name: string;
-  workingDirectory: string;
-};
 
 export type EffectiveBridgeConfiguration = {
   enabled: boolean;
@@ -398,79 +406,6 @@ function parsePermissionMode(value: string | undefined): PermissionMode {
 
 function parseThreadScope(value: string | undefined): ThreadScope {
   return value === "all" ? "all" : "cwd";
-}
-
-export function parseWorkingDirectories(
-  value: string | undefined,
-  fallbackWorkingDirectory: string,
-): ManagedWorkingDirectory[] {
-  const fallback = path.resolve(fallbackWorkingDirectory);
-  if (!value?.trim()) {
-    return [
-      {
-        key: "default",
-        name: path.basename(fallback) || fallback,
-        workingDirectory: fallback,
-      },
-    ];
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("CODEX_WORKING_DIRECTORIES 必须是合法 JSON 数组");
-  }
-  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 100) {
-    throw new Error("CODEX_WORKING_DIRECTORIES 必须包含 1 到 100 个目录");
-  }
-
-  const keys = new Set<string>();
-  const paths = new Set<string>();
-  return parsed.map((item, index) => {
-    if (!isRecord(item)) {
-      throw new Error(`CODEX_WORKING_DIRECTORIES[${index}] 必须是对象`);
-    }
-    const unknownField = Object.keys(item).find(
-      (field) => !["key", "name", "path"].includes(field),
-    );
-    const key = stringValue(item.key);
-    const configuredPath = stringValue(item.path);
-    if (unknownField || !key || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(key)) {
-      throw new Error(
-        `CODEX_WORKING_DIRECTORIES[${index}].key 格式无效`,
-      );
-    }
-    if (!configuredPath || configuredPath.length > 4_096) {
-      throw new Error(
-        `CODEX_WORKING_DIRECTORIES[${index}].path 必须是有效路径`,
-      );
-    }
-    const workingDirectory = path.resolve(configuredPath);
-    if (item.name !== undefined && !stringValue(item.name)) {
-      throw new Error(
-        `CODEX_WORKING_DIRECTORIES[${index}].name 必须是非空字符串`,
-      );
-    }
-    const name =
-      stringValue(item.name) || path.basename(workingDirectory) || key;
-    if (name.length > 200) {
-      throw new Error(
-        `CODEX_WORKING_DIRECTORIES[${index}].name 不能超过 200 个字符`,
-      );
-    }
-    if (keys.has(key)) {
-      throw new Error(`CODEX_WORKING_DIRECTORIES 包含重复 key：${key}`);
-    }
-    if (paths.has(workingDirectory)) {
-      throw new Error(
-        `CODEX_WORKING_DIRECTORIES 包含重复路径：${workingDirectory}`,
-      );
-    }
-    keys.add(key);
-    paths.add(workingDirectory);
-    return { key, name, workingDirectory };
-  });
 }
 
 function parseBoolean(value: string | undefined): boolean {
@@ -940,43 +875,6 @@ function notificationTurnId(params: Record<string, unknown>): string | null {
 
 function threadCwd(thread: ThreadRecord): string | null {
   return stringValue(thread.cwd);
-}
-
-export function isExactWorkingDirectory(
-  candidate: string,
-  configured: string,
-): boolean {
-  return path.relative(path.resolve(configured), path.resolve(candidate)) === "";
-}
-
-export function managedDirectoryForWorkingDirectory(
-  workingDirectory: string | null,
-  configuredDirectories: readonly ManagedWorkingDirectory[],
-): ManagedWorkingDirectory | null {
-  if (!workingDirectory) return null;
-  return (
-    configuredDirectories.find((directory) =>
-      isExactWorkingDirectory(
-        workingDirectory,
-        directory.workingDirectory,
-      ),
-    ) ?? null
-  );
-}
-
-export function workingDirectoryForThreadCreate(
-  directoryKey: string | null,
-  configuredDirectories: readonly ManagedWorkingDirectory[],
-  fallbackWorkingDirectory: string,
-): string {
-  if (!directoryKey) return fallbackWorkingDirectory;
-  const directory = configuredDirectories.find(
-    (candidate) => candidate.key === directoryKey,
-  );
-  if (!directory) {
-    throw new Error("目标工作目录不在当前 Bridge 的本机白名单中");
-  }
-  return directory.workingDirectory;
 }
 
 function shortThreadTitle(thread: ThreadRecord): string {

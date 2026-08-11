@@ -11,11 +11,14 @@ import { useRef } from "react";
 
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
+import {
+  BRIDGE_DIRECTORIES_QUERY_KEY,
+  sessionQueryKey,
+  SESSIONS_QUERY_KEY,
+  TASKS_QUERY_KEY,
+} from "@/hooks/query-keys";
 import type { SessionConversation, SessionListItem } from "@/lib/types/domain";
 import type { AISessionRow, AIThreadCommandRow } from "@/lib/types/database";
-
-const SESSIONS_KEY = ["sessions"] as const;
-const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
 
 export function sessionConversationRecoveryInterval(
   pageCount: number,
@@ -27,7 +30,7 @@ export function sessionConversationRecoveryInterval(
 
 export function useSessions() {
   return useQuery({
-    queryKey: SESSIONS_KEY,
+    queryKey: SESSIONS_QUERY_KEY,
     queryFn: async () => {
       const data =
         await apiFetch<{ sessions?: SessionListItem[] }>("/api/user/sessions");
@@ -41,7 +44,7 @@ export function useSessions() {
 
 export function useSessionConversation(sessionId: string | null) {
   return useInfiniteQuery({
-    queryKey: sessionKey(sessionId ?? ""),
+    queryKey: sessionQueryKey(sessionId ?? ""),
     enabled: Boolean(sessionId),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
@@ -184,9 +187,11 @@ export function useCreateSessionTurn(sessionId: string) {
       if (request) {
         idempotency.current!.confirm(request.fingerprint, request.key);
       }
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(sessionId),
+      });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     },
     onSettled: (_result, _error, input) => {
       requestKeys.current.delete(input);
@@ -205,8 +210,10 @@ export function useCreateThread(connectionId: string) {
         { method: "POST", json: input },
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["bridge-directories"] });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: BRIDGE_DIRECTORIES_QUERY_KEY,
+      });
     },
   });
 }
@@ -220,15 +227,19 @@ export function useRenameThread(sessionId: string) {
         json: input,
       }),
     onSuccess: (_result, input) => {
-      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
-        current?.map((session) =>
-          session.id === sessionId
-            ? { ...session, name: input.name, user_name: input.name }
-            : session,
-        ),
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.map((session) =>
+            session.id === sessionId
+              ? { ...session, name: input.name, user_name: input.name }
+              : session,
+          ),
       );
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(sessionId),
+      });
     },
   });
 }
@@ -245,15 +256,17 @@ export function useUpdateSessionProcessDetailsSync(sessionId: string) {
       ),
     onSuccess: ({ session }) => {
       const syncProcessDetails = session.sync_process_details;
-      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
-        current?.map((item) =>
-          item.id === sessionId
-            ? { ...item, sync_process_details: syncProcessDetails }
-            : item,
-        ),
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.map((item) =>
+            item.id === sessionId
+              ? { ...item, sync_process_details: syncProcessDetails }
+              : item,
+          ),
       );
       queryClient.setQueryData<InfiniteData<SessionConversation>>(
-        sessionKey(sessionId),
+        sessionQueryKey(sessionId),
         (current) =>
           current
             ? {
@@ -268,8 +281,10 @@ export function useUpdateSessionProcessDetailsSync(sessionId: string) {
               }
             : current,
       );
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(sessionId),
+      });
     },
   });
 }
@@ -282,12 +297,17 @@ export function useDeleteThread(sessionId: string) {
         method: "DELETE",
       }),
     onSuccess: () => {
-      queryClient.setQueryData<SessionListItem[]>(SESSIONS_KEY, (current) =>
-        current?.filter((session) => session.id !== sessionId),
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.filter((session) => session.id !== sessionId),
       );
-      queryClient.removeQueries({ queryKey: sessionKey(sessionId), exact: true });
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.removeQueries({
+        queryKey: sessionQueryKey(sessionId),
+        exact: true,
+      });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     },
   });
 }

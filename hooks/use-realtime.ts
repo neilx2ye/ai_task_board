@@ -8,6 +8,13 @@ import {
 } from "@tanstack/react-query";
 
 import { catchUpEventCursor } from "@/hooks/realtime-catchup";
+import {
+  BRIDGE_DIRECTORIES_QUERY_KEY,
+  sessionQueryKey,
+  SESSIONS_QUERY_KEY,
+  taskQueryKey,
+  TASKS_QUERY_KEY,
+} from "@/hooks/query-keys";
 import { compareSessionActivities } from "@/hooks/use-sessions";
 import { useSupabase } from "@/hooks/use-supabase";
 import type {
@@ -81,23 +88,23 @@ export function realtimeInvalidations(
   };
 
   if (table === "tasks") {
-    exact(["tasks"]);
-    exact(["sessions"]);
+    exact(TASKS_QUERY_KEY);
+    exact(SESSIONS_QUERY_KEY);
     for (const row of rows) {
       const taskId = nonEmptyString(row, "id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
     }
   } else if (table === "task_messages") {
     // The board list embeds each waiting task's latest AI message.
-    exact(["tasks"]);
+    exact(TASKS_QUERY_KEY);
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
     }
   } else if (table === "task_events") {
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
       // Session conversation activity is delivered by session_activities and
       // merged directly. task_events is a compatibility/audit mirror and must
       // not refetch every loaded infinite-history page for each completed item.
@@ -105,20 +112,20 @@ export function realtimeInvalidations(
   } else if (table === "artifacts") {
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
     }
   } else if (table === "ai_sessions") {
-    exact(["sessions"]);
+    exact(SESSIONS_QUERY_KEY);
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "id");
-      if (sessionId) exact(["sessions", sessionId]);
+      if (sessionId) exact(sessionQueryKey(sessionId));
     }
   } else if (table === "ai_bridge_directories") {
-    exact(["bridge-directories"]);
+    exact(BRIDGE_DIRECTORIES_QUERY_KEY);
   } else {
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "session_id");
-      if (sessionId) exact(["sessions", sessionId]);
+      if (sessionId) exact(sessionQueryKey(sessionId));
     }
   }
 
@@ -177,7 +184,7 @@ export function createHistoryActivityRefreshBatcher(
     if (timer !== undefined) clearTimeout(timer);
     timers.delete(sessionId);
     void queryClient.invalidateQueries({
-      queryKey: ["sessions", sessionId],
+      queryKey: sessionQueryKey(sessionId),
       exact: true,
     });
   };
@@ -201,9 +208,9 @@ export function createHistoryActivityRefreshBatcher(
 }
 
 const RECOVERY_INVALIDATIONS: readonly RealtimeInvalidation[] = [
-  { queryKey: ["tasks"], exact: false },
-  { queryKey: ["sessions"], exact: false },
-  { queryKey: ["bridge-directories"], exact: false },
+  { queryKey: TASKS_QUERY_KEY, exact: false },
+  { queryKey: SESSIONS_QUERY_KEY, exact: false },
+  { queryKey: BRIDGE_DIRECTORIES_QUERY_KEY, exact: false },
 ];
 
 /**
@@ -544,7 +551,7 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
               }
               const updated = queryClient.setQueryData<
                 InfiniteData<SessionConversation, string | null>
-              >(["sessions", sessionId], (current) =>
+              >(sessionQueryKey(sessionId), (current) =>
                 appendRealtimeSessionActivity(current, activity),
               );
               if (!updated) {
@@ -566,12 +573,11 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
               return;
             }
 
-            const sessionList = queryClient.getQueryData<SessionListItem[]>([
-              "sessions",
-            ]);
+            const sessionList =
+              queryClient.getQueryData<SessionListItem[]>(SESSIONS_QUERY_KEY);
             if (sessionList?.some((session) => session.id === update.id)) {
               queryClient.setQueryData<SessionListItem[]>(
-                ["sessions"],
+                SESSIONS_QUERY_KEY,
                 (current) =>
                   current
                     ? patchRealtimeSessionList(current, update)
@@ -579,13 +585,13 @@ export function useRealtimeWorkspace(workspaceId: string | undefined) {
               );
             } else {
               invalidationBatcher.schedule([
-                { queryKey: ["sessions"], exact: true },
+                { queryKey: SESSIONS_QUERY_KEY, exact: true },
               ]);
             }
 
             queryClient.setQueryData<
               InfiniteData<SessionConversation, string | null>
-            >(["sessions", update.id], (current) =>
+            >(sessionQueryKey(update.id), (current) =>
               current
                 ? patchRealtimeSessionConversation(current, update)
                 : current,

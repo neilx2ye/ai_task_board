@@ -1,4 +1,4 @@
-import { listBridgeDirectories } from "@/lib/domain/users";
+import { listBridgeDirectories } from "@/lib/domain/bridge-directories";
 import { apiSuccess, withApiHandler } from "@/lib/http/api";
 import { userContextForRequest } from "@/lib/http/user-route";
 

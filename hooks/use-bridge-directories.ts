@@ -3,13 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
+import { BRIDGE_DIRECTORIES_QUERY_KEY } from "@/hooks/query-keys";
 import type { AIBridgeDirectoryRow } from "@/lib/types/database";
-
-const BRIDGE_DIRECTORIES_KEY = ["bridge-directories"] as const;
 
 export function useBridgeDirectories(enabled = true) {
   return useQuery({
-    queryKey: BRIDGE_DIRECTORIES_KEY,
+    queryKey: BRIDGE_DIRECTORIES_QUERY_KEY,
     enabled,
     queryFn: async () => {
       const data = await apiFetch<{

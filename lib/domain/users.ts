@@ -432,24 +432,6 @@ export async function listConnections(context: UserWorkspaceContext) {
   return { connections: data ?? [] };
 }
 
-export async function listBridgeDirectories(context: UserWorkspaceContext) {
-  const admin = createAdminClient();
-  const directories = await collectRangePages(async (from, to) => {
-    const { data, error } = await admin
-      .from("ai_bridge_directories")
-      .select("*")
-      .eq("workspace_id", context.workspaceId)
-      .order("connection_id")
-      .order("inventory_active", { ascending: false })
-      .order("name")
-      .order("directory_key")
-      .range(from, to);
-    if (error) throw mapDatabaseError(error);
-    return data ?? [];
-  });
-  return { directories };
-}
-
 export async function createConnection(
   context: UserWorkspaceContext,
   input: CreateConnectionInput,

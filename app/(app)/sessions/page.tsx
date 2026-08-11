@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
+import { sessionQueryKey } from "@/hooks/query-keys";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   supportsWorkingDirectoryInventory,
@@ -32,6 +33,11 @@ import {
 } from "@/lib/domain/session-directory-groups";
 import type { SessionListItem } from "@/lib/types/domain";
 
+type CreateThreadTarget = {
+  connectionId: string;
+  directoryKey: string | null;
+};
+
 export default function SessionsPage() {
   const sessionsQuery = useSessions();
   const directoriesQuery = useBridgeDirectories();
@@ -45,12 +51,8 @@ export default function SessionsPage() {
   const [pickerConnectionId, setPickerConnectionId] = useState<string | null>(
     null,
   );
-  const [createTarget, setCreateTarget] = useState<{
-    connectionId: string;
-    directoryKey: string | null;
-    directoryName: string | null;
-    workingDirectory: string | null;
-  } | null>(null);
+  const [createTarget, setCreateTarget] =
+    useState<CreateThreadTarget | null>(null);
   const [renameSession, setRenameSession] = useState<SessionListItem | null>(
     null,
   );
@@ -122,7 +124,7 @@ export default function SessionsPage() {
   const deselectSession = (sessionId: string) => {
     setSelectedSessionIds((prev) => prev.filter((id) => id !== sessionId));
     queryClient.removeQueries({
-      queryKey: ["sessions", sessionId],
+      queryKey: sessionQueryKey(sessionId),
       exact: true,
     });
   };
@@ -133,15 +135,38 @@ export default function SessionsPage() {
       setSelectedSessionIds((prev) => [...prev, sessionId]);
     }
   };
-  const createGroup = useMemo(
-    () =>
-      createTarget
-        ? (connectionGroups.find(
-            (group) => group.connection.id === createTarget.connectionId,
-          ) ?? null)
-        : null,
-    [connectionGroups, createTarget],
-  );
+  const createDialogTarget = useMemo(() => {
+    if (!createTarget) return null;
+    const group = connectionGroups.find(
+      (candidate) => candidate.connection.id === createTarget.connectionId,
+    );
+    if (!group) return null;
+
+    if (createTarget.directoryKey) {
+      const directory = group.directories.find(
+        (candidate) =>
+          candidate.configured &&
+          candidate.inventoryActive &&
+          candidate.directoryKey === createTarget.directoryKey,
+      );
+      if (!directory) return null;
+      return {
+        group,
+        directoryKey: directory.directoryKey,
+        directoryName: directory.name,
+        workingDirectory: directory.workingDirectory,
+      };
+    }
+
+    return {
+      group,
+      directoryKey: null,
+      directoryName: null,
+      workingDirectory:
+        group.sessions.find((session) => session.working_directory)
+          ?.working_directory ?? null,
+    };
+  }, [connectionGroups, createTarget]);
 
   const openCreateDialog = (
     group: SessionConnectionGroup,
@@ -150,12 +175,6 @@ export default function SessionsPage() {
     setCreateTarget({
       connectionId: group.connection.id,
       directoryKey: directory?.directoryKey ?? null,
-      directoryName: directory?.name ?? null,
-      workingDirectory:
-        directory?.workingDirectory ??
-        group.sessions.find((session) => session.working_directory)
-          ?.working_directory ??
-        null,
     });
   };
 
@@ -305,12 +324,12 @@ export default function SessionsPage() {
         }}
       />
 
-      {createGroup ? (
+      {createDialogTarget ? (
         <CreateThreadDialog
-          connection={createGroup.connection}
-          directoryKey={createTarget?.directoryKey ?? null}
-          directoryName={createTarget?.directoryName ?? null}
-          workingDirectory={createTarget?.workingDirectory ?? null}
+          connection={createDialogTarget.group.connection}
+          directoryKey={createDialogTarget.directoryKey}
+          directoryName={createDialogTarget.directoryName}
+          workingDirectory={createDialogTarget.workingDirectory}
           open
           onOpenChange={(open) => {
             if (!open) setCreateTarget(null);

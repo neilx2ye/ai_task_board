@@ -25,99 +25,125 @@ function directoryNameFromPath(workingDirectory: string): string {
   return segments.at(-1) ?? workingDirectory;
 }
 
-export function groupSessionsByConnection(
-  sessions: SessionListItem[],
-  connections: SessionConnectionSummary[] = [],
-  directories: AIBridgeDirectoryRow[] = [],
-): SessionConnectionGroup[] {
-  const groups = new Map<string, SessionConnectionGroup>();
+function appendToIndex<T>(
+  index: Map<string, T[]>,
+  key: string,
+  value: T,
+) {
+  const values = index.get(key);
+  if (values) values.push(value);
+  else index.set(key, [value]);
+}
 
-  for (const connection of connections) {
-    groups.set(connection.id, { connection, sessions: [], directories: [] });
+function compareDirectoryGroups(
+  left: SessionDirectoryGroup,
+  right: SessionDirectoryGroup,
+): number {
+  if (left.configured !== right.configured) return left.configured ? -1 : 1;
+  if (left.inventoryActive !== right.inventoryActive) {
+    return left.inventoryActive ? -1 : 1;
+  }
+  return (
+    left.name.localeCompare(right.name, "zh-CN") ||
+    (left.workingDirectory ?? "").localeCompare(right.workingDirectory ?? "")
+  );
+}
+
+function buildDirectoryGroups(
+  sessions: readonly SessionListItem[],
+  directories: readonly AIBridgeDirectoryRow[],
+): SessionDirectoryGroup[] {
+  const groups = new Map<string, SessionDirectoryGroup>();
+  const configuredByKey = new Map<string, SessionDirectoryGroup>();
+  const configuredByPath = new Map<string, SessionDirectoryGroup>();
+
+  for (const directory of directories) {
+    const group: SessionDirectoryGroup = {
+      id: `configured:${directory.directory_key}`,
+      directoryKey: directory.directory_key,
+      name: directory.name,
+      workingDirectory: directory.working_directory,
+      inventoryActive: directory.inventory_active,
+      configured: true,
+      sessions: [],
+    };
+    groups.set(group.id, group);
+    configuredByKey.set(directory.directory_key, group);
+    configuredByPath.set(directory.working_directory, group);
   }
 
   for (const session of sessions) {
-    const existing = groups.get(session.connection.id);
-    if (existing) {
-      existing.sessions.push(session);
-    } else {
-      groups.set(session.connection.id, {
-        connection: session.connection,
-        sessions: [session],
-        directories: [],
-      });
+    const configured =
+      (session.bridge_directory_key
+        ? configuredByKey.get(session.bridge_directory_key)
+        : undefined) ??
+      (session.working_directory
+        ? configuredByPath.get(session.working_directory)
+        : undefined);
+    if (configured) {
+      configured.sessions.push(session);
+      continue;
     }
-  }
 
-  for (const group of groups.values()) {
-    const directoryGroups = new Map<string, SessionDirectoryGroup>();
-    const configuredByKey = new Map<string, SessionDirectoryGroup>();
-    const configuredByPath = new Map<string, SessionDirectoryGroup>();
-
-    for (const directory of directories) {
-      if (directory.connection_id !== group.connection.id) continue;
-      const directoryGroup: SessionDirectoryGroup = {
-        id: `configured:${directory.directory_key}`,
-        directoryKey: directory.directory_key,
-        name: directory.name,
-        workingDirectory: directory.working_directory,
-        inventoryActive: directory.inventory_active,
-        configured: true,
+    const id = session.working_directory
+      ? `path:${session.working_directory}`
+      : "unassigned";
+    let group = groups.get(id);
+    if (!group) {
+      group = {
+        id,
+        directoryKey: null,
+        name: session.working_directory
+          ? directoryNameFromPath(session.working_directory)
+          : "未归类",
+        workingDirectory: session.working_directory,
+        inventoryActive: false,
+        configured: false,
         sessions: [],
       };
-      directoryGroups.set(directoryGroup.id, directoryGroup);
-      configuredByKey.set(directory.directory_key, directoryGroup);
-      configuredByPath.set(directory.working_directory, directoryGroup);
+      groups.set(id, group);
     }
-
-    for (const session of group.sessions) {
-      const configured =
-        (session.bridge_directory_key
-          ? configuredByKey.get(session.bridge_directory_key)
-          : undefined) ??
-        (session.working_directory
-          ? configuredByPath.get(session.working_directory)
-          : undefined);
-      if (configured) {
-        configured.sessions.push(session);
-        continue;
-      }
-
-      const id = session.working_directory
-        ? `path:${session.working_directory}`
-        : "unassigned";
-      let directoryGroup = directoryGroups.get(id);
-      if (!directoryGroup) {
-        directoryGroup = {
-          id,
-          directoryKey: null,
-          name: session.working_directory
-            ? directoryNameFromPath(session.working_directory)
-            : "未归类",
-          workingDirectory: session.working_directory,
-          inventoryActive: session.inventory_active,
-          configured: false,
-          sessions: [],
-        };
-        directoryGroups.set(id, directoryGroup);
-      }
-      directoryGroup.inventoryActive ||= session.inventory_active;
-      directoryGroup.sessions.push(session);
-    }
-
-    group.directories = [...directoryGroups.values()].sort((left, right) => {
-      if (left.configured !== right.configured) return left.configured ? -1 : 1;
-      if (left.inventoryActive !== right.inventoryActive) {
-        return left.inventoryActive ? -1 : 1;
-      }
-      return (
-        left.name.localeCompare(right.name, "zh-CN") ||
-        (left.workingDirectory ?? "").localeCompare(
-          right.workingDirectory ?? "",
-        )
-      );
-    });
+    group.inventoryActive ||= session.inventory_active;
+    group.sessions.push(session);
   }
 
-  return [...groups.values()];
+  return [...groups.values()].sort(compareDirectoryGroups);
+}
+
+export function groupSessionsByConnection(
+  sessions: readonly SessionListItem[],
+  connections: readonly SessionConnectionSummary[] = [],
+  directories: readonly AIBridgeDirectoryRow[] = [],
+): SessionConnectionGroup[] {
+  const sessionsByConnection = new Map<string, SessionListItem[]>();
+  const directoriesByConnection = new Map<string, AIBridgeDirectoryRow[]>();
+  const connectionById = new Map(
+    connections.map((connection) => [connection.id, connection]),
+  );
+
+  for (const session of sessions) {
+    if (!connectionById.has(session.connection.id)) {
+      connectionById.set(session.connection.id, session.connection);
+    }
+    appendToIndex(sessionsByConnection, session.connection.id, session);
+  }
+  for (const directory of directories) {
+    appendToIndex(
+      directoriesByConnection,
+      directory.connection_id,
+      directory,
+    );
+  }
+
+  return [...connectionById.values()].map((connection) => {
+    const connectionSessions = sessionsByConnection.get(connection.id) ?? [];
+    return {
+      connection,
+      sessions: connectionSessions,
+      directories: buildDirectoryGroups(
+        connectionSessions,
+        directoriesByConnection.get(connection.id) ?? [],
+      ),
+    };
+  });
 }

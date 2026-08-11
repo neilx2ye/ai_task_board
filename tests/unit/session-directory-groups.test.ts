@@ -20,11 +20,12 @@ function session(
   id: string,
   workingDirectory: string | null,
   directoryKey: string | null,
+  sessionConnection: SessionConnectionSummary = connection,
 ): SessionListItem {
   return {
     id,
-    connection_id: connection.id,
-    connection,
+    connection_id: sessionConnection.id,
+    connection: sessionConnection,
     working_directory: workingDirectory,
     bridge_directory_key: directoryKey,
     inventory_active: true,
@@ -35,9 +36,10 @@ function directory(
   key: string,
   name: string,
   workingDirectory: string,
+  connectionId = connection.id,
 ): AIBridgeDirectoryRow {
   return {
-    connection_id: connection.id,
+    connection_id: connectionId,
     directory_key: key,
     name,
     working_directory: workingDirectory,
@@ -93,5 +95,56 @@ describe("Session working-directory hierarchy", () => {
         expect.objectContaining({ name: "未归类" }),
       ]),
     );
+  });
+
+  it("isolates matching directory keys between connections", () => {
+    const secondConnection: SessionConnectionSummary = {
+      ...connection,
+      id: "connection-2",
+      name: "Desktop",
+    };
+
+    const groups = groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/laptop", "main"),
+        session(
+          "thread-b",
+          "/workspace/desktop",
+          "main",
+          secondConnection,
+        ),
+      ],
+      [connection, secondConnection],
+      [
+        directory("main", "Laptop app", "/workspace/laptop"),
+        directory(
+          "main",
+          "Desktop app",
+          "/workspace/desktop",
+          secondConnection.id,
+        ),
+      ],
+    );
+
+    expect(groups).toEqual([
+      expect.objectContaining({
+        connection,
+        directories: [
+          expect.objectContaining({
+            name: "Laptop app",
+            sessions: [expect.objectContaining({ id: "thread-a" })],
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        connection: secondConnection,
+        directories: [
+          expect.objectContaining({
+            name: "Desktop app",
+            sessions: [expect.objectContaining({ id: "thread-b" })],
+          }),
+        ],
+      }),
+    ]);
   });
 });

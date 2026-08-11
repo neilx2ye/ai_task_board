@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
+import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
 import type { AIConnectionRow } from "@/lib/types/database";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
@@ -72,7 +73,7 @@ function useConnectionMutation<TInput, TResult>(
     mutationFn: fn,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     },
   });
 }
@@ -118,7 +119,7 @@ export function useRevokeConnection(connectionId: string) {
         old?.filter((connection) => connection.id !== connectionId),
       );
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     },
   });
 }

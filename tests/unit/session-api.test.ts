@@ -35,12 +35,14 @@ const routeMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/domain/users", () => ({
   createSessionTurn: domainMocks.createSessionTurn,
-  listBridgeDirectories: domainMocks.listBridgeDirectories,
   getSessionConversation: domainMocks.getSessionConversation,
   renameThread: domainMocks.renameThread,
   deleteThread: domainMocks.deleteThread,
   updateSessionProcessDetailsSync:
     domainMocks.updateSessionProcessDetailsSync,
+}));
+vi.mock("@/lib/domain/bridge-directories", () => ({
+  listBridgeDirectories: domainMocks.listBridgeDirectories,
 }));
 vi.mock("@/lib/domain/tasks", () => ({
   reportSessionActivity: domainMocks.reportSessionActivity,
