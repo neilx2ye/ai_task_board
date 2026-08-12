@@ -58,6 +58,7 @@ const STREAM_TRUNCATION_MARKER = "\n…[流式输出已截断]";
 const MAX_NOTIFICATION_BACKLOG = 256;
 const MAX_ACTIVITY_BACKLOG = 64;
 const USER_INPUT_POLL_INTERVAL_MS = 1_500;
+const MAX_CONCURRENT_TURNS = 32;
 
 type ClaimedTask = {
   id: string;
@@ -210,7 +211,6 @@ export type BridgeConfiguration = {
   allowHistorySync: boolean;
   allowRemoteWorkingDirectories: boolean;
   localMaxThreads: number;
-  localMaxConcurrentTurns: number;
   localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
   codexBinary: string;
@@ -516,11 +516,11 @@ export function loadConfiguration(
     1,
     500,
   );
-  const localMaxConcurrentTurns = boundedInteger(
+  const startupMaxConcurrentTurns = boundedInteger(
     environment.CODEX_MAX_CONCURRENT_TURNS,
     2,
     1,
-    32,
+    MAX_CONCURRENT_TURNS,
   );
   const localMaxHistoryTurns = boundedInteger(
     environment.CODEX_BRIDGE_MAX_HISTORY_TURNS,
@@ -577,7 +577,7 @@ export function loadConfiguration(
       3_600,
     ),
     maxThreads: localMaxThreads,
-    maxConcurrentTurns: localMaxConcurrentTurns,
+    maxConcurrentTurns: startupMaxConcurrentTurns,
     syncIntervalMs: boundedInteger(
       environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
       60_000,
@@ -609,7 +609,6 @@ export function loadConfiguration(
       environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES,
     ),
     localMaxThreads,
-    localMaxConcurrentTurns,
     localMaxHistoryTurns,
     webConfigurationEnabled: parseBoolean(
       environment.CODEX_BRIDGE_WEB_CONFIG,
@@ -645,7 +644,10 @@ export function bridgeConfigurationConstraints(
     allow_working_directory_configuration:
       configuration.allowRemoteWorkingDirectories,
     max_threads: configuration.localMaxThreads,
-    max_concurrent_turns: configuration.localMaxConcurrentTurns,
+    // Kept in the compatibility envelope for older Boards/Bridges. Unlike
+    // the other local constraints, concurrency is now owned by the Web
+    // setting across the full supported product range.
+    max_concurrent_turns: MAX_CONCURRENT_TURNS,
     max_history_turns: configuration.localMaxHistoryTurns,
     thread_scope: configuration.threadScope,
     working_directory: configuration.localWorkingDirectory,
@@ -742,7 +744,7 @@ export function resolveRemoteConfiguration(
       ),
       maxConcurrentTurns: clampedRemoteInteger(
         desired.max_concurrent_turns,
-        configuration.localMaxConcurrentTurns,
+        MAX_CONCURRENT_TURNS,
         "max_concurrent_turns",
         warnings,
       ),

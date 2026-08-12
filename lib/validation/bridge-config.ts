@@ -138,7 +138,7 @@ export const exchangeBridgeConfigurationSchema = z
       context.addIssue({
         code: "custom",
         message:
-          "Effective max_concurrent_turns exceeds the local constraint",
+          "Effective max_concurrent_turns exceeds the reported constraint",
         path: ["effective", "max_concurrent_turns"],
       });
     }

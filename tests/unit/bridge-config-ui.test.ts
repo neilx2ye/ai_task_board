@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BRIDGE_CONCURRENCY_NOTICE,
   BRIDGE_HISTORY_RETENTION_NOTICE,
   isAbsoluteWorkingDirectoryPath,
   validateWorkingDirectories,
@@ -74,6 +75,12 @@ function configuration(
 }
 
 describe("Bridge configuration UI model", () => {
+  it("presents device concurrency as one Web-controlled limit", () => {
+    expect(BRIDGE_CONCURRENCY_NOTICE).toContain("直接在 Web 设置");
+    expect(BRIDGE_CONCURRENCY_NOTICE).toContain("整台设备");
+    expect(BRIDGE_CONCURRENCY_NOTICE).not.toContain("本机上限");
+  });
+
   it("explains that narrower future imports do not delete uploaded history", () => {
     expect(BRIDGE_HISTORY_RETENTION_NOTICE).toContain("停止或收窄后续导入");
     expect(BRIDGE_HISTORY_RETENTION_NOTICE).toContain("不会删除已经上传的历史");

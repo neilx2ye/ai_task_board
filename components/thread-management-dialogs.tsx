@@ -39,7 +39,7 @@ export function CreateThreadDialog({
   workingDirectory: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmitted: () => void;
+  onSubmitted: (input: { name: string }) => void;
 }) {
   const createThread = useCreateThread(connection.id);
   const [name, setName] = useState("");
@@ -48,13 +48,14 @@ export function CreateThreadDialog({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    const submittedName = name.trim();
     try {
       await createThread.mutateAsync({
-        name: name.trim(),
+        name: submittedName,
         directory_key: directoryKey,
       });
       onOpenChange(false);
-      onSubmitted();
+      onSubmitted({ name: submittedName });
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建失败，请稍后重试");
     }

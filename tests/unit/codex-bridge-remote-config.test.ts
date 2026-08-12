@@ -372,7 +372,7 @@ describe("Codex Bridge Web configuration", () => {
     ).toMatchObject({
       effective: {
         max_threads: 4,
-        max_concurrent_turns: 3,
+        max_concurrent_turns: 20,
       },
       error: expect.stringContaining("max_threads=40"),
     });
@@ -400,7 +400,7 @@ describe("Codex Bridge Web configuration", () => {
         allow_thread_titles: true,
         allow_working_directory_configuration: true,
         max_threads: 4,
-        max_concurrent_turns: 3,
+        max_concurrent_turns: 32,
         thread_scope: "all",
         working_directory: temporaryDirectory,
         fixed_thread: false,

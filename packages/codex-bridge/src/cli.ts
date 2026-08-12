@@ -26,7 +26,7 @@ Optional environment variables:
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)
-  CODEX_MAX_CONCURRENT_TURNS      Device turn concurrency (1..32, default: 2)
+  CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 2)
   CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session
   CODEX_BRIDGE_PERMISSION_MODE    safe (default) or inherit (high risk)
   CODEX_BINARY                    Codex executable (default: codex)

@@ -223,7 +223,7 @@ describe("Codex Bridge runtime primitives", () => {
     thirdRelease();
   });
 
-  it("keeps Web configuration behind local gates and local maxima", () => {
+  it("keeps local safety gates while letting Web own device concurrency", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
@@ -257,7 +257,7 @@ describe("Codex Bridge runtime primitives", () => {
       enabled: false,
       includeThreadTitles: false,
       maxThreads: 5,
-      maxConcurrentTurns: 3,
+      maxConcurrentTurns: 32,
       syncHistory: false,
       historyTurnLimit: 50,
       workingDirectory: "/workspace/safe",
@@ -269,7 +269,7 @@ describe("Codex Bridge runtime primitives", () => {
         },
       ],
     });
-    expect(resolved.warnings).toHaveLength(4);
+    expect(resolved.warnings).toHaveLength(3);
     expect(resolved.warnings).toContainEqual(
       expect.stringContaining("CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES"),
     );
@@ -278,7 +278,7 @@ describe("Codex Bridge runtime primitives", () => {
       allow_thread_titles: false,
       allow_working_directory_configuration: false,
       max_threads: 5,
-      max_concurrent_turns: 3,
+      max_concurrent_turns: 32,
       allow_history_sync: false,
       max_history_turns: 50,
       thread_scope: "cwd",

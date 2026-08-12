@@ -46,10 +46,12 @@ and returns only a selected key in Web create commands; the Bridge resolves that
 key against the currently effective list.
 
 `CODEX_MAX_THREADS` controls the device-wide inventory limit (default `50`,
-range `1..500` across all configured directories), while
-`CODEX_MAX_CONCURRENT_TURNS` controls device-wide turn concurrency (default
-`2`). Session names do not upload the local thread title or first prompt by
-default; they use the cwd basename plus a short thread ID. Set
+range `1..500` across all configured directories).
+`CODEX_MAX_CONCURRENT_TURNS` remains a compatibility startup value (default
+`2`) before Web configuration is applied; once enabled, the Web value directly
+controls device-wide turn concurrency from `1..32`. Session names do not upload
+the local thread title or first prompt by default; they use the cwd basename plus
+a short thread ID. Set
 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` only after explicitly accepting that
 metadata disclosure. Inventory still uploads each thread ID, absolute working
 directory, and model label to the Board Workspace.
@@ -63,7 +65,8 @@ interval can be set with `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` from `1000` to
 `600000` milliseconds.
 
 The Web console may enable or pause this Bridge, hide or show thread titles,
-enable bounded history sync, lower the thread, concurrency, and history limits,
+enable bounded history sync, lower the thread and history limits, set device-wide
+turn concurrency directly,
 and—only after a separate local opt-in—replace the effective working-directory
 list. `enabled=false` stops all Session
 workers, releases their work, and uploads an authoritative empty inventory,
@@ -72,8 +75,9 @@ concurrency reduction lets active turns finish and only delays new turns.
 
 The device environment remains the immutable security boundary:
 
-- Web values for `max_threads` and `max_concurrent_turns` are clamped to the
-  local `CODEX_MAX_THREADS` and `CODEX_MAX_CONCURRENT_TURNS` maxima.
+- Web `max_threads` is clamped to the local `CODEX_MAX_THREADS` maximum.
+- Web `max_concurrent_turns` directly sets device-wide concurrency in the
+  supported `1..32` range; it is not clamped by a separate local maximum.
 - Web title upload is denied unless
   `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` or the device already opted in
   with `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`.

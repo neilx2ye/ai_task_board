@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon } from "lucide-react";
 
@@ -31,6 +31,10 @@ import {
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
 } from "@/lib/domain/session-directory-groups";
+import {
+  findCreatedWebThread,
+  type PendingWebThreadCreation,
+} from "@/lib/domain/web-thread-creation";
 import type { SessionListItem } from "@/lib/types/domain";
 
 type CreateThreadTarget = {
@@ -57,6 +61,8 @@ export default function SessionsPage() {
     useState<ThreadPickerTarget | null>(null);
   const [createTarget, setCreateTarget] =
     useState<CreateThreadTarget | null>(null);
+  const [pendingThreadCreation, setPendingThreadCreation] =
+    useState<PendingWebThreadCreation | null>(null);
   const [renameSession, setRenameSession] = useState<SessionListItem | null>(
     null,
   );
@@ -179,6 +185,27 @@ export default function SessionsPage() {
       directoryKey: directory?.directoryKey ?? null,
     });
   };
+
+  useEffect(() => {
+    if (!pendingThreadCreation) return;
+    const createdSession = findCreatedWebThread(
+      sessions,
+      pendingThreadCreation,
+    );
+    if (!createdSession) return;
+
+    // Reconcile after the query-cache render has committed. This both persists
+    // sidebar visibility and avoids synchronously cascading another render.
+    const timeout = window.setTimeout(() => {
+      setSessionVisible(createdSession.id, true);
+      setSelectedSessionIds((prev) =>
+        prev.includes(createdSession.id) ? prev : [...prev, createdSession.id],
+      );
+      setPendingThreadCreation(null);
+      setNotice(`Thread「${createdSession.name}」已创建并打开。`);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [pendingThreadCreation, sessions, setSessionVisible]);
 
   return (
     <div className="flex flex-col gap-5 lg:h-[calc(100dvh-3rem)]">
@@ -336,11 +363,19 @@ export default function SessionsPage() {
           onOpenChange={(open) => {
             if (!open) setCreateTarget(null);
           }}
-          onSubmitted={() =>
+          onSubmitted={({ name }) => {
+            setPendingThreadCreation({
+              connectionId: createDialogTarget.group.connection.id,
+              directoryKey: createDialogTarget.directoryKey,
+              name,
+              existingSessionIds: createDialogTarget.group.sessions.map(
+                (session) => session.id,
+              ),
+            });
             setNotice(
               "新建请求已提交；在线 Bridge 处理并同步后，Thread 会自动出现在列表中。",
-            )
-          }
+            );
+          }}
         />
       ) : null}
 

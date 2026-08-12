@@ -601,7 +601,7 @@ describe("AI Bridge configuration exchange API", () => {
       },
       constraints: { ...constraints, allow_thread_titles: false },
     },
-  ])("rejects an effective state outside its local envelope %#", async (state) => {
+  ])("rejects an effective state outside its reported envelope %#", async (state) => {
     const response = await exchangeConfig(
       jsonRequest(
         "/api/ai/config",
