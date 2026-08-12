@@ -105,15 +105,23 @@ Content-Type: application/json
 AI_TASK_BOARD_URL=https://board.example.com \
 AI_TASK_BOARD_CONNECTION_TOKEN='<connection_token>' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.8.0
+npx --yes ai-task-board-codex-bridge@0.9.0
 ```
+
+> **高风险默认值：** Bridge 默认使用
+> `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、无沙箱）和
+> `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）。只应在工作区、Codex
+> 配置和 Connection 使用者都可信时采用此组合；需要限制写入与网络时，请显式设置
+> `CODEX_BRIDGE_PERMISSION_MODE=safe`。
 
 仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。长期服务应固定明确版本，
 并由 systemd、launchd 或其他进程管理器负责重启；npm 包本身不会安装系统服务。
 
 一个常驻 Bridge 代表一台设备上的一个 AI Connection，并为自动发现的每个未归档顶层 Codex thread 同步独立 Board Session；默认 `CODEX_THREAD_SCOPE=cwd` 精确匹配 `CODEX_WORKING_DIRECTORY`，也可用 `CODEX_WORKING_DIRECTORIES` JSON 白名单同时管理多个目录，并在网页按“设备 → 工作目录 → Thread”展示。Bridge 0.8 在设备同时启用 `CODEX_BRIDGE_WEB_CONFIG=true` 与 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 后，允许 Owner 在“Bridge 设置”中管理项目名称、稳定 key 与本机绝对路径；Bridge 会在应用前验证路径确实存在且为目录。总计最多 50 个 thread（可调至 500）；设备级并行 turn 数可直接在 Web 设置为 1 到 32，默认启动值为 2。跨白名单发现必须显式设置高风险的 `CODEX_THREAD_SCOPE=all`；`CODEX_THREAD_ID` 是覆盖范围的单 thread 精确兼容过滤器。Bridge 必须以拥有本地 Codex 登录、会话存储和目标工作树的同一操作系统用户运行，不能放进 Next.js 服务进程。
 
-Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 回复增量会聚合后近实时写入 Board，思考摘要、命令、工具过程和用量不会同步。默认 `safe` 权限 profile 会把 turn 收敛到 `on-request`、用户 reviewer、`workspace-write` 和该 thread cwd（排除隐式 tmp 根并关闭网络）；它主要限制写入/网络，不能阻止读取同 UID 本来可读的文件。默认 `accept` 会在设备端自动批准与当前活跃 turn 关联的受支持审批请求，不能替代沙箱，也不是网页逐次确认；Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保留原 turn 与 claim，提交后原地继续。Session 名称默认不上传 thread 标题/首条 prompt；启用 `CODEX_BRIDGE_WEB_CONFIG=true` 后，可在“AI 连接 → Bridge 设置”调整启停、标题、历史同步及数量/并发上限，其中最大并行 turn 数由 Web 直接控制，不再区分本机与 Web 上限。Thread 数和历史数量仍受本机上限约束。网页开启标题还要求本机显式允许 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` 或已经设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`；开启历史还要求 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`；管理本机工作目录还要求 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`，三类敏感能力均保持设备端显式授权。历史同步受默认 50、最大 200 个最近完成 turn 的本机上限约束，并上传用户消息与最终 AI 回复；历史用户消息会对有权访问该 Workspace 的成员可见。关闭同步或降低上限不会删除 Board 已导入的只追加历史。Inventory 仍会同步 thread ID、绝对工作目录和模型标签。Bridge 0.5 起，Workspace Owner 可在“AI 会话”页新建、重命名和删除当前设备清单内的 Thread，也可在“AI 连接”页重命名连接；Bridge 0.7 会在选中的设备目录下新建，旧版仍使用设备默认工作目录，删除只接受没有活跃或已预留任务的 Thread。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先应用仓库当前 migration，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
+Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 回复增量会聚合后近实时写入 Board，思考摘要、命令、工具过程和用量不会同步。默认 `danger-full-access` 权限 profile 仍显式使用 `on-request` 和用户 reviewer，但不启用沙箱，不限制该 OS 用户本来可以写入的路径或网络；默认 `accept` 会在设备端立即批准与当前活跃 turn 关联的受支持审批请求，因此无需网页逐次确认。这两个默认值相互独立，但组合后会在当前 OS 用户权限范围内无沙箱执行，属于高风险配置。可将权限模式显式设为 `safe`，把 turn 限制到 `workspace-write`、该 thread cwd、无隐式 tmp 写根且无网络；`inherit` 则完全不发送权限与审批覆盖，沿用 thread 或本机 Codex 设置，可能同样继承完全访问，只有明确了解本机配置时才应使用。审批也可设为 `decline` 或 `accept-session`；审批模式不会改变沙箱。
+
+Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保留原 turn 与 claim，提交后原地继续。Session 名称默认不上传 thread 标题/首条 prompt；启用 `CODEX_BRIDGE_WEB_CONFIG=true` 后，可在“AI 连接 → Bridge 设置”调整启停、标题、历史同步及数量/并发上限，其中最大并行 turn 数由 Web 直接控制，不再区分本机与 Web 上限。Thread 数和历史数量仍受本机上限约束。网页开启标题还要求本机显式允许 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` 或已经设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`；开启历史还要求 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`；管理本机工作目录还要求 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`，三类敏感能力均保持设备端显式授权。历史同步受默认 50、最大 200 个最近完成 turn 的本机上限约束，并上传用户消息与最终 AI 回复；历史用户消息会对有权访问该 Workspace 的成员可见。关闭同步或降低上限不会删除 Board 已导入的只追加历史。Inventory 仍会同步 thread ID、绝对工作目录和模型标签。Bridge 0.5 起，Workspace Owner 可在“AI 会话”页新建、重命名和删除当前设备清单内的 Thread，也可在“AI 连接”页重命名连接；Bridge 0.7 会在选中的设备目录下新建，旧版仍使用设备默认工作目录，删除只接受没有活跃或已预留任务的 Thread。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先应用仓库当前 migration，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
 
 ## 单会话上下文演示
 
@@ -192,7 +200,7 @@ PLAYWRIGHT_BASE_URL=https://preview.example.com npm run test:e2e
 - Next.js 控制面不内置模型或通用 Agent 执行环境；一个 Codex Bridge 是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
 - 浏览器 Realtime 用于界面失效和重拉；客户端维护最新 `TaskEvent` ID，断线重订阅后按游标补拉遗漏事件并全量重拉，以 30 秒轮询兜底。Bridge 则使用独立的认证 SSE 唤醒端点，SSE 只发送固定空事件，任务内容仍从 REST 领取。
 - Codex Bridge 只会近实时回传 AI 回复，不同步思考、命令、工具或用量；当前没有可靠的运行中 steering、网页审批或远程进程中断，SSE 不可用时会自适应轮询，最长约 60 秒发现新任务。
-- Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。`safe` profile 是默认执行边界，不能抵消同 UID 进程本身的读取与调试权限。
+- Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。默认 `danger-full-access` + `accept` 会无沙箱执行并自动同意关联当前活跃 turn 的受支持审批，属于高风险配置；需要限制写入和网络时应显式选择 `safe`，而 `inherit` 的实际边界取决于 thread 与本机 Codex 设置。
 - Bridge 目前是 at-least-once 执行；若本地 turn 已执行但在完成 Task 前崩溃，租约恢复后可能重复提交该 turn，不可逆工具操作仍需自身幂等或人工确认。
 - 会话对话框显示 Board 任务消息、Bridge 近实时 AI 回复，以及经设备和网页双重授权后补录的最近 Codex 用户消息与最终回复；这不是完整原始日志镜像。历史导入只追加，关闭或降低同步上限不会删除既有内容；`partial` 只表示本次快照触发本机安全扫描上限。Web Thread 管理只对 Workspace Owner 和 Bridge 0.5+ 开放；固定 `CODEX_THREAD_ID` 模式不允许网页新建或删除，删除也只接受没有活跃或已预留任务的 Thread。
 - Board 服务没有通用任务 Worker；Supabase Cron 仅定时清理已过期的幂等记录。原目标会话可原子恢复自己的过期租约，用户也可显式释放后改派。仅打开页面不会修改租约，卡片可能一直显示旧接收信息，直到下一次接收/释放命令。

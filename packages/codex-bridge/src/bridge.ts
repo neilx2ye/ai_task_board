@@ -49,7 +49,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "0.8.0";
+const BRIDGE_VERSION = "0.9.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -134,7 +134,7 @@ type TurnResult = {
 };
 
 type ApprovalMode = "decline" | "accept" | "accept-session";
-type PermissionMode = "safe" | "inherit";
+type PermissionMode = "danger-full-access" | "safe" | "inherit";
 type ThreadScope = "cwd" | "all";
 
 export type EffectiveBridgeConfiguration = {
@@ -410,12 +410,58 @@ function boundedInteger(
 }
 
 function parseApprovalMode(value: string | undefined): ApprovalMode {
-  if (value === "decline" || value === "accept-session") return value;
-  return "accept";
+  const mode = value?.trim();
+  if (!mode || mode === "accept") return "accept";
+  if (mode === "decline" || mode === "accept-session") return mode;
+  throw new Error(
+    "CODEX_BRIDGE_APPROVAL_MODE must be accept, decline, or accept-session",
+  );
 }
 
 function parsePermissionMode(value: string | undefined): PermissionMode {
-  return value === "inherit" ? "inherit" : "safe";
+  const mode = value?.trim();
+  if (!mode || mode === "danger-full-access") {
+    return "danger-full-access";
+  }
+  if (mode === "safe" || mode === "inherit") return mode;
+  throw new Error(
+    "CODEX_BRIDGE_PERMISSION_MODE must be danger-full-access, safe, or inherit",
+  );
+}
+
+function threadPermissionOverrides(
+  mode: PermissionMode,
+  cwd: string,
+): Record<string, unknown> {
+  if (mode === "inherit") return {};
+  return {
+    cwd,
+    approvalPolicy: "on-request",
+    approvalsReviewer: "user",
+    sandbox: mode === "safe" ? "workspace-write" : "danger-full-access",
+  };
+}
+
+function turnPermissionOverrides(
+  mode: PermissionMode,
+  cwd: string,
+): Record<string, unknown> {
+  if (mode === "inherit") return {};
+  return {
+    cwd,
+    approvalPolicy: "on-request",
+    approvalsReviewer: "user",
+    sandboxPolicy:
+      mode === "safe"
+        ? {
+            type: "workspaceWrite",
+            writableRoots: [cwd],
+            networkAccess: false,
+            excludeTmpdirEnvVar: true,
+            excludeSlashTmp: true,
+          }
+        : { type: "dangerFullAccess" },
+  };
 }
 
 function parseThreadScope(value: string | undefined): ThreadScope {
@@ -2086,16 +2132,12 @@ class SessionWorker {
     await this.trackMutatingRequest(
       this.appServer.threadResume(
         {
-        threadId: this.thread.id,
-        excludeTurns: true,
-        ...(this.configuration.permissionMode === "safe"
-          ? {
-              cwd: workspaceRoot,
-              approvalPolicy: "on-request",
-              approvalsReviewer: "user",
-              sandbox: "workspace-write",
-            }
-          : {}),
+          threadId: this.thread.id,
+          excludeTurns: true,
+          ...threadPermissionOverrides(
+            this.configuration.permissionMode,
+            workspaceRoot,
+          ),
         },
         { timeoutMs: 0 },
       ),
@@ -2114,26 +2156,16 @@ class SessionWorker {
       started = await this.trackMutatingRequest(
         this.appServer.turnStart(
           {
-          threadId: this.thread.id,
-          clientUserMessageId: task.id,
-          input: [{ type: "text", text, text_elements: [] }],
-          // The Board persists AI replies only, so do not ask Codex to produce
-          // a reasoning summary that would be discarded.
-          summary: "none",
-          ...(this.configuration.permissionMode === "safe"
-            ? {
-                cwd: workspaceRoot,
-                approvalPolicy: "on-request",
-                approvalsReviewer: "user",
-                sandboxPolicy: {
-                  type: "workspaceWrite",
-                  writableRoots: [workspaceRoot],
-                  networkAccess: false,
-                  excludeTmpdirEnvVar: true,
-                  excludeSlashTmp: true,
-                },
-              }
-            : {}),
+            threadId: this.thread.id,
+            clientUserMessageId: task.id,
+            input: [{ type: "text", text, text_elements: [] }],
+            // The Board persists AI replies only, so do not ask Codex to produce
+            // a reasoning summary that would be discarded.
+            summary: "none",
+            ...turnPermissionOverrides(
+              this.configuration.permissionMode,
+              workspaceRoot,
+            ),
           },
           { timeoutMs: 0 },
         ),
@@ -2664,6 +2696,10 @@ class DeviceBridge {
     if (this.configuration.permissionMode === "inherit") {
       process.stderr.write(
         "高风险警告：CODEX_BRIDGE_PERMISSION_MODE=inherit 会沿用 thread 的审批与沙箱设置，可能继承 danger-full-access 或额外可写目录\n",
+      );
+    } else if (this.configuration.permissionMode === "danger-full-access") {
+      process.stderr.write(
+        "高风险警告：CODEX_BRIDGE_PERMISSION_MODE=danger-full-access 不使用 Codex 沙箱，thread 可访问本机用户有权访问的文件与网络\n",
       );
     }
     if (!this.configuration.threadIdFilter && this.configuration.threadScope === "all") {
@@ -3293,12 +3329,14 @@ class DeviceBridge {
       }
       const name = stringValue(command.name);
       if (!name) throw new Error("新建 Thread 指令缺少名称");
+      const cwd = workingDirectoryForThreadCreate(
+        command.directory_key,
+        this.configuration.workingDirectories,
+        this.configuration.workingDirectory,
+      );
       const response = await this.appServer.threadStart({
-        cwd: workingDirectoryForThreadCreate(
-          command.directory_key,
-          this.configuration.workingDirectories,
-          this.configuration.workingDirectory,
-        ),
+        cwd,
+        ...threadPermissionOverrides(this.configuration.permissionMode, cwd),
       });
       const threadId = stringValue(response.thread?.id);
       if (!threadId) throw new Error("Codex App Server 未返回新 Thread ID");

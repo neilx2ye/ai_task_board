@@ -223,6 +223,53 @@ describe("Codex Bridge runtime primitives", () => {
     thirdRelease();
   });
 
+  it("defaults to full access with automatic approval and keeps explicit permission modes", () => {
+    const defaults = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+    });
+
+    expect(defaults.permissionMode).toBe("danger-full-access");
+    expect(defaults.approvalMode).toBe("accept");
+    expect(bridgeConfigurationConstraints(defaults)).toMatchObject({
+      permission_mode: "danger-full-access",
+      approval_mode: "accept",
+    });
+
+    const safe = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_BRIDGE_PERMISSION_MODE: "safe",
+      CODEX_BRIDGE_APPROVAL_MODE: "accept-session",
+    });
+    expect(safe.permissionMode).toBe("safe");
+    expect(safe.approvalMode).toBe("accept-session");
+
+    const inherited = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_BRIDGE_PERMISSION_MODE: "inherit",
+      CODEX_BRIDGE_APPROVAL_MODE: "decline",
+    });
+    expect(inherited.permissionMode).toBe("inherit");
+    expect(inherited.approvalMode).toBe("decline");
+
+    expect(() =>
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+        CODEX_BRIDGE_PERMISSION_MODE: "typo",
+      }),
+    ).toThrow("CODEX_BRIDGE_PERMISSION_MODE");
+    expect(() =>
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+        CODEX_BRIDGE_APPROVAL_MODE: "typo",
+      }),
+    ).toThrow("CODEX_BRIDGE_APPROVAL_MODE");
+  });
+
   it("keeps local safety gates while letting Web own device concurrency", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",

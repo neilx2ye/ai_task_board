@@ -218,9 +218,18 @@ describe("Codex Bridge multi-thread device runtime", () => {
     temporaryDirectory = null;
   });
 
-  it(
-    "discovers two threads and completes one queued turn on each",
-    async () => {
+  it.each([
+    {
+      profile: "the default full-access profile",
+      permissionMode: undefined,
+    },
+    {
+      profile: "the explicit safe profile",
+      permissionMode: "safe",
+    },
+  ])(
+    "discovers two threads and completes one queued turn on each with $profile",
+    async ({ permissionMode }) => {
       const claimedSessions = new Set<string>();
       const activities: SeenActivity[] = [];
       let syncedInventory: Array<Record<string, unknown>> = [];
@@ -332,6 +341,12 @@ describe("Codex Bridge multi-thread device runtime", () => {
         AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
       };
       delete environment.CODEX_THREAD_ID;
+      delete environment.CODEX_BRIDGE_APPROVAL_MODE;
+      if (permissionMode) {
+        environment.CODEX_BRIDGE_PERMISSION_MODE = permissionMode;
+      } else {
+        delete environment.CODEX_BRIDGE_PERMISSION_MODE;
+      }
       child = spawn(
         path.resolve("node_modules/.bin/tsx"),
         [path.resolve("packages/codex-bridge/src/cli.ts")],
@@ -397,11 +412,25 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"approvalsReviewer":"user"');
       expect(stderr).toContain('"summary":"none"');
       expect(stderr).not.toContain('"summary":"concise"');
-      expect(stderr).toContain('"sandbox":"workspace-write"');
-      expect(stderr).toContain('"type":"workspaceWrite"');
-      expect(stderr).toContain(
-        `"writableRoots":[${JSON.stringify(workingDirectoryA)}]`,
-      );
+      if (permissionMode === "safe") {
+        expect(stderr).toContain('"sandbox":"workspace-write"');
+        expect(stderr).toContain('"type":"workspaceWrite"');
+        expect(stderr).toContain(
+          `"writableRoots":[${JSON.stringify(workingDirectoryA)}]`,
+        );
+        expect(stderr).toContain('"networkAccess":false');
+        expect(stderr).toContain('"excludeTmpdirEnvVar":true');
+        expect(stderr).toContain('"excludeSlashTmp":true');
+        expect(stderr).not.toContain('"sandbox":"danger-full-access"');
+        expect(stderr).not.toContain('"type":"dangerFullAccess"');
+      } else {
+        expect(stderr).toContain('"sandbox":"danger-full-access"');
+        expect(stderr).toContain('"type":"dangerFullAccess"');
+        expect(stderr).not.toContain('"sandbox":"workspace-write"');
+        expect(stderr).not.toContain('"type":"workspaceWrite"');
+        expect(stderr).not.toContain('"networkAccess":false');
+        expect(stderr).not.toContain('"writableRoots"');
+      }
       expect(stderr).toContain(
         'FAKE_APPROVAL {"id":"approval-thread-a","result":{"decision":"accept"}}',
       );

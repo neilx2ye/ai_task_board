@@ -27,8 +27,8 @@ Optional environment variables:
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)
   CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 2)
-  CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session
-  CODEX_BRIDGE_PERMISSION_MODE    safe (default) or inherit (high risk)
+  CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session; accept is automatic
+  CODEX_BRIDGE_PERMISSION_MODE    danger-full-access (default), safe, or inherit; full/inherit may be high risk
   CODEX_BINARY                    Codex executable (default: codex)
   AI_TASK_BOARD_POLL_INTERVAL_MS  Poll interval when SSE is unavailable (500..60000)
   AI_TASK_BOARD_LEASE_SECONDS     Task lease duration (60..3600, default: 900)

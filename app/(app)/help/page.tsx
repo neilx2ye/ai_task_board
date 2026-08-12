@@ -199,12 +199,14 @@ export default function HelpPage() {
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
 CODEX_THREAD_SCOPE='cwd' \\
+CODEX_BRIDGE_PERMISSION_MODE='danger-full-access' \\
+CODEX_BRIDGE_APPROVAL_MODE='accept' \\
 CODEX_BRIDGE_WEB_CONFIG='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-codex-bridge@0.8.0`}</CopyableCodeBlock>
+npx --yes ai-task-board-codex-bridge@0.9.0`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -243,8 +245,12 @@ npx --yes ai-task-board-codex-bridge@0.8.0`}</CopyableCodeBlock>
           </li>
           <li>
             0.8 保留 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
-            可靠的运行中 steer/interrupt。默认安全权限模式会限制 sandbox，审批则在
-            设备端自动接受与当前活跃 turn 关联的受支持请求。
+            可靠的运行中 steer/interrupt。默认 <code>danger-full-access</code>
+            不启用 sandbox，默认 <code>accept</code> 会在设备端自动同意与当前活跃 turn
+            关联的受支持请求，无需网页确认；组合使用会在当前 OS 用户权限范围内无沙箱执行，
+            属于高风险配置。
+            需要限制为 thread cwd、禁止网络时请选 <code>safe</code>；
+            <code>inherit</code> 不发送覆盖并沿用本机 Codex 设置，边界未知时也应视为高风险。
           </li>
         </ul>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">

@@ -135,7 +135,10 @@ function appliedConfiguration(
     thread_scope: row.constraint_thread_scope as "cwd" | "all",
     working_directory: row.constraint_working_directory as string,
     fixed_thread: row.constraint_fixed_thread as boolean,
-    permission_mode: row.constraint_permission_mode as "safe" | "inherit",
+    permission_mode: row.constraint_permission_mode as
+      | "safe"
+      | "inherit"
+      | "danger-full-access",
     approval_mode: row.constraint_approval_mode as
       | "decline"
       | "accept"

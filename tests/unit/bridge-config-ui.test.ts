@@ -4,6 +4,7 @@ import {
   BRIDGE_CONCURRENCY_NOTICE,
   BRIDGE_HISTORY_RETENTION_NOTICE,
   isAbsoluteWorkingDirectoryPath,
+  permissionLabel,
   validateWorkingDirectories,
 } from "@/components/bridge-config-dialog";
 import {
@@ -75,6 +76,12 @@ function configuration(
 }
 
 describe("Bridge configuration UI model", () => {
+  it("labels every device permission profile explicitly", () => {
+    expect(permissionLabel("danger-full-access")).toBe("完全访问（无沙箱）");
+    expect(permissionLabel("safe")).toBe("安全模式");
+    expect(permissionLabel("inherit")).toBe("继承本机设置");
+  });
+
   it("presents device concurrency as one Web-controlled limit", () => {
     expect(BRIDGE_CONCURRENCY_NOTICE).toContain("直接在 Web 设置");
     expect(BRIDGE_CONCURRENCY_NOTICE).toContain("整台设备");

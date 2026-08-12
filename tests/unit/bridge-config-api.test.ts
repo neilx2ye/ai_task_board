@@ -404,8 +404,8 @@ describe("AI Bridge configuration exchange API", () => {
     thread_scope: "cwd" as const,
     working_directory: "/srv/ai-task-board",
     fixed_thread: false,
-    permission_mode: "safe" as const,
-    approval_mode: "decline" as const,
+    permission_mode: "danger-full-access" as const,
+    approval_mode: "accept" as const,
   };
 
   it("accepts a first status report without an idempotency header", async () => {

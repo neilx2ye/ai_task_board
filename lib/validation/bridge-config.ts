@@ -77,7 +77,7 @@ export const bridgeConfigurationConstraintsSchema = z
     thread_scope: z.enum(["cwd", "all"]),
     working_directory: z.string().max(4096),
     fixed_thread: z.boolean(),
-    permission_mode: z.enum(["safe", "inherit"]),
+    permission_mode: z.enum(["safe", "inherit", "danger-full-access"]),
     approval_mode: z.enum(["decline", "accept", "accept-session"]),
     allow_history_sync: z.boolean(),
     max_history_turns: z.number().int().min(1).max(500),

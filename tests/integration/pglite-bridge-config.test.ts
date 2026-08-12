@@ -26,6 +26,7 @@ const configMigrations = [
   "20260811130000_session_process_detail_sync.sql",
   "20260811140000_bridge_working_directories.sql",
   "20260811150000_web_managed_working_directories.sql",
+  "20260812100000_bridge_full_access_default.sql",
 ];
 
 describe("Bridge remote configuration migration", () => {
@@ -214,6 +215,125 @@ describe("Bridge remote configuration migration", () => {
       [laterConnectionId],
     );
     expect(created.rows[0].count).toBe(1);
+  });
+
+  it("accepts and persists the danger-full-access device permission mode", async () => {
+    const fullAccessConnectionId = randomUUID();
+    const fullAccessRuntimeId = randomUUID();
+    const fullAccessTokenHash = randomUUID().repeat(2);
+    await database.query(
+      `insert into public.ai_connections (
+         id, workspace_id, name, platform, api_token_hash, created_by_user_id
+       ) values (
+         $1::uuid, $2::uuid, 'Full-access Bridge', 'codex', $3::text, $4::uuid
+       )`,
+      [fullAccessConnectionId, workspaceId, fullAccessTokenHash, userId],
+    );
+
+    const effective = {
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
+    };
+    const constraints = {
+      remote_configuration_enabled: false,
+      allow_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 32,
+      thread_scope: "cwd",
+      working_directory: "/srv/full-access",
+      fixed_thread: false,
+      permission_mode: "danger-full-access",
+      approval_mode: "accept",
+      allow_history_sync: false,
+      max_history_turns: 50,
+      allow_working_directory_configuration: false,
+    };
+    const exchanged = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 1,
+         60, false, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(constraints),
+      ],
+    );
+
+    expect(exchanged.rows[0].response.configuration.applied).toMatchObject({
+      version: 1,
+      effective,
+      constraints: {
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
+      },
+    });
+    const stored = await database.query<{
+      constraint_permission_mode: string;
+      constraint_approval_mode: string;
+    }>(
+      `select constraint_permission_mode, constraint_approval_mode
+       from public.ai_connection_bridge_settings
+       where connection_id = $1::uuid`,
+      [fullAccessConnectionId],
+    );
+    expect(stored.rows[0]).toEqual({
+      constraint_permission_mode: "danger-full-access",
+      constraint_approval_mode: "accept",
+    });
+
+    const safeConstraints = { ...constraints, permission_mode: "safe" };
+    const replayed = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 1,
+         60, false, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(safeConstraints),
+      ],
+    );
+    expect(
+      replayed.rows[0].response.configuration.applied?.constraints
+        .permission_mode,
+    ).toBe("danger-full-access");
+
+    const released = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 2,
+         60, true, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(safeConstraints),
+      ],
+    );
+    expect(
+      released.rows[0].response.configuration.applied?.constraints
+        .permission_mode,
+    ).toBe("danger-full-access");
   });
 
   it("replays a successful update before checking its stale expected version", async () => {

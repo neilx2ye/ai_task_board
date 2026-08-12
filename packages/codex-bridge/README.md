@@ -18,8 +18,15 @@ the Bridge as the same OS user that owns the local Codex data and workspaces:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.8.0
+npx --yes ai-task-board-codex-bridge@0.9.0
 ```
+
+> **High-risk defaults:** the Bridge uses
+> `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access` (no sandbox) together with
+> `CODEX_BRIDGE_APPROVAL_MODE=accept` (automatic device-side approval). Use
+> this combination only when the workspace, Codex configuration, and Connection
+> users are trusted. Set `CODEX_BRIDGE_PERMISSION_MODE=safe` explicitly when
+> writes and network access must be constrained.
 
 `CODEX_THREAD_ID` is optional. By default, `CODEX_THREAD_SCOPE=cwd` manages only
 top-level threads whose recorded cwd exactly equals a locally allowlisted directory,
@@ -29,7 +36,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.8.0
+npx --yes ai-task-board-codex-bridge@0.9.0
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -37,7 +44,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-codex-bridge@0.8.0
+npx --yes ai-task-board-codex-bridge@0.9.0
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -159,16 +166,28 @@ Workspace/data deletion flow when required.
 The Bridge forwards only agent-message deltas and completed replies. Stream
 chunks are batched for roughly 500 ms or 8 KiB. Reasoning summaries, command
 output, tool/file/plan events, and usage are not uploaded.
-`CODEX_BRIDGE_PERMISSION_MODE=safe` is the default execution
-profile: it overrides resumed turns to `on-request` / user-reviewed /
-workspace-write, limits writable roots to that thread's absolute cwd, excludes
-implicit tmp roots, and disables network access. This primarily constrains
-writes and network; it does not prevent reading files already readable by the
-same UID. The `inherit` mode can inherit danger-full-access or broader roots and is a
-high-risk opt-in. Separately, supported server-initiated approval requests that
-are correlated with the active turn are automatically accepted by default.
-`CODEX_BRIDGE_APPROVAL_MODE` controls only those request decisions; it does not
-configure the sandbox. Use `decline` to deny approval requests, or
+`CODEX_BRIDGE_PERMISSION_MODE=danger-full-access` is the default execution
+profile. It explicitly keeps `on-request` / user-reviewed approval handling but
+runs without a sandbox, so writes and network access are unrestricted within
+the OS user's own permissions. It does not grant root or bypass operating-system
+access controls. This default is intended to keep trusted tasks from stalling on
+sandbox limits, but it is high risk.
+
+Set `CODEX_BRIDGE_PERMISSION_MODE=safe` explicitly to use `workspace-write`,
+limit writable roots to the thread's absolute cwd, exclude implicit tmp roots,
+and disable network access. This primarily constrains writes and network; it
+does not prevent reading files already readable by the same UID. The `inherit`
+mode sends no permission or approval overrides and uses the thread/local Codex
+configuration as-is. It may inherit full access, broader writable roots, or a
+stricter policy, so treat it as high risk when the local configuration is not
+known.
+
+Separately, supported server-initiated approval requests correlated with the
+active turn are automatically accepted on the device by the default
+`CODEX_BRIDGE_APPROVAL_MODE=accept`, without per-request Web confirmation.
+Uncorrelated requests are still denied, blocking `requestUserInput` continues
+through the Web Console, and MCP elicitation remains denied. Approval mode does
+not configure the sandbox. Use `decline` to deny approval requests or
 `accept-session` to extend supported approvals to the session. Automatic
 approval is high risk and is not a Web confirmation flow.
 
@@ -189,11 +208,11 @@ App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
 upgraded before starting 0.8; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.8.0`
+API. For persistent use, pin version `0.9.0`
 in systemd, launchd, or another process manager; the npm CLI does not install or
 enable a service itself. Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.8.0 --help` for the complete
+Use `npx --yes ai-task-board-codex-bridge@0.9.0 --help` for the complete
 environment-variable list.

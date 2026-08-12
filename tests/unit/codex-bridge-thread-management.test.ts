@@ -239,28 +239,31 @@ describe("Codex Bridge Web Thread management", () => {
     const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
     await writeFile(fakeCodex, FAKE_CODEX, "utf8");
     await chmod(fakeCodex, 0o755);
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_thread_management_token",
+      AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS: "1000",
+      AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
+      AI_TASK_BOARD_POLL_INTERVAL_MS: "500",
+      CODEX_BINARY: fakeCodex,
+      CODEX_WORKING_DIRECTORY: temporaryDirectory,
+      CODEX_BRIDGE_WEB_CONFIG: "true",
+      CODEX_BRIDGE_INCLUDE_THREAD_TITLES: "true",
+      CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
+      CODEX_THREAD_ID: "",
+      CODEX_THREAD_SCOPE: "all",
+      CODEX_MAX_THREADS: "10",
+      CODEX_MAX_CONCURRENT_TURNS: "2",
+    };
+    delete environment.CODEX_BRIDGE_PERMISSION_MODE;
+    delete environment.CODEX_BRIDGE_APPROVAL_MODE;
     child = spawn(
       path.resolve("node_modules/.bin/tsx"),
       [path.resolve("packages/codex-bridge/src/cli.ts")],
       {
         cwd: process.cwd(),
-        env: {
-          ...process.env,
-          AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
-          AI_TASK_BOARD_CONNECTION_TOKEN: "atb_thread_management_token",
-          AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS: "1000",
-          AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
-          AI_TASK_BOARD_POLL_INTERVAL_MS: "500",
-          CODEX_BINARY: fakeCodex,
-          CODEX_WORKING_DIRECTORY: temporaryDirectory,
-          CODEX_BRIDGE_WEB_CONFIG: "true",
-          CODEX_BRIDGE_INCLUDE_THREAD_TITLES: "true",
-          CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
-          CODEX_THREAD_ID: "",
-          CODEX_THREAD_SCOPE: "all",
-          CODEX_MAX_THREADS: "10",
-          CODEX_MAX_CONCURRENT_TURNS: "2",
-        },
+        env: environment,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -311,7 +314,13 @@ describe("Codex Bridge Web Thread management", () => {
         body: expect.objectContaining({ succeeded: true }),
       }),
     ]);
-    expect(stderr).toContain('THREAD_START {"cwd":');
+    expect(stderr).toContain(
+      `THREAD_START {"cwd":${JSON.stringify(temporaryDirectory)},` +
+        '"approvalPolicy":"on-request",' +
+        '"approvalsReviewer":"user",' +
+        '"sandbox":"danger-full-access"}',
+    );
+    expect(stderr).not.toContain('"sandbox":"workspace-write"');
     expect(stderr).toContain(
       'THREAD_RENAME {"threadId":"thread-created","name":"Created from Web"}',
     );

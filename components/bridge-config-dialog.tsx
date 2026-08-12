@@ -167,7 +167,10 @@ function scopeLabel(constraints: BridgeConfigConstraints): string {
     : "整台设备";
 }
 
-function permissionLabel(mode: BridgeConfigConstraints["permission_mode"]): string {
+export function permissionLabel(
+  mode: BridgeConfigConstraints["permission_mode"],
+): string {
+  if (mode === "danger-full-access") return "完全访问（无沙箱）";
   return mode === "safe" ? "安全模式" : "继承本机设置";
 }
 

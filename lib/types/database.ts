@@ -141,7 +141,11 @@ export type AIConnectionBridgeSettingsRow = {
   constraint_thread_scope: "cwd" | "all" | null;
   constraint_working_directory: string | null;
   constraint_fixed_thread: boolean | null;
-  constraint_permission_mode: "safe" | "inherit" | null;
+  constraint_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
   constraint_approval_mode: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync: boolean | null;
   constraint_max_history_turns: number | null;
@@ -181,7 +185,11 @@ export type AIConnectionBridgeSettingsInsert = {
   constraint_thread_scope?: "cwd" | "all" | null;
   constraint_working_directory?: string | null;
   constraint_fixed_thread?: boolean | null;
-  constraint_permission_mode?: "safe" | "inherit" | null;
+  constraint_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
   constraint_approval_mode?: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync?: boolean | null;
   constraint_max_history_turns?: number | null;
@@ -774,7 +782,7 @@ export type BridgeConfigurationConstraints = {
   thread_scope: "cwd" | "all";
   working_directory: string;
   fixed_thread: boolean;
-  permission_mode: "safe" | "inherit";
+  permission_mode: "safe" | "inherit" | "danger-full-access";
   approval_mode: "decline" | "accept" | "accept-session";
   allow_history_sync: boolean;
   max_history_turns: number;
