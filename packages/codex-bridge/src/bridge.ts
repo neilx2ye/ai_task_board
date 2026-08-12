@@ -282,6 +282,10 @@ type ThreadCommandResponse = {
   command: ThreadCommand | null;
 };
 
+type CreatedThreadIdsResponse = {
+  thread_ids?: string[];
+};
+
 type ActivityBuffer = {
   kind: Extract<ActivityKind, "assistant_message" | "reasoning" | "command">;
   turnId: string;
@@ -1155,6 +1159,24 @@ class BoardClient {
       },
     );
     return result.command;
+  }
+
+  async listCreatedThreadIds(signal?: AbortSignal): Promise<string[]> {
+    const result = await this.request<CreatedThreadIdsResponse>(
+      "/api/ai/thread-commands/created",
+      {
+        method: "GET",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+      },
+    );
+    return Array.isArray(result.thread_ids)
+      ? result.thread_ids.filter(
+          (threadId): threadId is string =>
+            typeof threadId === "string" && threadId.length > 0,
+        )
+      : [];
   }
 
   async completeThreadCommand(
@@ -3363,28 +3385,7 @@ class DeviceBridge {
       scanned += page.data.length;
       for (const candidate of page.data) {
         const thread = candidate as ThreadRecord;
-        if (
-          this.configuration.threadIdFilter &&
-          thread.id !== this.configuration.threadIdFilter
-        ) {
-          continue;
-        }
-        if (stringValue(thread.parentThreadId)) continue;
-        if (
-          !this.configuration.threadIdFilter &&
-          this.configuration.threadScope === "cwd"
-        ) {
-          const cwd = threadCwd(thread);
-          if (
-            !cwd ||
-            !managedDirectoryForWorkingDirectory(
-              cwd,
-              this.configuration.workingDirectories,
-            )
-          ) {
-            continue;
-          }
-        }
+        if (!this.shouldManageThread(thread)) continue;
         threads.push(thread);
         if (threads.length >= this.configuration.maxThreads) break;
       }
@@ -3402,7 +3403,66 @@ class DeviceBridge {
         `找不到 CODEX_THREAD_ID=${this.configuration.threadIdFilter}；请确认该 thread 属于当前系统用户`,
       );
     }
-    return threads;
+
+    // App Server deliberately hides a Thread with no Turns from thread/list.
+    // Successful Web creates are persisted locally and remain readable by id,
+    // so merge those exact records into the authoritative inventory until the
+    // first Turn makes them naturally discoverable.
+    const discoveredIds = new Set(threads.map((thread) => thread.id));
+    const createdThreadIds = await this.board.listCreatedThreadIds(
+      this.stopController.signal,
+    );
+    const recovered = await Promise.all(
+      createdThreadIds
+        .filter((threadId) => !discoveredIds.has(threadId))
+        .map(async (threadId): Promise<ThreadRecord | null> => {
+          try {
+            const response = await this.appServer.threadRead({
+              threadId,
+              includeTurns: false,
+            });
+            const thread = response.thread as ThreadRecord;
+            return this.shouldManageThread(thread) ? thread : null;
+          } catch {
+            // A locally deleted/archived create can outlive its audit command.
+            return null;
+          }
+        }),
+    );
+    const combined = [
+      ...threads,
+      ...recovered.filter((thread): thread is ThreadRecord => thread !== null),
+    ];
+    combined.sort((left, right) => {
+      const leftRecency = left.updatedAt ?? left.createdAt ?? 0;
+      const rightRecency = right.updatedAt ?? right.createdAt ?? 0;
+      return rightRecency - leftRecency;
+    });
+    return combined.slice(0, this.configuration.maxThreads);
+  }
+
+  private shouldManageThread(thread: ThreadRecord): boolean {
+    if (
+      this.configuration.threadIdFilter &&
+      thread.id !== this.configuration.threadIdFilter
+    ) {
+      return false;
+    }
+    if (stringValue(thread.parentThreadId)) return false;
+    if (
+      !this.configuration.threadIdFilter &&
+      this.configuration.threadScope === "cwd"
+    ) {
+      const cwd = threadCwd(thread);
+      return Boolean(
+        cwd &&
+          managedDirectoryForWorkingDirectory(
+            cwd,
+            this.configuration.workingDirectories,
+          ),
+      );
+    }
+    return true;
   }
 
   private async handleServerRequest(

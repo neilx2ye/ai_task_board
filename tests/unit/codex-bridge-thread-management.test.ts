@@ -16,6 +16,8 @@ const threads = [{
   cwd: process.cwd(),
   parentThreadId: null,
 }];
+const emptyThreads = [];
+const allThreads = () => [...threads, ...emptyThreads];
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 lines.on("line", (line) => {
@@ -24,8 +26,12 @@ lines.on("line", (line) => {
     send({ id: message.id, result: { userAgent: "fake-thread-manager" } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: { data: threads, nextCursor: null } });
+  } else if (message.method === "thread/read") {
+    const thread = allThreads().find((candidate) => candidate.id === message.params.threadId);
+    if (thread) send({ id: message.id, result: { thread } });
+    else send({ id: message.id, error: { code: -32602, message: "Thread not found" } });
   } else if (message.method === "thread/resume") {
-    const thread = threads.find((candidate) => candidate.id === message.params.threadId);
+    const thread = allThreads().find((candidate) => candidate.id === message.params.threadId);
     send({ id: message.id, result: { thread, cwd: thread?.cwd } });
   } else if (message.method === "thread/start") {
     const thread = {
@@ -35,17 +41,21 @@ lines.on("line", (line) => {
       cwd: message.params.cwd,
       parentThreadId: null,
     };
-    threads.push(thread);
+    // Real Codex persists this record and permits exact thread/read, but keeps
+    // a zero-Turn Thread out of thread/list until its first Turn starts.
+    emptyThreads.push(thread);
     process.stderr.write("THREAD_START " + JSON.stringify(message.params) + "\\n");
     send({ id: message.id, result: { thread } });
   } else if (message.method === "thread/name/set") {
-    const thread = threads.find((candidate) => candidate.id === message.params.threadId);
+    const thread = allThreads().find((candidate) => candidate.id === message.params.threadId);
     if (thread) thread.name = message.params.name;
     process.stderr.write("THREAD_RENAME " + JSON.stringify(message.params) + "\\n");
     send({ id: message.id, result: {} });
   } else if (message.method === "thread/delete") {
-    const index = threads.findIndex((candidate) => candidate.id === message.params.threadId);
-    if (index >= 0) threads.splice(index, 1);
+    for (const collection of [threads, emptyThreads]) {
+      const index = collection.findIndex((candidate) => candidate.id === message.params.threadId);
+      if (index >= 0) collection.splice(index, 1);
+    }
     process.stderr.write("THREAD_DELETE " + JSON.stringify(message.params) + "\\n");
     send({ id: message.id, result: {} });
   }
@@ -138,6 +148,7 @@ describe("Codex Bridge Web Thread management", () => {
     }> = [];
     const inventories: Array<Array<Record<string, unknown>>> = [];
     const wakeResponses = new Set<ServerResponse>();
+    let createdCommandCompleted = false;
     let stdout = "";
     let stderr = "";
 
@@ -178,6 +189,12 @@ describe("Codex Bridge Web Thread management", () => {
         });
         return;
       }
+      if (pathname === "/api/ai/thread-commands/created") {
+        json(response, {
+          thread_ids: createdCommandCompleted ? ["thread-created"] : [],
+        });
+        return;
+      }
       if (pathname === "/api/ai/thread-commands/claim") {
         await bodyOf(request);
         json(response, { command: commands.shift() ?? null });
@@ -187,6 +204,9 @@ describe("Codex Bridge Web Thread management", () => {
         /^\/api\/ai\/thread-commands\/([^/]+)\/complete$/,
       );
       if (completion) {
+        if (completion[1] === "11111111-1111-4111-8111-111111111111") {
+          createdCommandCompleted = true;
+        }
         completions.push({
           commandId: completion[1],
           body: await bodyOf(request),
@@ -352,6 +372,10 @@ describe("Codex Bridge Web Thread management", () => {
             deletion_requested_at: new Date().toISOString(),
           })),
         });
+        return;
+      }
+      if (pathname === "/api/ai/thread-commands/created") {
+        json(response, { thread_ids: [] });
         return;
       }
       if (pathname === "/api/ai/thread-commands/claim") {

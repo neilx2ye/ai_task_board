@@ -12,6 +12,7 @@ const domainMocks = vi.hoisted(() => ({
   renameConnection: vi.fn(),
   createThread: vi.fn(),
   claimThreadCommand: vi.fn(),
+  listCreatedThreadIds: vi.fn(),
   completeThreadCommand: vi.fn(),
 }));
 const routeMocks = vi.hoisted(() => ({
@@ -25,6 +26,7 @@ vi.mock("@/lib/domain/users", () => ({
 }));
 vi.mock("@/lib/domain/thread-management", () => ({
   claimThreadCommand: domainMocks.claimThreadCommand,
+  listCreatedThreadIds: domainMocks.listCreatedThreadIds,
   completeThreadCommand: domainMocks.completeThreadCommand,
 }));
 vi.mock("@/lib/http/user-route", () => ({
@@ -35,6 +37,7 @@ vi.mock("@/lib/auth/ai-auth", () => ({
 }));
 
 import { POST as claimCommand } from "@/app/api/ai/thread-commands/claim/route";
+import { GET as listCreatedThreads } from "@/app/api/ai/thread-commands/created/route";
 import { POST as completeCommand } from "@/app/api/ai/thread-commands/[commandId]/complete/route";
 import { PATCH as renameConnection } from "@/app/api/user/connections/[connectionId]/route";
 import { POST as createThread } from "@/app/api/user/connections/[connectionId]/threads/route";
@@ -65,6 +68,9 @@ beforeEach(() => {
   domainMocks.renameConnection.mockResolvedValue({ connection: { connectionId } });
   domainMocks.createThread.mockResolvedValue({ command: { id: commandId } });
   domainMocks.claimThreadCommand.mockResolvedValue({ command: null });
+  domainMocks.listCreatedThreadIds.mockResolvedValue({
+    thread_ids: ["local-thread-42"],
+  });
   domainMocks.completeThreadCommand.mockResolvedValue({
     command: { id: commandId, status: "succeeded" },
   });
@@ -122,6 +128,22 @@ describe("Web Thread management REST API", () => {
       expect.objectContaining({ connectionId }),
       { runtime_instance_id: runtimeId, lease_seconds: 60 },
     );
+  });
+
+  it("lists successful Web-created Thread ids for empty-Thread recovery", async () => {
+    const request = new Request(
+      "http://localhost/api/ai/thread-commands/created",
+    );
+    const response = await listCreatedThreads(request);
+
+    expect(response.status).toBe(200);
+    expect(routeMocks.authenticateAIRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.listCreatedThreadIds).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      data: { thread_ids: ["local-thread-42"] },
+    });
   });
 
   it("reports a successful local command result", async () => {
