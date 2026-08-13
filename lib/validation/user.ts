@@ -149,6 +149,8 @@ export const createThreadSchema = z
   .object({
     name: nonEmptyText.max(200),
     directory_key: bridgeDirectoryKeySchema.nullable().optional(),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
   })
   .strict();
 

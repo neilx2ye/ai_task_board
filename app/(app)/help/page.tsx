@@ -4,7 +4,6 @@ import {
   ArrowRightIcon,
   CableIcon,
   CircleHelpIcon,
-  KanbanSquareIcon,
   BotIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -136,7 +135,7 @@ function FaqItem({ question, children }: { question: string; children: ReactNode
   );
 }
 
-const ACTION_ICONS = [BotIcon, CableIcon, KanbanSquareIcon] as const;
+const ACTION_ICONS = [BotIcon, CableIcon] as const;
 
 export default function HelpPage() {
   return (
@@ -147,10 +146,9 @@ export default function HelpPage() {
           <h1 className="text-xl font-semibold tracking-tight">帮助中心</h1>
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          AI Task Board 是会话优先的任务控制台：外部 AI 会话（ChatGPT、Claude、
-          Codex、Gemini 或自定义 Agent）先在 CLI / APP 中建立上下文，再通过本机
-          Bridge 或 REST API 同步工作；Web Console 可以向指定的存活会话发送
-          下一任务，并查看 AI 回复。
+          当你准备在一台新设备上安装和配置 Bridge 时，请按下面的顺序完成本机准备、
+          连接创建、Bridge 启动和网页验证。新设备只需能访问 AI Task Board，
+          不需要克隆或运行看板项目。
         </p>
       </header>
 
@@ -166,25 +164,64 @@ export default function HelpPage() {
         ))}
       </nav>
 
-      <Section id="getting-started" title="快速上手">
+      <Section
+        id="getting-started"
+        title="当我准备在一台新设备上安装和配置 Bridge 时，应该要怎么做？"
+      >
         <ol className="flex flex-col gap-4">
-          <Step index={1} title="创建 AI 连接并保存一次性令牌">
-            在「AI 连接」页创建连接。连接令牌
+          <Step index={1} title="准备新设备和 Codex">
+            安装 Node.js 18 或更高版本以及兼容的 Codex CLI，并使用准备运行 Bridge
+            的同一个操作系统用户完成 Codex 登录。确认该用户可以访问目标工作目录，
+            且设备可以通过 HTTPS 访问 AI Task Board。
+          </Step>
+          <Step index={2} title="为这台设备创建 AI 连接">
+            打开
+            <Link
+              href="/connections"
+              className="mx-1 font-medium text-foreground underline underline-offset-4"
+            >
+              「AI 连接」
+            </Link>
+            ，创建一个 Codex 连接。连接令牌
             <strong className="text-foreground">只显示一次</strong>
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
-          <Step index={2} title="在会话所在机器启动 Bridge 或手动注册">
-            Codex 推荐运行本机 Bridge，它会发现允许范围内的本地 thread、同步会话并维持心跳；
-            其他 Harness 也可以通过 REST 手动注册。两分钟没有活动的会话不会被视为存活。
+          <Step index={3} title="确定工作目录和权限边界">
+            准备项目在新设备上的绝对路径。默认的
+            <code className="mx-1 rounded bg-muted px-1 text-xs">
+              CODEX_THREAD_SCOPE=cwd
+            </code>
+            只管理工作目录完全匹配的顶层 thread；除非明确需要跨项目发现，否则不要改为
+            <code className="mx-1 rounded bg-muted px-1 text-xs">all</code>。
+            如果任务不需要完整文件和网络访问，请把权限模式设为
+            <code className="mx-1 rounded bg-muted px-1 text-xs">safe</code>。
           </Step>
-          <Step index={3} title="从会话对话框发送下一任务">
-            点击会话卡片即可查看历史并发送消息。系统会自动生成任务名称，将它作为
-            下一项任务预留给此会话；也可以使用「预留任务」填写更完整的任务字段。
+          <Step index={4} title="在新设备上启动 Bridge">
+            使用
+            <a
+              href="#codex-bridge"
+              className="mx-1 font-medium text-foreground underline underline-offset-4"
+            >
+              下方启动命令
+            </a>
+            ，替换看板地址、一次性连接令牌和工作目录后运行。命令必须由拥有本机
+            Codex 登录与工作区的用户执行；同一台设备和 Connection 只运行一个 Bridge。
           </Step>
-          <Step index={4} title="执行与回复">
-            会话读取自己的预留队列并持续回传进度。忙碌时发送的新消息会排成该
-            thread 的下一项任务；Bridge 0.6 会把协议级结构化问题显示成 Web
-            选择框，保留当前 turn，并在提交后原地继续。
+          <Step index={5} title="回到网页完成配置并验证">
+            Bridge 上线后，在「AI 连接 → Bridge 设置」确认实际配置，再到
+            <Link
+              href="/sessions"
+              className="mx-1 font-medium text-foreground underline underline-offset-4"
+            >
+              「会话与上下文」
+            </Link>
+            检查“设备 → 工作目录 → Thread”是否出现。没有现有 thread 时，可以在已上报的
+            工作目录下新建一个 Thread，再发送一条测试消息确认 AI 回复能够回传。
+          </Step>
+          <Step index={6} title="确认可用后配置常驻运行">
+            固定 Bridge 包版本，并使用 systemd、launchd 或其他本机进程管理器负责
+            开机启动和异常重启。连接令牌应通过 Secret 管理器或权限受限的环境文件注入，
+            不要写入仓库、服务文件、截图或共享日志。
           </Step>
         </ol>
       </Section>
@@ -285,7 +322,7 @@ npx --yes ai-task-board-codex-bridge@0.9.0`}</CopyableCodeBlock>
           />
         </ul>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          其他状态不占用固定列，通过任务流顶部的筛选器显示：
+          其他状态会在相关任务和会话中显示：
           <Badge className={cn("mx-1", TASK_STATUS_META.blocked.badgeClass)}>
             已阻塞
           </Badge>
@@ -371,9 +408,10 @@ Idempotency-Key: <唯一键>
 
       <Section id="faq" title="常见问题">
         <div className="flex flex-col gap-2">
-          <FaqItem question="看板为什么是空的？">
-            先在 CLI / APP 注册一个持续心跳的会话，再从会话卡片预留任务；或者让会话
-            用 report-current 同步已开始的工作。如果任务存在但看不到，检查顶部的其他状态筛选器。
+          <FaqItem question="为什么看不到会话或任务？">
+            先在 CLI / APP 注册一个持续心跳的会话，并在「会话与上下文」的
+            Thread 管理器中将它显示到侧边栏。从会话预留任务，或让会话用
+            report-current 同步已开始的工作后，Thread 条目会显示当前任务状态。
           </FaqItem>
           <FaqItem question="无法登录或收不到验证邮件？">
             请确认使用注册时的邮箱和密码。当前开发项目已在 Supabase 中关闭邮箱
@@ -389,7 +427,7 @@ Idempotency-Key: <唯一键>
             会话接收任务时会生成 60~3600 秒的租约（默认 900 秒），AI 通过心跳续期。
             租约过期说明会话可能已失联；任务不会被别的 AI 抢走。你可以手动释放后再明确改派。
           </FaqItem>
-          <FaqItem question="看板会自动刷新吗？">
+          <FaqItem question="页面会自动刷新吗？">
             会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话活动、会话和附件的
             变化并自动更新；断线重连后会补拉遗漏事件，另有 30 秒低频轮询兜底，
             不需要手动刷新。
@@ -402,7 +440,7 @@ Idempotency-Key: <唯一键>
         </div>
       </Section>
 
-      <nav aria-label="快速操作" className="grid gap-3 sm:grid-cols-3">
+      <nav aria-label="快速操作" className="grid gap-3 sm:grid-cols-2">
         {HELP_ACTIONS.map((action, index) => {
           const Icon = ACTION_ICONS[index] ?? ArrowRightIcon;
           return (

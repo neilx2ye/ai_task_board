@@ -215,7 +215,12 @@ type ThreadCommandResult = { command: AIThreadCommandRow };
 export function useCreateThread(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; directory_key?: string | null }) =>
+    mutationFn: (input: {
+      name: string;
+      directory_key?: string | null;
+      model?: string | null;
+      reasoning_effort?: string | null;
+    }) =>
       apiFetch<ThreadCommandResult>(
         `/api/user/connections/${connectionId}/threads`,
         { method: "POST", json: input },

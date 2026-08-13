@@ -133,6 +133,9 @@ export interface AppServerThreadItemsListResponse {
 }
 
 export interface AppServerThreadStartParams {
+  model?: string | null;
+  /** Per-thread Codex config overrides, such as model_reasoning_effort. */
+  config?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 

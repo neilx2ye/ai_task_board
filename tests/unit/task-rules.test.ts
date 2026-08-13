@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   aggregateParentStatus,
-  calculateLeafProgress,
   compareClaimCandidates,
   hasRequiredCapabilities,
   isTaskStatusTransitionAllowed,
   matchesCapabilities,
-  taskBoardStatus,
+  taskDisplayStatus,
 } from "@/lib/domain/task-rules";
 import type { TaskStatus } from "@/lib/types/database";
 
@@ -23,22 +22,22 @@ const statuses: TaskStatus[] = [
   "cancelled",
 ];
 
-describe("board task status", () => {
+describe("task display status", () => {
   it("does not present an unassigned legacy leaf as reserved", () => {
     expect(
-      taskBoardStatus({ status: "ready", assigned_session_id: null }),
+      taskDisplayStatus({ status: "ready", assigned_session_id: null }),
     ).toBe("inbox");
   });
 
   it("keeps assigned leaves and aggregate parents in the reserved flow", () => {
     expect(
-      taskBoardStatus({
+      taskDisplayStatus({
         status: "ready",
         assigned_session_id: "session-1",
       }),
     ).toBe("ready");
     expect(
-      taskBoardStatus(
+      taskDisplayStatus(
         { status: "ready", assigned_session_id: null },
         true,
       ),
@@ -47,10 +46,10 @@ describe("board task status", () => {
 
   it("does not infer completion for any terminal or active status", () => {
     expect(
-      taskBoardStatus({ status: "running", assigned_session_id: null }),
+      taskDisplayStatus({ status: "running", assigned_session_id: null }),
     ).toBe("running");
     expect(
-      taskBoardStatus({ status: "completed", assigned_session_id: null }),
+      taskDisplayStatus({ status: "completed", assigned_session_id: null }),
     ).toBe("completed");
   });
 });
@@ -72,59 +71,6 @@ describe("parent status aggregation", () => {
       expect(aggregateParentStatus(children)).toBe(expected);
     },
   );
-});
-
-describe("multi-level leaf progress", () => {
-  it("counts only non-cancelled leaves at arbitrary depth", () => {
-    const tasks = [
-      { id: "root", parent_task_id: null, status: "running" },
-      { id: "leaf-a", parent_task_id: "root", status: "completed" },
-      { id: "branch-b", parent_task_id: "root", status: "ready" },
-      { id: "leaf-b1", parent_task_id: "branch-b", status: "completed" },
-      { id: "branch-b2", parent_task_id: "branch-b", status: "blocked" },
-      { id: "leaf-b2a", parent_task_id: "branch-b2", status: "ready" },
-      { id: "cancelled-leaf", parent_task_id: "root", status: "cancelled" },
-    ] as const;
-
-    expect(calculateLeafProgress(tasks, "root")).toEqual({
-      completed_leaves: 2,
-      total_leaves: 3,
-    });
-  });
-
-  it.each([
-    ["ready", { completed_leaves: 0, total_leaves: 1 }],
-    ["completed", { completed_leaves: 1, total_leaves: 1 }],
-  ] as const)("treats a %s root leaf as one unit", (status, expected) => {
-    expect(
-      calculateLeafProgress([{ id: "root", parent_task_id: null, status }], "root"),
-    ).toEqual(expected);
-  });
-
-  it("does not turn an aggregation parent back into a leaf when all children cancel", () => {
-    expect(
-      calculateLeafProgress(
-        [
-          { id: "root", parent_task_id: null, status: "blocked" },
-          { id: "cancelled", parent_task_id: "root", status: "cancelled" },
-        ],
-        "root",
-      ),
-    ).toEqual({ completed_leaves: 0, total_leaves: 0 });
-  });
-
-  it("returns zero progress for an absent or cancelled root", () => {
-    const tasks = [{ id: "root", parent_task_id: null, status: "cancelled" }] as const;
-
-    expect(calculateLeafProgress(tasks, "missing")).toEqual({
-      completed_leaves: 0,
-      total_leaves: 0,
-    });
-    expect(calculateLeafProgress(tasks, "root")).toEqual({
-      completed_leaves: 0,
-      total_leaves: 0,
-    });
-  });
 });
 
 describe("capability matching", () => {

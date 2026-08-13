@@ -4,55 +4,44 @@ type StatusMeta = {
   label: string;
   /** 徽标样式：浅色底 + 深色字，避免过度渐变。 */
   badgeClass: string;
-  /** 看板卡片左侧的状态条颜色。 */
-  barClass: string;
 };
 
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   inbox: {
     label: "未绑定（历史）",
     badgeClass: "border-stone-200 bg-stone-100 text-stone-700",
-    barClass: "bg-stone-300",
   },
   ready: {
     label: "已预留",
     badgeClass: "border-teal-200 bg-teal-50 text-teal-700",
-    barClass: "bg-teal-500",
   },
   claimed: {
     label: "会话已接收",
     badgeClass: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    barClass: "bg-indigo-400",
   },
   running: {
     label: "执行中",
     badgeClass: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    barClass: "bg-indigo-500",
   },
   waiting_user: {
     label: "等我回复",
     badgeClass: "border-amber-200 bg-amber-50 text-amber-800",
-    barClass: "bg-amber-500",
   },
   blocked: {
     label: "已阻塞",
     badgeClass: "border-orange-200 bg-orange-50 text-orange-800",
-    barClass: "bg-orange-400",
   },
   completed: {
     label: "已完成",
     badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    barClass: "bg-emerald-500",
   },
   failed: {
     label: "已失败",
     badgeClass: "border-red-200 bg-red-50 text-red-700",
-    barClass: "bg-red-500",
   },
   cancelled: {
     label: "已取消",
     badgeClass: "border-stone-200 bg-stone-100 text-stone-500",
-    barClass: "bg-stone-300",
   },
 };
 

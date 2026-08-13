@@ -1,11 +1,5 @@
 import type { TaskStatus } from "@/lib/types/database";
 
-export type TaskTreeNode = {
-  id: string;
-  parent_task_id: string | null;
-  status: TaskStatus;
-};
-
 export type ClaimCandidate = {
   id: string;
   root_task_id?: string;
@@ -13,7 +7,7 @@ export type ClaimCandidate = {
   created_at: string;
 };
 
-export type BoardTaskState = {
+export type TaskDisplayState = {
   status: TaskStatus;
   assigned_session_id: string | null;
 };
@@ -25,11 +19,11 @@ export type BoardTaskState = {
  * some AI conversation will receive them. Aggregate parents are exempt because
  * their `ready` state is derived from assigned descendants.
  *
- * This is a board projection only. In particular, it never guesses that a task
- * completed from text, activity timestamps, or session presence.
+ * This is a display projection only. In particular, it never guesses that a
+ * task completed from text, activity timestamps, or session presence.
  */
-export function taskBoardStatus(
-  task: BoardTaskState,
+export function taskDisplayStatus(
+  task: TaskDisplayState,
   hasChildren = false,
 ): TaskStatus {
   if (
@@ -57,49 +51,6 @@ export function aggregateParentStatus(statuses: readonly TaskStatus[]): TaskStat
   if (active.includes("failed")) return "failed";
   if (active.includes("ready")) return "ready";
   return "blocked";
-}
-
-/** Count non-cancelled leaves below (or including) rootTaskId at any depth. */
-export function calculateLeafProgress(
-  tasks: readonly TaskTreeNode[],
-  rootTaskId: string,
-): { completed_leaves: number; total_leaves: number } {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const root = byId.get(rootTaskId);
-  if (!root || root.status === "cancelled") {
-    return { completed_leaves: 0, total_leaves: 0 };
-  }
-
-  const allChildren = new Map<string, TaskTreeNode[]>();
-  for (const task of tasks) {
-    if (!task.parent_task_id) continue;
-    const siblings = allChildren.get(task.parent_task_id) ?? [];
-    siblings.push(task);
-    allChildren.set(task.parent_task_id, siblings);
-  }
-
-  let completedLeaves = 0;
-  let totalLeaves = 0;
-  const visited = new Set<string>();
-  const queue = [root];
-  while (queue.length) {
-    const task = queue.shift();
-    if (!task || visited.has(task.id)) continue;
-    visited.add(task.id);
-    const children = allChildren.get(task.id) ?? [];
-    const activeChildren = children.filter((child) => child.status !== "cancelled");
-    if (!activeChildren.length) {
-      // Once a parent has children it stays aggregation-only, even if every
-      // child was cancelled. This matches the SQL structured-progress helper.
-      if (task.id === rootTaskId && children.length > 0) continue;
-      totalLeaves += 1;
-      if (task.status === "completed") completedLeaves += 1;
-      continue;
-    }
-    queue.push(...activeChildren);
-  }
-
-  return { completed_leaves: completedLeaves, total_leaves: totalLeaves };
 }
 
 export function matchesCapabilities(

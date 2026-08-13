@@ -33,7 +33,7 @@ export default function TaskDetailPage() {
           onRetry={notFound ? undefined : () => void detailsQuery.refetch()}
         />
         <Button variant="outline" className="w-fit" asChild>
-          <Link href="/board">返回看板</Link>
+          <Link href="/sessions">返回会话与上下文</Link>
         </Button>
       </div>
     );

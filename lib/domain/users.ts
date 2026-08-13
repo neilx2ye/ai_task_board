@@ -512,11 +512,13 @@ async function enqueueThreadCommand(
     action: "create" | "rename" | "delete";
     name: string | null;
     directoryKey: string | null;
+    model: string | null;
+    reasoningEffort: string | null;
   },
   idempotencyKey: string,
 ) {
   const scope = `${context.workspaceId}\0${context.userId}\0enqueue_ai_thread_command\0${idempotencyKey}`;
-  return callDomainRpc("enqueue_ai_thread_command_with_directory", {
+  return callDomainRpc("enqueue_ai_thread_command_with_settings", {
     ...userContext(context),
     p_command_id: deriveStableUuid(scope),
     p_connection_id: input.connectionId,
@@ -524,8 +526,10 @@ async function enqueueThreadCommand(
     p_action: input.action,
     p_name: input.name,
     p_directory_key: input.directoryKey,
+    p_model: input.model,
+    p_reasoning_effort: input.reasoningEffort,
     ...commandMetadata(
-      "enqueue_ai_thread_command_with_directory",
+      "enqueue_ai_thread_command_with_settings",
       input,
       idempotencyKey,
     ),
@@ -546,6 +550,8 @@ export function createThread(
       action: "create",
       name: input.name,
       directoryKey: input.directory_key ?? null,
+      model: input.model ?? null,
+      reasoningEffort: input.reasoning_effort ?? null,
     },
     idempotencyKey,
   );
@@ -583,6 +589,8 @@ export async function renameThread(
       action: "rename",
       name: input.name,
       directoryKey: null,
+      model: null,
+      reasoningEffort: null,
     },
     idempotencyKey,
   );
@@ -602,6 +610,8 @@ export async function deleteThread(
       action: "delete",
       name: null,
       directoryKey: null,
+      model: null,
+      reasoningEffort: null,
     },
     idempotencyKey,
   );

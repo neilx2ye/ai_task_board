@@ -66,6 +66,8 @@ type ThreadCommand = {
   id: string;
   action: "create" | "rename" | "delete";
   name: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   external_thread_id: string | null;
 };
 
@@ -127,6 +129,8 @@ describe("Codex Bridge Web Thread management", () => {
         id: "11111111-1111-4111-8111-111111111111",
         action: "create",
         name: "Created from Web",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
         external_thread_id: null,
       },
       {
@@ -316,6 +320,8 @@ describe("Codex Bridge Web Thread management", () => {
     ]);
     expect(stderr).toContain(
       `THREAD_START {"cwd":${JSON.stringify(temporaryDirectory)},` +
+        '"model":"gpt-5.6-terra",' +
+        '"config":{"model_reasoning_effort":"high"},' +
         '"approvalPolicy":"on-request",' +
         '"approvalsReviewer":"user",' +
         '"sandbox":"danger-full-access"}',

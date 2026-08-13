@@ -6,7 +6,6 @@ import {
   BotIcon,
   CableIcon,
   CircleHelpIcon,
-  KanbanSquareIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -20,7 +19,6 @@ import { cn } from "@/components/utils";
 
 const NAV_ITEMS = [
   { href: "/sessions", label: "会话与上下文", icon: BotIcon },
-  { href: "/board", label: "会话任务流", icon: KanbanSquareIcon },
   { href: "/connections", label: "AI 连接", icon: CableIcon },
   { href: "/help", label: "帮助", icon: CircleHelpIcon },
 ] as const;

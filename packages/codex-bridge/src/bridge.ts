@@ -283,6 +283,8 @@ type ThreadCommand = {
   action: "create" | "rename" | "delete";
   name: string | null;
   directory_key: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   external_thread_id: string | null;
   attempt_count?: number;
 };
@@ -3386,8 +3388,14 @@ class DeviceBridge {
         this.configuration.workingDirectories,
         this.configuration.workingDirectory,
       );
+      const model = stringValue(command.model);
+      const reasoningEffort = stringValue(command.reasoning_effort);
       const response = await this.appServer.threadStart({
         cwd,
+        ...(model ? { model } : {}),
+        ...(reasoningEffort
+          ? { config: { model_reasoning_effort: reasoningEffort } }
+          : {}),
         ...threadPermissionOverrides(this.configuration.permissionMode, cwd),
       });
       const threadId = stringValue(response.thread?.id);

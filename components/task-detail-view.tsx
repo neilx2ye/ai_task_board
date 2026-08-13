@@ -31,7 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSessions } from "@/hooks/use-sessions";
 import { apiFetch } from "@/hooks/api-client";
 import { findPendingQuestion } from "@/hooks/pending-question";
-import { taskBoardStatus } from "@/lib/domain/task-rules";
+import { taskDisplayStatus } from "@/lib/domain/task-rules";
 import {
   useCancelTask,
   usePostTaskMessage,
@@ -186,7 +186,7 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   const statusMeta = TASK_STATUS_META[
     task.awaiting_user_input || hasStructuredWait
       ? "waiting_user"
-      : taskBoardStatus(task, children.length > 0)
+      : taskDisplayStatus(task, children.length > 0)
   ];
   const priority = priorityLevelOf(task.priority);
   const claimedSession = task.claimed_by_session_id
@@ -311,11 +311,11 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3">
         <Link
-          href="/board"
+          href="/sessions"
           className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <ArrowLeftIcon className="size-4" />
-          返回看板
+          返回会话与上下文
         </Link>
 
         <div className="flex flex-wrap items-start justify-between gap-3">

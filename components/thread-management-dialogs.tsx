@@ -15,6 +15,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   useCreateThread,
   useDeleteThread,
   useDeleteThreads,
@@ -24,6 +31,77 @@ import type {
   SessionConnectionSummary,
   SessionListItem,
 } from "@/lib/types/domain";
+
+const INHERIT_CODEX_SETTING = "__inherit__";
+
+type ReasoningEffort =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
+
+type CodexModelOption = {
+  value: string;
+  label: string;
+  description: string;
+  efforts: readonly ReasoningEffort[];
+};
+
+const CODEX_MODEL_OPTIONS: readonly CodexModelOption[] = [
+  {
+    value: "gpt-5.6-sol",
+    label: "GPT-5.6 Sol",
+    description: "旗舰能力，适合复杂编码与长任务",
+    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
+  {
+    value: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    description: "能力、速度与用量的均衡选择",
+    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
+  {
+    value: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    description: "更快，适合高频和较轻量任务",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    value: "gpt-5.5",
+    label: "GPT-5.5",
+    description: "上一代通用旗舰模型",
+    efforts: ["low", "medium", "high", "xhigh"],
+  },
+  {
+    value: "gpt-5.4",
+    label: "GPT-5.4",
+    description: "通用编码模型",
+    efforts: ["low", "medium", "high", "xhigh"],
+  },
+  {
+    value: "gpt-5.4-mini",
+    label: "GPT-5.4 Mini",
+    description: "更轻量的通用模型",
+    efforts: ["low", "medium", "high", "xhigh"],
+  },
+  {
+    value: "gpt-5.3-codex-spark",
+    label: "GPT-5.3 Codex Spark",
+    description: "快速、聚焦的编码任务",
+    efforts: ["low", "medium", "high", "xhigh"],
+  },
+];
+
+const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  low: "Low · 快速",
+  medium: "Medium · 均衡",
+  high: "High · 深入",
+  xhigh: "Extra High · 更深入",
+  max: "Max · 最大",
+  ultra: "Ultra · 最高",
+};
 
 export function CreateThreadDialog({
   connection,
@@ -44,7 +122,33 @@ export function CreateThreadDialog({
 }) {
   const createThread = useCreateThread(connection.id);
   const [name, setName] = useState("");
+  const [model, setModel] = useState("gpt-5.6-sol");
+  const [reasoningEffort, setReasoningEffort] = useState<
+    ReasoningEffort | typeof INHERIT_CODEX_SETTING
+  >("max");
   const [error, setError] = useState<string | null>(null);
+
+  const selectedModel = CODEX_MODEL_OPTIONS.find(
+    (option) => option.value === model,
+  );
+  const availableEfforts =
+    selectedModel?.efforts ??
+    (Object.keys(REASONING_EFFORT_LABELS) as ReasoningEffort[]);
+
+  const onModelChange = (value: string) => {
+    setModel(value);
+    if (value === INHERIT_CODEX_SETTING) return;
+    const option = CODEX_MODEL_OPTIONS.find(
+      (candidate) => candidate.value === value,
+    );
+    if (
+      option &&
+      reasoningEffort !== INHERIT_CODEX_SETTING &&
+      !option.efforts.includes(reasoningEffort)
+    ) {
+      setReasoningEffort(option.efforts.at(-1) ?? "medium");
+    }
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -54,6 +158,11 @@ export function CreateThreadDialog({
       await createThread.mutateAsync({
         name: submittedName,
         directory_key: directoryKey,
+        model: model === INHERIT_CODEX_SETTING ? null : model,
+        reasoning_effort:
+          reasoningEffort === INHERIT_CODEX_SETTING
+            ? null
+            : reasoningEffort,
       });
       onOpenChange(false);
       onSubmitted({ name: submittedName });
@@ -86,6 +195,60 @@ export function CreateThreadDialog({
               placeholder="例如：修复登录流程"
             />
           </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`new-thread-model-${connection.id}`}>模型</Label>
+              <Select value={model} onValueChange={onModelChange}>
+                <SelectTrigger id={`new-thread-model-${connection.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_CODEX_SETTING}>
+                    使用 Codex 默认
+                  </SelectItem>
+                  {CODEX_MODEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`new-thread-effort-${connection.id}`}>
+                思考强度
+              </Label>
+              <Select
+                value={reasoningEffort}
+                onValueChange={(value) =>
+                  setReasoningEffort(
+                    value as ReasoningEffort | typeof INHERIT_CODEX_SETTING,
+                  )
+                }
+              >
+                <SelectTrigger id={`new-thread-effort-${connection.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_CODEX_SETTING}>
+                    使用模型默认
+                  </SelectItem>
+                  {availableEfforts.map((effort) => (
+                    <SelectItem key={effort} value={effort}>
+                      {REASONING_EFFORT_LABELS[effort]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {selectedModel?.description ??
+              "模型与思考强度由运行 Bridge 的 Codex 配置决定。"}
+            {reasoningEffort === INHERIT_CODEX_SETTING
+              ? " 思考强度继承模型默认值。"
+              : " 更高强度通常需要更多时间和用量。"}
+          </p>
           <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
             工作目录：{workingDirectory ?? "使用 Bridge 的默认本机工作目录"}
           </div>

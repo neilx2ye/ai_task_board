@@ -21,6 +21,7 @@ const migrations = [
   "20260811120000_structured_user_input.sql",
   "20260811130000_session_process_detail_sync.sql",
   "20260811140000_bridge_working_directories.sql",
+  "20260813110000_thread_model_settings.sql",
 ];
 
 type InventoryResponse = {
@@ -201,15 +202,23 @@ describe("Bridge working-directory inventory migration", () => {
     ]);
   });
 
-  it("stores only a directory key on Web create commands", async () => {
+  it("stores only a directory key plus selected Codex settings on Web create commands", async () => {
     const commandId = randomUUID();
     const runtimeInstanceId = randomUUID();
     const result = await database.query<{
-      response: { command: { id: string; directory_key: string | null } };
+      response: {
+        command: {
+          id: string;
+          directory_key: string | null;
+          model: string | null;
+          reasoning_effort: string | null;
+        };
+      };
     }>(
-      `select public.enqueue_ai_thread_command_with_directory(
+      `select public.enqueue_ai_thread_command_with_settings(
          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null::uuid,
-         'create', 'New docs Thread', 'docs', $5::text, $6::text
+         'create', 'New docs Thread', 'docs',
+         'gpt-5.6-terra', 'high', $5::text, $6::text
        ) as response`,
       [
         workspaceId,
@@ -224,6 +233,8 @@ describe("Bridge working-directory inventory migration", () => {
     expect(result.rows[0].response.command).toMatchObject({
       id: commandId,
       directory_key: "docs",
+      model: "gpt-5.6-terra",
+      reasoning_effort: "high",
     });
     expect(JSON.stringify(result.rows[0].response.command)).not.toContain(
       "/workspace/docs",
@@ -238,7 +249,14 @@ describe("Bridge working-directory inventory migration", () => {
       [runtimeInstanceId, workspaceId, connectionId],
     );
     const claimed = await database.query<{
-      response: { command: { id: string; directory_key: string | null } };
+      response: {
+        command: {
+          id: string;
+          directory_key: string | null;
+          model: string | null;
+          reasoning_effort: string | null;
+        };
+      };
     }>(
       `select public.claim_ai_thread_command(
          $1::uuid, $2::uuid, $3::text, $4::uuid, 60
@@ -248,6 +266,8 @@ describe("Bridge working-directory inventory migration", () => {
     expect(claimed.rows[0].response.command).toMatchObject({
       id: commandId,
       directory_key: "docs",
+      model: "gpt-5.6-terra",
+      reasoning_effort: "high",
     });
     expect(JSON.stringify(claimed.rows[0].response.command)).not.toContain(
       "/workspace/docs",

@@ -7,7 +7,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 ## 功能概览
 
 - 会话优先工作台：先确认存活会话及其对话引用，再向指定会话预留任务。
-- 四列会话任务流：已预留、AI 执行中、等我回复、已完成；历史未绑定任务仅作异常修复展示。
+- 会话目录展示当前任务状态与排队数量，对话面板集中呈现 AI 回复和执行记录。
 - 父子 Task 统一建模；AI 只能读取分配给自身且依赖已完成的叶子任务，父任务自动聚合状态和进度。
 - PostgreSQL RPC 原子处理领取、租约续期、拆分、完成并领取下一项，以及用户问答恢复。
 - AI Connection 令牌和领取令牌只保存带 Pepper 的哈希；原始值只在创建/领取时返回。
@@ -58,7 +58,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
    `supabase/migrations/` 是数据库结构、枚举、索引、RLS、RPC 和 Storage Policy 的唯一来源。
 
 6. 在 Supabase Auth 中创建开发用户，或从应用 `/login` 注册。迁移安装的 Auth Trigger 会为新用户创建个人 Workspace；RLS 迁移也会为迁移前已有的 Auth 用户补建 Workspace。
-7. 若需要预置样例看板，在至少创建一个 Auth 用户之后执行：
+7. 若需要预置样例数据，在至少创建一个 Auth 用户之后执行：
 
    ```bash
    npx supabase db push --include-seed

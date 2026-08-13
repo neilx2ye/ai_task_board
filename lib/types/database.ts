@@ -301,6 +301,8 @@ export type AIThreadCommandRow = {
   action: AIThreadCommandAction;
   name: string | null;
   directory_key: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
   external_thread_id: string | null;
   status: AIThreadCommandStatus;
   attempt_count: number;
@@ -322,6 +324,8 @@ export type AIThreadCommandInsert = {
   action: AIThreadCommandAction;
   name?: string | null;
   directory_key?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   external_thread_id?: string | null;
   status?: AIThreadCommandStatus;
   attempt_count?: number;
@@ -1626,6 +1630,20 @@ export interface Database {
             p_action: AIThreadCommandAction;
             p_name: string | null;
             p_directory_key: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_thread_command_with_settings: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+            p_directory_key: string | null;
+            p_model: string | null;
+            p_reasoning_effort: string | null;
           };
         Returns: AIThreadCommandResponse;
       };
