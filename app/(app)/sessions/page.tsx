@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
-import { SessionConversationPanel } from "@/components/session-conversation-dialog";
+import { ResizableSessionPanel } from "@/components/resizable-session-panel";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
@@ -379,11 +379,10 @@ export default function SessionsPage() {
             ) : (
               <div className="flex h-full min-h-0 flex-col divide-y divide-border lg:flex-row lg:divide-x lg:divide-y-0 lg:overflow-x-auto">
                 {selectedSessions.map((session) => (
-                  <SessionConversationPanel
+                  <ResizableSessionPanel
                     key={session.id}
                     session={session}
                     onClose={() => deselectSession(session.id)}
-                    className="min-w-0 flex-1 lg:min-w-[24rem]"
                   />
                 ))}
               </div>

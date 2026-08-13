@@ -8,8 +8,10 @@ import {
   CircleHelpIcon,
   KanbanSquareIcon,
   LogOutIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
 } from "lucide-react";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -23,7 +25,13 @@ const NAV_ITEMS = [
   { href: "/help", label: "帮助", icon: CircleHelpIcon },
 ] as const;
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+function NavLinks({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) {
   const pathname = usePathname();
   return (
     <>
@@ -35,15 +43,18 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
             href={href}
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
+            aria-label={collapsed ? label : undefined}
+            title={collapsed ? label : undefined}
             className={cn(
               "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+              collapsed && "justify-center px-0",
               active
                 ? "bg-secondary text-foreground"
                 : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
             )}
           >
             <Icon className="size-4 shrink-0" />
-            {label}
+            <span className={cn(collapsed && "sr-only")}>{label}</span>
           </Link>
         );
       })}
@@ -63,7 +74,7 @@ function BrandAndWorkspace() {
   );
 }
 
-function UserFooter() {
+function UserFooter({ collapsed = false }: { collapsed?: boolean }) {
   const auth = useAuth();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -72,13 +83,23 @@ function UserFooter() {
     auth.status === "authenticated" ? (auth.session.user.email ?? "已登录") : "";
 
   return (
-    <div className="flex items-center gap-2 px-3">
-      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-        {email}
-      </span>
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3",
+        collapsed && "justify-center px-2",
+      )}
+    >
+      {collapsed ? null : (
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {email}
+        </span>
+      )}
       <Button
         variant="ghost"
-        size="sm"
+        size={collapsed ? "icon" : "sm"}
+        className={cn(collapsed && "size-9")}
+        aria-label={collapsed ? "退出登录" : undefined}
+        title={collapsed ? "退出登录" : undefined}
         disabled={pending}
         onClick={() =>
           startTransition(async () => {
@@ -88,7 +109,7 @@ function UserFooter() {
         }
       >
         <LogOutIcon />
-        退出
+        {collapsed ? null : "退出"}
       </Button>
     </div>
   );
@@ -96,13 +117,45 @@ function UserFooter() {
 
 /** 桌面端侧边导航。 */
 export function AppSidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+
   return (
-    <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-4 border-r border-border bg-card py-5 md:flex">
-      <BrandAndWorkspace />
-      <nav aria-label="主导航" className="flex flex-1 flex-col gap-1 px-2">
-        <NavLinks />
+    <aside
+      aria-label="应用导航侧边栏"
+      className={cn(
+        "sticky top-0 hidden h-dvh shrink-0 flex-col gap-4 border-r border-border bg-card py-5 transition-[width] duration-200 md:flex",
+        collapsed ? "w-16" : "w-56",
+      )}
+    >
+      <div
+        className={cn(
+          "flex items-start gap-2",
+          collapsed ? "justify-center px-2" : "justify-between pr-2",
+        )}
+      >
+        {collapsed ? null : <BrandAndWorkspace />}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9"
+          aria-controls="app-main-navigation"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "展开主导航栏" : "折叠主导航栏"}
+          title={collapsed ? "展开导航栏" : "折叠导航栏"}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          {collapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+        </Button>
+      </div>
+      <nav
+        id="app-main-navigation"
+        aria-label="主导航"
+        className="flex flex-1 flex-col gap-1 px-2"
+      >
+        <NavLinks collapsed={collapsed} />
       </nav>
-      <UserFooter />
+      <UserFooter collapsed={collapsed} />
     </aside>
   );
 }
