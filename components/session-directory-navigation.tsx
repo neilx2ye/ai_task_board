@@ -169,14 +169,6 @@ function DirectorySection({
           >
             {directory.name}
           </h4>
-          {!directory.inventoryActive ? (
-            <Badge
-              variant="outline"
-              className="text-[10px] text-muted-foreground"
-            >
-              已移除
-            </Badge>
-          ) : null}
           <Badge variant="outline" className="tabular-nums">
             {directory.sessions.length}
           </Badge>
@@ -250,13 +242,16 @@ function ConnectionSection({
   group: SessionConnectionGroup;
 }) {
   const { connection, sessions, directories } = group;
+  const visibleDirectories = directories.filter(
+    (directory) => directory.inventoryActive,
+  );
   const deviceOnline = isConnectionAlive(connection);
   const canManage = isOwner && supportsWebThreadManagement(connection);
   const supportsDirectories = supportsWorkingDirectoryInventory(connection);
   const canCreateWithoutDirectory =
     canManage &&
     (!supportsDirectories ||
-      !directories.some((directory) => directory.configured));
+      !visibleDirectories.some((directory) => directory.configured));
 
   return (
     <section
@@ -308,7 +303,7 @@ function ConnectionSection({
       </header>
 
       <div>
-        {directories.map((directory) => (
+        {visibleDirectories.map((directory) => (
           <DirectorySection
             key={directory.id}
             group={group}
@@ -328,7 +323,7 @@ function ConnectionSection({
             onCreate={onCreate}
           />
         ))}
-        {directories.length === 0 ? (
+        {visibleDirectories.length === 0 ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
             暂无工作目录或 Thread
           </p>

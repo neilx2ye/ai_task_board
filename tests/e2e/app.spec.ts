@@ -91,7 +91,10 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("密码").fill(e2ePassword!);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/sessions$/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "AI 会话" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "会话与上下文" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 }
 
 async function createTaskFromBoard(

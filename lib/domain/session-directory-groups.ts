@@ -73,6 +73,8 @@ function buildDirectoryGroups(
   }
 
   for (const session of sessions) {
+    if (!session.inventory_active) continue;
+
     const configured =
       (session.bridge_directory_key
         ? configuredByKey.get(session.bridge_directory_key)
@@ -107,7 +109,9 @@ function buildDirectoryGroups(
     group.sessions.push(session);
   }
 
-  return [...groups.values()].sort(compareDirectoryGroups);
+  return [...groups.values()]
+    .filter((group) => group.inventoryActive)
+    .sort(compareDirectoryGroups);
 }
 
 export function groupSessionsByConnection(
@@ -137,13 +141,22 @@ export function groupSessionsByConnection(
 
   return [...connectionById.values()].map((connection) => {
     const connectionSessions = sessionsByConnection.get(connection.id) ?? [];
+    const connectionDirectories = buildDirectoryGroups(
+      connectionSessions,
+      directoriesByConnection.get(connection.id) ?? [],
+    );
+    const visibleSessionIds = new Set(
+      connectionDirectories.flatMap((directory) =>
+        directory.sessions.map((session) => session.id),
+      ),
+    );
+
     return {
       connection,
-      sessions: connectionSessions,
-      directories: buildDirectoryGroups(
-        connectionSessions,
-        directoriesByConnection.get(connection.id) ?? [],
+      sessions: connectionSessions.filter((session) =>
+        visibleSessionIds.has(session.id),
       ),
+      directories: connectionDirectories,
     };
   });
 }

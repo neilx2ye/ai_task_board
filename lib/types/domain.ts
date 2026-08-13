@@ -110,6 +110,7 @@ export type SessionConversation = {
   input_requests: TaskUserInputRequestRow[];
   events: TaskEventRow[];
   activities: SessionActivityItem[];
+  artifacts?: ArtifactRow[];
   history_sync: SessionHistorySync | null;
   pagination: {
     activities: {

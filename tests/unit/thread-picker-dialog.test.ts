@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
-import { ThreadPickerList } from "@/components/thread-picker-dialog";
+import {
+  clampThreadPickerDialogWidth,
+  getUnselectedThreadDeletePlan,
+  ThreadPickerList,
+} from "@/components/thread-picker-dialog";
 import type { SessionDirectoryGroup } from "@/lib/domain/session-directory-groups";
 import type {
   SessionConnectionSummary,
@@ -84,6 +88,40 @@ describe("project-scoped Thread management", () => {
     );
   });
 
+  it("does not render removed projects", () => {
+    const removedProject: SessionDirectoryGroup = {
+      id: "configured:removed",
+      directoryKey: "removed",
+      name: "已删除项目",
+      workingDirectory: "/workspace/removed",
+      inventoryActive: false,
+      configured: true,
+      sessions: [session("thread-removed", "已删除会话", "/workspace/removed")],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(SessionDirectoryNavigation, {
+        groups: [
+          {
+            connection,
+            sessions: [...projects[0].sessions, ...removedProject.sessions],
+            directories: [projects[0], removedProject],
+          },
+        ],
+        visibleIds: new Set(["thread-app", "thread-removed"]),
+        selectedSessionIds: [],
+        isOwner: true,
+        onToggleSession: vi.fn(),
+        onReserve: vi.fn(),
+        onManage: vi.fn(),
+        onCreate: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain("主应用");
+    expect(markup).not.toContain("已删除项目");
+    expect(markup).not.toContain("已删除会话");
+  });
+
   it("renders only the Threads passed from the selected project", () => {
     const markup = renderToStaticMarkup(
       createElement(ThreadPickerList, {
@@ -99,5 +137,35 @@ describe("project-scoped Thread management", () => {
 
     expect(markup).toContain("修复登录");
     expect(markup).not.toContain("更新指南");
+  });
+
+  it("bulk-deletes only unchecked Threads that are currently deletable", () => {
+    const selected = session("thread-selected", "保留", "/workspace/app");
+    const deletable = session("thread-delete", "删除", "/workspace/app");
+    const busy = {
+      ...session("thread-busy", "任务处理中", "/workspace/app"),
+      queued_task_count: 1,
+    };
+    const inactive = {
+      ...session("thread-inactive", "已离开清单", "/workspace/app"),
+      inventory_active: false,
+    };
+
+    const plan = getUnselectedThreadDeletePlan(
+      [selected, deletable, busy, inactive],
+      new Set([selected.id]),
+    );
+
+    expect(plan.sessions.map((candidate) => candidate.id)).toEqual([
+      deletable.id,
+    ]);
+    expect(plan.skippedCount).toBe(2);
+  });
+
+  it("keeps a resized management dialog within the viewport bounds", () => {
+    expect(clampThreadPickerDialogWidth(720, 1_280)).toBe(720);
+    expect(clampThreadPickerDialogWidth(300, 1_280)).toBe(480);
+    expect(clampThreadPickerDialogWidth(2_000, 1_280)).toBe(1_248);
+    expect(clampThreadPickerDialogWidth(672, 420)).toBe(388);
   });
 });

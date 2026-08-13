@@ -731,6 +731,7 @@ type TaskUserInputPollResponse = {
 };
 type SessionTurnResponse = MessageResponse & {
   activity: SessionActivityRow;
+  artifacts?: ArtifactRow[];
 };
 type SessionActivityResponse = {
   task: TaskRpcPayload | Pick<TaskRpcPayload, "id">;
@@ -1490,6 +1491,17 @@ export interface Database {
             p_title: string;
             p_content: string;
             p_priority: number;
+          };
+        Returns: SessionTurnResponse;
+      };
+      create_session_turn_with_images: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_title: string;
+            p_content: string;
+            p_priority: number;
+            p_images: Json;
           };
         Returns: SessionTurnResponse;
       };

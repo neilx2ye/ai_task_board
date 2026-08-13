@@ -190,6 +190,7 @@ systemctl --user enable --now ai-task-board-codex-bridge.service
 5. 每个 Session 建立自己的认证 SSE 唤醒流并保持心跳。SSE 只传固定的 `ready` / `wake` 提示，真正的任务仍通过 REST 原子领取；断线时自适应轮询兜底。
 6. 每个 thread 一次只执行一张 Task。有效的设备级并发上限限制不同 thread 同时运行的 turn 数，多余工作继续排队。
 7. Bridge 调用 `thread/resume` 和 `turn/start`，固定请求 `summary: "none"`，再消费 App Server 的 JSONL 通知。只有 AI 文本 delta 会按约 500 毫秒或 8 KiB 聚合后上传，最终回复也会持久化。
+8. Web Console turn 可附带最多 4 张 PNG、JPEG、WebP 或 GIF（单张 10 MiB、合计 20 MiB）。图片保存在私有 `task-artifacts` bucket；Bridge 仅为当前会话已分配或领取的任务获取短期下载地址，校验字节数后以内联 Data URL 作为同一 `turn/start` 的 `image` 输入。Base64 不写入任务、消息或活动记录。
 8. 若 App Server 在 turn 中发出 blocking `item/tool/requestUserInput`，Bridge 将结构化问题持久化到 Board 并保持原请求等待；Web 选择框提交后，Bridge 把答案返回该请求，同一个 turn 原地继续。等待期间 Task claim 和心跳均不释放。
 9. `turn/completed` 后，最后一条 AI 消息用于完成 Task；错误会把 Task 标记为失败。Bridge 随后继续处理对应 Session 队列。
 

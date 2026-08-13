@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import {
   useCreateThread,
   useDeleteThread,
+  useDeleteThreads,
   useRenameThread,
 } from "@/hooks/use-sessions";
 import type {
@@ -228,6 +229,91 @@ export function DeleteThreadDialog({
       pending={deleteThread.isPending}
       onConfirm={() => void onConfirm()}
     >
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </ConfirmDialog>
+  );
+}
+
+export function DeleteUnselectedThreadsDialog({
+  sessions,
+  projectName,
+  skippedCount,
+  open,
+  onOpenChange,
+  onSubmitted,
+}: {
+  sessions: SessionListItem[];
+  projectName: string;
+  skippedCount: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmitted: (deletedCount: number) => void;
+}) {
+  const deleteThreads = useDeleteThreads();
+  const [remainingSessions, setRemainingSessions] = useState(sessions);
+  const [deletedCount, setDeletedCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const onConfirm = async () => {
+    setError(null);
+    try {
+      const result = await deleteThreads.mutateAsync(remainingSessions);
+      const nextDeletedCount = deletedCount + result.deletedIds.length;
+
+      if (result.failures.length > 0) {
+        const failedIds = new Set(result.failures.map((failure) => failure.id));
+        setRemainingSessions((current) =>
+          current.filter((session) => failedIds.has(session.id)),
+        );
+        setDeletedCount(nextDeletedCount);
+        setError(
+          `${result.failures.length} 个 Thread 删除失败：${result.failures
+            .map((failure) => `「${failure.name}」${failure.message}`)
+            .join("；")}`,
+        );
+        return;
+      }
+
+      onOpenChange(false);
+      onSubmitted(nextDeletedCount);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除失败，请稍后重试");
+    }
+  };
+
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`删除 ${remainingSessions.length} 个未勾选 Thread？`}
+      description={`这些 Thread 属于项目「${projectName}」。它们会立即从 Web Console 隐藏，并由在线 Bridge 从本机 Codex 删除；看板中的关联审计数据会保留。${
+        skippedCount > 0
+          ? ` 另有 ${skippedCount} 个未勾选 Thread 因有任务或已离开设备清单而不会删除。`
+          : ""
+      }`}
+      confirmLabel={
+        deletedCount > 0
+          ? `重试删除剩余 ${remainingSessions.length} 个`
+          : `删除 ${remainingSessions.length} 个 Thread`
+      }
+      destructive
+      pending={deleteThreads.isPending}
+      onConfirm={() => void onConfirm()}
+    >
+      <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+        <p className="mb-1.5 text-xs font-medium text-foreground">将删除：</p>
+        <ul className="max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+          {remainingSessions.map((session) => (
+            <li key={session.id} className="break-words">
+              {session.name}
+            </li>
+          ))}
+        </ul>
+      </div>
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}

@@ -68,6 +68,15 @@ type ClaimedTask = {
   claim_token: string;
 };
 
+type TaskImageArtifact = {
+  id: string;
+  name: string;
+  mime_type: string;
+  size: number;
+};
+
+type TaskDetailsResponse = { artifacts: TaskImageArtifact[] };
+
 type Session = {
   id: string;
   external_conversation_ref?: string | null;
@@ -1136,6 +1145,24 @@ class BoardClient {
     throw lastError;
   }
 
+  async downloadTaskImage(
+    artifact: TaskImageArtifact,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const location = await this.request<{ url: string }>(
+      `/api/ai/artifacts/${artifact.id}/download`,
+      { sessionId, signal, maxAttempts: 3 },
+    );
+    const response = await fetch(location.url, { signal });
+    if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength !== artifact.size || bytes.byteLength > 10 * 1024 * 1024) {
+      throw new Error(`图片大小校验失败：${artifact.name}`);
+    }
+    return `data:${artifact.mime_type};base64,${bytes.toString("base64")}`;
+  }
+
   async syncSessions(
     threads: ThreadRecord[],
     signal?: AbortSignal,
@@ -2149,6 +2176,31 @@ class SessionWorker {
         ? `\n\n验收条件：\n${task.acceptance_criteria}`
         : "",
     ].join("");
+    const taskDetails = await this.board
+      .request<TaskDetailsResponse>(`/api/ai/tasks/${task.id}`, {
+        sessionId: this.session.id,
+        signal: this.stopController.signal,
+        maxAttempts: 3,
+      })
+      .catch((error: unknown) => {
+        if ((error as { status?: number }).status === 404) return { artifacts: [] };
+        throw error;
+      });
+    const imageArtifacts = (taskDetails.artifacts ?? []).filter((artifact) =>
+      ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(
+        artifact.mime_type,
+      ),
+    );
+    const imageInputs = await Promise.all(
+      imageArtifacts.map(async (artifact) => ({
+        type: "image",
+        url: await this.board.downloadTaskImage(
+          artifact,
+          this.session.id,
+          this.stopController.signal,
+        ),
+      })),
+    );
     this.awaitingTurnStart = true;
     this.preStartNotifications.length = 0;
     let started: Awaited<ReturnType<CodexAppServerClient["turnStart"]>>;
@@ -2158,7 +2210,7 @@ class SessionWorker {
           {
             threadId: this.thread.id,
             clientUserMessageId: task.id,
-            input: [{ type: "text", text, text_elements: [] }],
+            input: [{ type: "text", text, text_elements: [] }, ...imageInputs],
             // The Board persists AI replies only, so do not ask Codex to produce
             // a reasoning summary that would be discarded.
             summary: "none",

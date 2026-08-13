@@ -379,6 +379,39 @@ export async function getTask(
   return loadTaskRelations(context.workspaceId, task);
 }
 
+export async function createAIArtifactDownload(
+  context: AISessionContext,
+  artifactId: string,
+) {
+  const admin = createAdminClient();
+  const { data: artifact, error } = await admin
+    .from("artifacts")
+    .select("task_id, storage_path, external_url")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", artifactId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!artifact) throw new AppError("TASK_NOT_FOUND", "Artifact not found");
+  const { data: task, error: taskError } = await admin
+    .from("tasks")
+    .select("id")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", artifact.task_id)
+    .or(`assigned_session_id.eq.${context.sessionId},claimed_by_session_id.eq.${context.sessionId}`)
+    .maybeSingle();
+  if (taskError) throw mapDatabaseError(taskError);
+  if (!task) throw new AppError("TASK_NOT_FOUND", "Artifact not found");
+  if (artifact.external_url) return { url: artifact.external_url, expires_in: null };
+  if (!artifact.storage_path) throw new AppError("INTERNAL_ERROR", "Artifact has no location");
+  const { data, error: signedError } = await admin.storage
+    .from("task-artifacts")
+    .createSignedUrl(artifact.storage_path, 300);
+  if (signedError || !data?.signedUrl) {
+    throw new AppError("INTERNAL_ERROR", "Artifact download URL could not be created");
+  }
+  return { url: data.signedUrl, expires_in: 300 };
+}
+
 export async function loadTaskRelations(
   workspaceId: string,
   task: TaskRow | TaskDatabaseRow,

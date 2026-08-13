@@ -145,6 +145,10 @@ export function mergeSessionConversationPages(
       (event) => String(event.id),
     ).sort((left, right) => left.id - right.id),
     activities,
+    artifacts: valuesById(
+      pages.flatMap((page) => page.artifacts ?? []),
+      (artifact) => artifact.id,
+    ),
     pagination: {
       activities: {
         ...last.pagination.activities,
@@ -167,17 +171,25 @@ export function useCreateSessionTurn(sessionId: string) {
     ReturnType<typeof createPendingIdempotencyTracker> | undefined
   >(undefined);
   const requestKeys = useRef(
-    new WeakMap<{ content: string }, { fingerprint: string; key: string }>(),
+    new WeakMap<
+      { content: string; images?: File[] },
+      { fingerprint: string; key: string }
+    >(),
   );
   idempotency.current ??= createPendingIdempotencyTracker();
   return useMutation({
-    mutationFn: (input: { content: string }) => {
-      const fingerprint = `${sessionId}\0${input.content}`;
+    mutationFn: (input: { content: string; images?: File[] }) => {
+      const fingerprint = `${sessionId}\0${input.content}\0${(input.images ?? [])
+        .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
+        .join("|")}`;
       const idempotencyKey = idempotency.current!.keyFor(fingerprint);
       requestKeys.current.set(input, { fingerprint, key: idempotencyKey });
+      const formData = new FormData();
+      formData.set("content", input.content);
+      for (const image of input.images ?? []) formData.append("images", image);
       return apiFetch<unknown>(`/api/user/sessions/${sessionId}/turns`, {
         method: "POST",
-        json: input,
+        body: formData,
         idempotencyKey,
       });
     },
@@ -260,6 +272,77 @@ export function useDeleteThread(sessionId: string) {
         queryKey: sessionQueryKey(sessionId),
         exact: true,
       });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+    },
+  });
+}
+
+type ThreadDeleteTarget = Pick<SessionListItem, "id" | "name">;
+
+export type DeleteThreadsResult = {
+  deletedIds: string[];
+  failures: Array<ThreadDeleteTarget & { message: string }>;
+};
+
+/** 分批提交删除，避免一次性为大量未勾选 Thread 打满浏览器连接。 */
+export function useDeleteThreads() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      sessions: readonly ThreadDeleteTarget[],
+    ): Promise<DeleteThreadsResult> => {
+      const deletedIds: string[] = [];
+      const failures: DeleteThreadsResult["failures"] = [];
+
+      for (let index = 0; index < sessions.length; index += 5) {
+        const batch = sessions.slice(index, index + 5);
+        const results = await Promise.all(
+          batch.map(async (session) => {
+            try {
+              await apiFetch<ThreadCommandResult>(
+                `/api/user/sessions/${session.id}`,
+                { method: "DELETE" },
+              );
+              return { session, message: null };
+            } catch (error) {
+              return {
+                session,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "删除失败，请稍后重试",
+              };
+            }
+          }),
+        );
+
+        for (const result of results) {
+          if (result.message === null) {
+            deletedIds.push(result.session.id);
+          } else {
+            failures.push({ ...result.session, message: result.message });
+          }
+        }
+      }
+
+      return { deletedIds, failures };
+    },
+    onSuccess: (result) => {
+      const deletedIds = new Set(result.deletedIds);
+      if (deletedIds.size > 0) {
+        queryClient.setQueryData<SessionListItem[]>(
+          SESSIONS_QUERY_KEY,
+          (current) =>
+            current?.filter((session) => !deletedIds.has(session.id)),
+        );
+        for (const sessionId of deletedIds) {
+          queryClient.removeQueries({
+            queryKey: sessionQueryKey(sessionId),
+            exact: true,
+          });
+        }
+      }
       void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     },

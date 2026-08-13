@@ -869,6 +869,21 @@ export async function getSessionConversation(
     ),
     ...rawActorEvents.slice(0, legacyLimit).map((event) => event.task_id),
   ]);
+  const activityTaskIds = [...new Set(activities.flatMap((activity) =>
+    activity.task_id ? [activity.task_id] : [],
+  ))];
+  const activityArtifacts = activityTaskIds.length
+    ? await collectChunkedRows(activityTaskIds, async (taskIds) => {
+        const { data, error } = await admin
+          .from("artifacts")
+          .select("*")
+          .eq("workspace_id", context.workspaceId)
+          .in("task_id", [...taskIds])
+          .order("created_at");
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      })
+    : [];
   const missingTaskIds = [...historicalTaskIds].filter((taskId) => !tasksById.has(taskId));
   if (missingTaskIds.length) {
     const historicalTasks = await collectChunkedRows(
@@ -903,6 +918,7 @@ export async function getSessionConversation(
       input_requests: [],
       events: [],
       activities,
+      artifacts: activityArtifacts,
       history_sync: historySync,
       pagination: {
         activities: {
@@ -999,6 +1015,7 @@ export async function getSessionConversation(
     input_requests: inputRequests,
     events: newestEvents.slice(0, legacyLimit).reverse(),
     activities,
+    artifacts: activityArtifacts,
     history_sync: historySync,
     pagination: {
       activities: {
@@ -1024,23 +1041,78 @@ export async function getSessionConversation(
 export async function createSessionTurn(
   context: UserWorkspaceContext,
   sessionId: string,
-  input: CreateSessionTurnInput,
+  input: CreateSessionTurnInput & { images?: File[] },
   idempotencyKey: string,
 ) {
   const title = taskTitleFromPrompt(input.content);
-  const requestInput = { sessionId, title, content: input.content };
-  const result = await callDomainRpc("create_session_turn", {
-    ...userContext(context),
-    p_session_id: sessionId,
-    p_title: title,
-    p_content: input.content,
-    p_priority: 50,
-    ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
-  });
-  if (!result.task || !result.message || !result.activity) {
-    throw new AppError("INTERNAL_ERROR", "Session turn creation returned incomplete data");
+  const admin = createAdminClient();
+  const uploadedPaths: string[] = [];
+  const images = [];
+  for (const [index, file] of (input.images ?? []).entries()) {
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const id = deriveStableUuid(
+      `${context.workspaceId}\0${context.userId}\0${sessionId}\0${idempotencyKey}\0${index}\0${sha256}`,
+    );
+    const name =
+      (file.name.normalize("NFKC").split(/[\\/]/).at(-1) ?? "")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .trim()
+        .slice(0, 500) || `image-${index + 1}`;
+    const mimeType = safeMimeType(file.type);
+    const storagePath = `${context.workspaceId}/turn-images/${id}-${safeFilename(name)}`;
+    const { error } = await admin.storage
+      .from("task-artifacts")
+      .upload(storagePath, bytes, { contentType: mimeType, upsert: false });
+    if (error && !isStorageObjectAlreadyPresent(error)) {
+      if (uploadedPaths.length) {
+        await admin.storage.from("task-artifacts").remove(uploadedPaths).catch(() => undefined);
+      }
+      throw new AppError("INTERNAL_ERROR", "Turn image upload failed");
+    }
+    if (!error) uploadedPaths.push(storagePath);
+    images.push({
+      id,
+      name,
+      mime_type: mimeType,
+      size: bytes.byteLength,
+      storage_path: storagePath,
+      content_sha256: sha256,
+    });
   }
-  return result;
+
+  const requestInput = { sessionId, title, content: input.content, images };
+  try {
+    const result = await callDomainRpc("create_session_turn_with_images", {
+      ...userContext(context),
+      p_session_id: sessionId,
+      p_title: title,
+      p_content: input.content,
+      p_priority: 50,
+      p_images: images,
+      ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
+    });
+    if (!result.task || !result.message || !result.activity) {
+      throw new AppError("INTERNAL_ERROR", "Session turn creation returned incomplete data");
+    }
+    return result;
+  } catch (error) {
+    if (uploadedPaths.length) {
+      const ids = images.map((image) => image.id);
+      const { data: committed } = await admin
+        .from("artifacts")
+        .select("id")
+        .in("id", ids);
+      const committedIds = new Set((committed ?? []).map((row) => row.id));
+      const orphanedPaths = images
+        .filter((image) => !committedIds.has(image.id) && uploadedPaths.includes(image.storage_path))
+        .map((image) => image.storage_path);
+      if (orphanedPaths.length) {
+        await admin.storage.from("task-artifacts").remove(orphanedPaths).catch(() => undefined);
+      }
+    }
+    throw error;
+  }
 }
 
 export async function createArtifactDownload(

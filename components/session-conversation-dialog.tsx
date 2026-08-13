@@ -18,6 +18,7 @@ import {
   HistoryIcon,
   ListChecksIcon,
   LoaderCircleIcon,
+  PaperclipIcon,
   SendIcon,
   TerminalIcon,
   UserIcon,
@@ -69,6 +70,7 @@ import {
 } from "@/lib/domain/session-presence";
 import type {
   ActorType,
+  ArtifactRow,
   Json,
   SessionActivityKind,
   SessionHistorySync,
@@ -362,12 +364,14 @@ function MessageBubble({
   task,
   createdAt,
   historySource = false,
+  images = [],
 }: {
   actorType: ActorType;
   content: string;
   task: string | null;
   createdAt: string;
   historySource?: boolean;
+  images?: ArtifactRow[];
 }) {
   const fromUser = actorType === "user";
 
@@ -402,6 +406,27 @@ function MessageBubble({
           createdAt={createdAt}
           historySource={historySource}
         />
+        {images.length ? (
+          <div className="grid max-w-xl grid-cols-2 gap-2 sm:grid-cols-3">
+            {images.map((image) => (
+              <a
+                key={image.id}
+                href={`/api/user/artifacts/${image.id}/content`}
+                target="_blank"
+                rel="noreferrer"
+                className="overflow-hidden rounded-md border border-border bg-background"
+                title={image.name}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/user/artifacts/${image.id}/content`}
+                  alt={image.name}
+                  className="aspect-square w-full object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        ) : null}
         {fromUser ? (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
             {content}
@@ -412,6 +437,15 @@ function MessageBubble({
       </div>
     </div>
   );
+}
+
+function PendingImagePreview({ file }: { file: File }) {
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => {
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt="" className="size-12 rounded object-cover" />;
 }
 
 function ToolActivity({
@@ -638,9 +672,11 @@ function GeneralActivity({
 function ActivityItem({
   activity,
   taskById,
+  artifactsByTaskId,
 }: {
   activity: SessionActivityItem;
   taskById: Map<string, TaskRow>;
+  artifactsByTaskId: Map<string, ArtifactRow[]>;
 }) {
   const task = taskLabel(activity.task_id, taskById);
 
@@ -655,6 +691,7 @@ function ActivityItem({
         task={task}
         createdAt={sessionActivityOccurredAt(activity)}
         historySource={isCodexHistoryActivity(activity)}
+        images={activity.task_id ? artifactsByTaskId.get(activity.task_id) ?? [] : []}
       />
     );
   }
@@ -789,7 +826,9 @@ function SessionConversationContent({
   const conversationQuery = useSessionConversation(sessionId);
   const createTurn = useCreateSessionTurn(sessionId ?? "");
   const [composer, setComposer] = useState("");
+  const [images, setImages] = useState<File[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const prependSnapshotRef = useRef<{
@@ -807,6 +846,14 @@ function SessionConversationContent({
     () => new Map((details?.tasks ?? []).map((task) => [task.id, task])),
     [details?.tasks],
   );
+  const artifactsByTaskId = useMemo(() => {
+    const grouped = new Map<string, ArtifactRow[]>();
+    for (const artifact of details?.artifacts ?? []) {
+      if (!artifact.mime_type.startsWith("image/")) continue;
+      grouped.set(artifact.task_id, [...(grouped.get(artifact.task_id) ?? []), artifact]);
+    }
+    return grouped;
+  }, [details?.artifacts]);
   const activities = useMemo(
     () => conversationMessageActivities(details?.activities ?? []),
     [details?.activities],
@@ -884,12 +931,17 @@ function SessionConversationContent({
   const onSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = composer.trim();
-    if (!content || !sessionId) return;
+    if ((!content && !images.length) || !sessionId) return;
 
     setSendError(null);
     try {
-      await createTurn.mutateAsync({ content });
+      await createTurn.mutateAsync({
+        content: content || "请查看附带的图片。",
+        images,
+      });
       setComposer("");
+      setImages([]);
+      if (imageInputRef.current) imageInputRef.current.value = "";
     } catch (error) {
       setSendError(
         error instanceof Error ? error.message : "发送失败，请稍后重试",
@@ -1020,6 +1072,7 @@ function SessionConversationContent({
                     <ActivityItem
                       activity={entry.activity}
                       taskById={taskById}
+                      artifactsByTaskId={artifactsByTaskId}
                     />
                   ) : entry.source === "message" ? (
                     <MessageBubble
@@ -1067,6 +1120,39 @@ function SessionConversationContent({
               </p>
             ) : null}
             <div className="flex items-end gap-2">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  const combined = [...images, ...selected].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    event.target.value = "";
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                  event.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="添加图片"
+                disabled={!canSend || createTurn.isPending || images.length >= 4}
+                onClick={() => imageInputRef.current?.click()}
+                className="size-10 shrink-0"
+              >
+                <PaperclipIcon />
+              </Button>
               <Textarea
                 aria-label="发送下一任务"
                 value={composer}
@@ -1083,6 +1169,23 @@ function SessionConversationContent({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
+                onPaste={(event) => {
+                  const pasted = Array.from(event.clipboardData.files).filter((file) =>
+                    file.type.startsWith("image/"),
+                  );
+                  if (!pasted.length) return;
+                  event.preventDefault();
+                  const combined = [...images, ...pasted].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                }}
                 placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
                 className="min-h-20 flex-1 resize-none"
               />
@@ -1090,12 +1193,40 @@ function SessionConversationContent({
                 type="submit"
                 size="icon"
                 aria-label="发送下一任务"
-                disabled={!canSend || createTurn.isPending || !composer.trim()}
+                disabled={
+                  !canSend ||
+                  createTurn.isPending ||
+                  (!composer.trim() && !images.length)
+                }
                 className="size-10 shrink-0"
               >
                 <SendIcon />
               </Button>
             </div>
+            {images.length ? (
+              <div className="flex flex-wrap gap-2" aria-label="待发送图片">
+                {images.map((image, index) => (
+                  <div
+                    key={`${image.name}-${image.lastModified}-${index}`}
+                    className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+                  >
+                    <PendingImagePreview file={image} />
+                    <span className="max-w-40 truncate">{image.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`移除图片 ${image.name}`}
+                      onClick={() =>
+                        setImages((current) =>
+                          current.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      <XIcon className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               发送后会自动生成任务名称，并作为下一项任务预留给此会话。
             </p>

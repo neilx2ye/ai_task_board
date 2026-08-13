@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BotIcon } from "lucide-react";
+import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
 import { SessionConversationPanel } from "@/components/session-conversation-dialog";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
@@ -16,9 +16,11 @@ import {
 } from "@/components/thread-management-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { sessionQueryKey } from "@/hooks/query-keys";
+import { useSelectedSessionIds } from "@/hooks/use-selected-session-ids";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   supportsWorkingDirectoryInventory,
@@ -55,7 +57,8 @@ export default function SessionsPage() {
   const connectionsQuery = useConnections(isOwner);
   const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
   // 按点选顺序保存选中的 Thread；只有选中的才会挂载面板并同步历史。
-  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const { selectedSessionIds, setSelectedSessionIds } =
+    useSelectedSessionIds();
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
   const [pickerTarget, setPickerTarget] =
     useState<ThreadPickerTarget | null>(null);
@@ -70,9 +73,10 @@ export default function SessionsPage() {
     null,
   );
   const [notice, setNotice] = useState<string | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
 
-  const sessions = useMemo(
+  const sessionCandidates = useMemo(
     () =>
       (sessionsQuery.data ?? []).filter(
         // 已撤销的连接及其 Thread 不在 AI 会话页展示。
@@ -83,7 +87,7 @@ export default function SessionsPage() {
   const connectionGroups = useMemo(
     () =>
       groupSessionsByConnection(
-        sessions,
+        sessionCandidates,
         (connectionsQuery.data ?? [])
           .filter((connection) => connection.bridge_version !== null)
           .map((connection) => ({
@@ -96,7 +100,11 @@ export default function SessionsPage() {
           })),
         directoriesQuery.data ?? [],
       ),
-    [connectionsQuery.data, directoriesQuery.data, sessions],
+    [connectionsQuery.data, directoriesQuery.data, sessionCandidates],
+  );
+  const sessions = useMemo(
+    () => connectionGroups.flatMap((group) => group.sessions),
+    [connectionGroups],
   );
   const pickerContext = useMemo(() => {
     if (!pickerTarget) return null;
@@ -128,6 +136,41 @@ export default function SessionsPage() {
     [selectedSessionIds, sessions],
   );
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (
+      hierarchyError ||
+      sessionsQuery.isLoading ||
+      directoriesQuery.isLoading
+    ) {
+      return;
+    }
+
+    const availableIds = new Set(sessions.map((session) => session.id));
+    const unavailableIds = selectedSessionIds.filter(
+      (sessionId) => !availableIds.has(sessionId),
+    );
+    if (unavailableIds.length === 0) return;
+
+    setSelectedSessionIds((previous) =>
+      previous.filter((sessionId) => availableIds.has(sessionId)),
+    );
+    for (const sessionId of unavailableIds) {
+      queryClient.removeQueries({
+        queryKey: sessionQueryKey(sessionId),
+        exact: true,
+      });
+    }
+  }, [
+    directoriesQuery.isLoading,
+    hierarchyError,
+    queryClient,
+    selectedSessionIds,
+    sessions,
+    sessionsQuery.isLoading,
+    setSelectedSessionIds,
+  ]);
+
   /** 取消选中：面板随之卸载，同时清掉该 Thread 已同步的历史缓存。 */
   const deselectSession = (sessionId: string) => {
     setSelectedSessionIds((prev) => prev.filter((id) => id !== sessionId));
@@ -205,17 +248,15 @@ export default function SessionsPage() {
       setNotice(`Thread「${createdSession.name}」已创建并打开。`);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [pendingThreadCreation, sessions, setSessionVisible]);
+  }, [
+    pendingThreadCreation,
+    sessions,
+    setSelectedSessionIds,
+    setSessionVisible,
+  ]);
 
   return (
     <div className="flex flex-col gap-5 lg:h-[calc(100dvh-3rem)]">
-      <div className="shrink-0">
-        <h1 className="text-xl font-semibold tracking-tight">AI 会话</h1>
-        <p className="text-sm text-muted-foreground">
-          按设备和工作目录组织 Thread，点击选中后在右侧并排查看上下文、执行过程并继续发送任务。
-        </p>
-      </div>
-
       {notice ? (
         <div
           role="status"
@@ -250,32 +291,79 @@ export default function SessionsPage() {
           description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端注册的会话会显示在这里。"
         />
       ) : (
-        <div className="grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm lg:grid-cols-[22rem_minmax(0,1fr)]">
-          <aside className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0">
-            <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
-              <div>
-                <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
-                <p className="text-xs text-muted-foreground">
-                  点击选中，可多选并排查看
-                </p>
+        <div
+          className={cn(
+            "grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-[grid-template-columns] duration-200",
+            isSidebarCollapsed
+              ? "lg:grid-cols-[3.25rem_minmax(0,1fr)]"
+              : "lg:grid-cols-[22rem_minmax(0,1fr)]",
+          )}
+        >
+          <aside
+            aria-label="会话导航侧边栏"
+            className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
+          >
+            <header
+              className={cn(
+                "flex items-center gap-2 border-b border-border py-3",
+                isSidebarCollapsed
+                  ? "justify-end px-3 lg:justify-center lg:px-2"
+                  : "justify-between px-3",
+              )}
+            >
+              {isSidebarCollapsed ? null : (
+                <div>
+                  <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
+                  <p className="text-xs text-muted-foreground">
+                    点击选中，可多选并排查看
+                  </p>
+                </div>
+              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {isSidebarCollapsed ? null : (
+                  <Badge variant="secondary" className="tabular-nums">
+                    {sessions.length}
+                  </Badge>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  aria-controls="session-directory-navigation"
+                  aria-expanded={!isSidebarCollapsed}
+                  aria-label={
+                    isSidebarCollapsed ? "展开会话侧边栏" : "折叠会话侧边栏"
+                  }
+                  title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+                  onClick={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
+                >
+                  {isSidebarCollapsed ? (
+                    <PanelLeftOpenIcon />
+                  ) : (
+                    <PanelLeftCloseIcon />
+                  )}
+                </Button>
               </div>
-              <Badge variant="secondary" className="tabular-nums">
-                {sessions.length}
-              </Badge>
             </header>
 
-            <SessionDirectoryNavigation
-              groups={connectionGroups}
-              visibleIds={visibleIds}
-              selectedSessionIds={selectedSessionIds}
-              isOwner={Boolean(isOwner)}
-              onToggleSession={toggleSessionSelected}
-              onReserve={setTargetSessionId}
-              onManage={(connectionId, directoryId) =>
-                setPickerTarget({ connectionId, directoryId })
-              }
-              onCreate={openCreateDialog}
-            />
+            <div
+              id="session-directory-navigation"
+              hidden={isSidebarCollapsed}
+            >
+              <SessionDirectoryNavigation
+                groups={connectionGroups}
+                visibleIds={visibleIds}
+                selectedSessionIds={selectedSessionIds}
+                isOwner={Boolean(isOwner)}
+                onToggleSession={toggleSessionSelected}
+                onReserve={setTargetSessionId}
+                onManage={(connectionId, directoryId) =>
+                  setPickerTarget({ connectionId, directoryId })
+                }
+                onCreate={openCreateDialog}
+              />
+            </div>
           </aside>
 
           <div id="session-console" className="min-h-0">
@@ -344,6 +432,13 @@ export default function SessionsPage() {
         onDelete={(session) => {
           setDeleteSession(session);
           setPickerTarget(null);
+        }}
+        onBulkDeleteSubmitted={({ deletedCount, skippedCount }) => {
+          setNotice(
+            skippedCount > 0
+              ? `已提交 ${deletedCount} 个未勾选 Thread 的删除请求；另有 ${skippedCount} 个因有任务或已离开设备清单而跳过。`
+              : `已提交 ${deletedCount} 个未勾选 Thread 的删除请求。`,
+          );
         }}
         onOpen={(sessionId) => {
           setSelectedSessionIds((prev) =>

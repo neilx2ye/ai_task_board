@@ -97,6 +97,33 @@ describe("Session working-directory hierarchy", () => {
     );
   });
 
+  it("omits removed directories and inactive Sessions", () => {
+    const inactiveSession = session("thread-stale", "/workspace/main", "main");
+    inactiveSession.inventory_active = false;
+    const removedDirectory = directory("docs", "Docs", "/workspace/docs");
+    removedDirectory.inventory_active = false;
+
+    const [group] = groupSessionsByConnection(
+      [
+        session("thread-current", "/workspace/main", "main"),
+        inactiveSession,
+        // The directory inventory is authoritative even if a stale Session
+        // snapshot still says it is active.
+        session("thread-removed", "/workspace/docs", "docs"),
+      ],
+      [connection],
+      [directory("main", "Main app", "/workspace/main"), removedDirectory],
+    );
+
+    expect(group.directories).toEqual([
+      expect.objectContaining({
+        directoryKey: "main",
+        sessions: [expect.objectContaining({ id: "thread-current" })],
+      }),
+    ]);
+    expect(group.sessions.map((item) => item.id)).toEqual(["thread-current"]);
+  });
+
   it("isolates matching directory keys between connections", () => {
     const secondConnection: SessionConnectionSummary = {
       ...connection,

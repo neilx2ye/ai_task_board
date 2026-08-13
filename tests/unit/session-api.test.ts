@@ -443,6 +443,51 @@ describe("session conversation REST API", () => {
     );
   });
 
+  it("accepts image files in a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "分析截图");
+    const image = new File([new Uint8Array([137, 80, 78, 71])], "screen.png", {
+      type: "image/png",
+    });
+    form.append("images", image);
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-with-image" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "分析截图",
+        images: [expect.objectContaining({ name: "screen.png", type: "image/png", size: 4 })],
+      },
+      "turn-with-image",
+    );
+  });
+
+  it("rejects unsupported session turn image types", async () => {
+    const form = new FormData();
+    form.set("content", "分析附件");
+    form.append("images", new File(["svg"], "unsafe.svg", { type: "image/svg+xml" }));
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-with-svg" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.createSessionTurn).not.toHaveBeenCalled();
+  });
+
   it("does not dispatch a turn without an idempotency key", async () => {
     const response = await createTurn(
       jsonRequest(`/api/user/sessions/${sessionId}`, { content: "继续" }),
