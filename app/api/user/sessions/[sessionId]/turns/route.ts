@@ -24,7 +24,11 @@ export async function POST(request: Request, route: RouteContext) {
       } catch {
         throw new AppError("INVALID_REQUEST", "Request must be multipart form data");
       }
-      input = createSessionTurnSchema.parse({ content: formData.get("content") });
+      input = createSessionTurnSchema.parse({
+        content: formData.get("content"),
+        model: formData.get("model"),
+        reasoning_effort: formData.get("reasoning_effort"),
+      });
       try {
         images = validateTurnImages(
           formData.getAll("images").filter((value): value is File => value instanceof File),

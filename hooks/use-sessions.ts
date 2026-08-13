@@ -172,20 +172,34 @@ export function useCreateSessionTurn(sessionId: string) {
   >(undefined);
   const requestKeys = useRef(
     new WeakMap<
-      { content: string; images?: File[] },
+      {
+        content: string;
+        images?: File[];
+        model?: string | null;
+        reasoning_effort?: string | null;
+      },
       { fingerprint: string; key: string }
     >(),
   );
   idempotency.current ??= createPendingIdempotencyTracker();
   return useMutation({
-    mutationFn: (input: { content: string; images?: File[] }) => {
-      const fingerprint = `${sessionId}\0${input.content}\0${(input.images ?? [])
+    mutationFn: (input: {
+      content: string;
+      images?: File[];
+      model?: string | null;
+      reasoning_effort?: string | null;
+    }) => {
+      const fingerprint = `${sessionId}\0${input.content}\0${input.model ?? ""}\0${input.reasoning_effort ?? ""}\0${(input.images ?? [])
         .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
         .join("|")}`;
       const idempotencyKey = idempotency.current!.keyFor(fingerprint);
       requestKeys.current.set(input, { fingerprint, key: idempotencyKey });
       const formData = new FormData();
       formData.set("content", input.content);
+      if (input.model) formData.set("model", input.model);
+      if (input.reasoning_effort) {
+        formData.set("reasoning_effort", input.reasoning_effort);
+      }
       for (const image of input.images ?? []) formData.append("images", image);
       return apiFetch<unknown>(`/api/user/sessions/${sessionId}/turns`, {
         method: "POST",
@@ -237,7 +251,11 @@ export function useCreateThread(connectionId: string) {
 export function useRenameThread(sessionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string }) =>
+    mutationFn: (input: {
+      name: string;
+      model?: string | null;
+      reasoning_effort?: string | null;
+    }) =>
       apiFetch<ThreadCommandResult>(`/api/user/sessions/${sessionId}`, {
         method: "PATCH",
         json: input,
@@ -248,7 +266,20 @@ export function useRenameThread(sessionId: string) {
         (current) =>
           current?.map((session) =>
             session.id === sessionId
-              ? { ...session, name: input.name, user_name: input.name }
+              ? {
+                  ...session,
+                  name: input.name,
+                  user_name: input.name,
+                  configured_model:
+                    input.model ?? session.configured_model,
+                  configured_reasoning_effort:
+                    input.reasoning_effort ??
+                    session.configured_reasoning_effort,
+                  thread_settings_status:
+                    input.model || input.reasoning_effort
+                      ? "queued"
+                      : session.thread_settings_status,
+                }
               : session,
           ),
       );

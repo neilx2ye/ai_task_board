@@ -350,6 +350,8 @@ export type TaskRow = {
   status: TaskStatus;
   priority: number;
   position: number | null;
+  model: string | null;
+  reasoning_effort: string | null;
   assigned_session_id: string | null;
   claimed_by_session_id: string | null;
   claimed_at: string | null;
@@ -386,6 +388,8 @@ export type TaskInsert = {
   status?: TaskStatus;
   priority?: number;
   position?: number | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   assigned_session_id?: string | null;
   claimed_by_session_id?: string | null;
   claim_token_hash?: string | null;
@@ -1506,6 +1510,19 @@ export interface Database {
             p_content: string;
             p_priority: number;
             p_images: Json;
+          };
+        Returns: SessionTurnResponse;
+      };
+      create_session_turn_with_settings: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_title: string;
+            p_content: string;
+            p_priority: number;
+            p_images: Json;
+            p_model: string | null;
+            p_reasoning_effort: string | null;
           };
         Returns: SessionTurnResponse;
       };

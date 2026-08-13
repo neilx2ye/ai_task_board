@@ -141,11 +141,18 @@ export interface AppServerThreadStartParams {
 
 export interface AppServerThreadStartResponse {
   thread: AppServerThread;
+  /** Effective model selected by Codex for this resumed/started Thread. */
+  model?: string | null;
+  /** Effective reasoning effort selected by Codex. */
+  reasoningEffort?: string | null;
   [key: string]: unknown;
 }
 
 export interface AppServerThreadResumeParams {
   threadId: string;
+  model?: string | null;
+  /** Per-thread Codex config overrides, such as model_reasoning_effort. */
+  config?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 
@@ -170,6 +177,10 @@ export type AppServerThreadArchiveResponse = Record<string, never>;
 export interface AppServerTurnStartParams {
   threadId: string;
   input: AppServerUserInput[];
+  /** Per-turn model override; Codex keeps it as the Thread default afterward. */
+  model?: string | null;
+  /** Per-turn reasoning override; Codex keeps it as the Thread default afterward. */
+  effort?: string | null;
   /** Request a provider-exposed reasoning summary for this and later turns. */
   summary?: "auto" | "concise" | "detailed" | "none" | null;
   [key: string]: unknown;

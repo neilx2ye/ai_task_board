@@ -50,7 +50,7 @@ type CompletionParameters = Pick<
 >;
 
 export const SAFE_TASK_COLUMNS =
-  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, model, reasoning_effort, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
 
 export const SAFE_TASK_USER_INPUT_REQUEST_COLUMNS =
   "id, workspace_id, task_id, session_id, message_id, external_request_id, turn_id, item_id, is_blocking, status, questions, answered_at, created_at, updated_at" as const;

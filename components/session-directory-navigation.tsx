@@ -54,6 +54,7 @@ function SessionListRow({
         task.awaiting_user_input ? "waiting_user" : task.status
       ]
     : null;
+  const model = session.configured_model ?? session.model;
 
   return (
     <div
@@ -81,7 +82,10 @@ function SessionListRow({
 
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {session.platform}
-          {session.model ? ` · ${session.model}` : ""}
+          {model ? ` · ${model}` : ""}
+          {session.configured_reasoning_effort
+            ? ` / ${session.configured_reasoning_effort}`
+            : ""}
         </p>
 
         <div className="mt-2 flex flex-col gap-1">

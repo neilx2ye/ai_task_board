@@ -230,6 +230,8 @@ export const SAFE_TASK_REALTIME_COLUMNS = [
   "status",
   "priority",
   "position",
+  "model",
+  "reasoning_effort",
   "assigned_session_id",
   "claimed_by_session_id",
   "claimed_at",

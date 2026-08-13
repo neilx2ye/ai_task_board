@@ -91,6 +91,9 @@ describe("session history UI state", () => {
     expect(markup).not.toContain('role="switch"');
     expect(markup).not.toContain("sync-process-details");
     expect(markup).not.toContain("同步过程详情");
+    expect(markup).toContain('aria-label="下一 Turn 的模型"');
+    expect(markup).toContain('aria-label="下一 Turn 的思考强度"');
+    expect(markup).toContain("本次模型与思考强度会随下一 Turn 发送");
   });
 
   it("keeps imported user messages and assistant replies in the conversation", () => {

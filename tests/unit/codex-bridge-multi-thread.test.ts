@@ -283,6 +283,8 @@ describe("Codex Bridge multi-thread device runtime", () => {
                 title: `Task for ${sessionId}`,
                 description: `Please work in ${sessionId}`,
                 acceptance_criteria: null,
+                model: "gpt-5.6-terra",
+                reasoning_effort: "high",
                 claim_token: `claim-${sessionId}`,
               },
             });
@@ -411,6 +413,8 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"approvalPolicy":"on-request"');
       expect(stderr).toContain('"approvalsReviewer":"user"');
       expect(stderr).toContain('"summary":"none"');
+      expect(stderr).toContain('"model":"gpt-5.6-terra"');
+      expect(stderr).toContain('"effort":"high"');
       expect(stderr).not.toContain('"summary":"concise"');
       if (permissionMode === "safe") {
         expect(stderr).toContain('"sandbox":"workspace-write"');

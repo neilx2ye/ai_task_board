@@ -30,6 +30,7 @@ import type {
   SessionListItem,
 } from "@/lib/types/domain";
 import type {
+  AIThreadCommandRow,
   AISessionRow,
   TaskEventRow,
   TaskMessageRow,
@@ -88,6 +89,65 @@ function sessionTaskSummary(
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
+type ThreadSettingsCommand = Pick<
+  AIThreadCommandRow,
+  | "id"
+  | "external_thread_id"
+  | "model"
+  | "reasoning_effort"
+  | "status"
+  | "created_at"
+>;
+
+type ThreadSettings = {
+  model: string | null;
+  reasoningEffort: string | null;
+  status: SessionListItem["thread_settings_status"];
+};
+
+function mergeThreadSettingsStatus(
+  current: ThreadSettings["status"],
+  incoming: ThreadSettingsCommand["status"],
+): ThreadSettings["status"] {
+  if (incoming === "failed") return current;
+  if (current === "running" || incoming === "running") return "running";
+  if (current === "queued" || incoming === "queued") return "queued";
+  return "succeeded";
+}
+
+function threadSettingsByExternalRef(
+  commands: readonly ThreadSettingsCommand[],
+): Map<string, ThreadSettings> {
+  const settingsByRef = new Map<string, ThreadSettings>();
+  for (const command of commands) {
+    const externalRef = command.external_thread_id;
+    if (!externalRef || (!command.model && !command.reasoning_effort)) continue;
+
+    const settings = settingsByRef.get(externalRef) ?? {
+      model: null,
+      reasoningEffort: null,
+      status: null,
+    };
+    let contributed = false;
+    if (!settings.model && command.model) {
+      settings.model = command.model;
+      contributed = true;
+    }
+    if (!settings.reasoningEffort && command.reasoning_effort) {
+      settings.reasoningEffort = command.reasoning_effort;
+      contributed = true;
+    }
+    if (contributed) {
+      settings.status = mergeThreadSettingsStatus(
+        settings.status,
+        command.status,
+      );
+      settingsByRef.set(externalRef, settings);
+    }
+  }
+  return settingsByRef;
+}
+
 async function loadSessionListItems(
   admin: AdminClient,
   workspaceId: string,
@@ -104,7 +164,17 @@ async function loadSessionListItems(
     ),
   ];
   const sessionIds = sessions.map((session) => session.id);
-  const [connections, currentTasks, pendingTasks] = await Promise.all([
+  const externalThreadRefs = [
+    ...new Set(
+      sessions.flatMap((session) =>
+        session.external_conversation_ref
+          ? [session.external_conversation_ref]
+          : [],
+      ),
+    ),
+  ];
+  const [connections, currentTasks, pendingTasks, threadSettingCommands] =
+    await Promise.all([
     collectChunkedRows(connectionIds, async (ids) => {
       const { data, error } = await admin
         .from("ai_connections")
@@ -139,6 +209,24 @@ async function loadSessionListItems(
         return data ?? [];
       }),
     ),
+    collectChunkedRows(externalThreadRefs, (externalRefs) =>
+      collectRangePages(async (from, to) => {
+        const { data, error } = await admin
+          .from("ai_thread_commands")
+          .select(
+            "id, external_thread_id, model, reasoning_effort, status, created_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .in("external_thread_id", [...externalRefs])
+          .in("action", ["create", "rename"])
+          .in("status", ["queued", "running", "succeeded"])
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      }),
+    ),
   ]);
 
   const connectionById = new Map(
@@ -150,6 +238,7 @@ async function loadSessionListItems(
   const queuedCountBySession = new Map<string, number>();
   const waitingTaskBySession = new Map<string, SessionCurrentTaskSummary>();
   const nextTaskBySession = new Map<string, SessionCurrentTaskSummary>();
+  const threadSettings = threadSettingsByExternalRef(threadSettingCommands);
   for (const row of pendingTasks) {
     if (!row.assigned_session_id) continue;
     if (row.status === "ready") {
@@ -170,6 +259,9 @@ async function loadSessionListItems(
     const currentTask = session.current_task_id
       ? currentTaskById.get(session.current_task_id)
       : undefined;
+    const settings = session.external_conversation_ref
+      ? threadSettings.get(session.external_conversation_ref)
+      : undefined;
     return {
       ...session,
       status: currentTask?.awaiting_user_input ? "waiting" : session.status,
@@ -188,6 +280,9 @@ async function loadSessionListItems(
         nextTaskBySession.get(session.id) ??
         null,
       queued_task_count: queuedCountBySession.get(session.id) ?? 0,
+      configured_model: settings?.model ?? null,
+      configured_reasoning_effort: settings?.reasoningEffort ?? null,
+      thread_settings_status: settings?.status ?? null,
     };
   });
 }
@@ -589,8 +684,8 @@ export async function renameThread(
       action: "rename",
       name: input.name,
       directoryKey: null,
-      model: null,
-      reasoningEffort: null,
+      model: input.model ?? null,
+      reasoningEffort: input.reasoning_effort ?? null,
     },
     idempotencyKey,
   );
@@ -1091,15 +1186,24 @@ export async function createSessionTurn(
     });
   }
 
-  const requestInput = { sessionId, title, content: input.content, images };
+  const requestInput = {
+    sessionId,
+    title,
+    content: input.content,
+    images,
+    model: input.model ?? null,
+    reasoning_effort: input.reasoning_effort ?? null,
+  };
   try {
-    const result = await callDomainRpc("create_session_turn_with_images", {
+    const result = await callDomainRpc("create_session_turn_with_settings", {
       ...userContext(context),
       p_session_id: sessionId,
       p_title: title,
       p_content: input.content,
       p_priority: 50,
       p_images: images,
+      p_model: input.model ?? null,
+      p_reasoning_effort: input.reasoning_effort ?? null,
       ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
     });
     if (!result.task || !result.message || !result.activity) {

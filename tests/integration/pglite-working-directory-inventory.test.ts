@@ -21,7 +21,10 @@ const migrations = [
   "20260811120000_structured_user_input.sql",
   "20260811130000_session_process_detail_sync.sql",
   "20260811140000_bridge_working_directories.sql",
+  "20260812130000_session_turn_images.sql",
   "20260813110000_thread_model_settings.sql",
+  "20260813134500_existing_thread_settings.sql",
+  "20260813143000_turn_model_settings.sql",
 ];
 
 type InventoryResponse = {
@@ -272,6 +275,149 @@ describe("Bridge working-directory inventory migration", () => {
     expect(JSON.stringify(claimed.rows[0].response.command)).not.toContain(
       "/workspace/docs",
     );
+  });
+
+  it("stores selected Codex settings on an existing Thread command", async () => {
+    const inventory = await syncInventory(
+      [
+        {
+          directory_key: "main",
+          name: "Main app",
+          working_directory: "/workspace/main",
+        },
+      ],
+      [
+        {
+          external_conversation_ref: "thread-settings",
+          name: "Existing Thread",
+          working_directory: "/workspace/main",
+          directory_key: "main",
+        },
+      ],
+      "existing-thread-settings",
+    );
+    const session = inventory.sessions.find(
+      (candidate) =>
+        candidate.external_conversation_ref === "thread-settings",
+    );
+    expect(session).toBeDefined();
+
+    const commandId = randomUUID();
+    const result = await database.query<{
+      response: {
+        command: {
+          id: string;
+          action: string;
+          external_thread_id: string | null;
+          model: string | null;
+          reasoning_effort: string | null;
+        };
+      };
+    }>(
+      `select public.enqueue_ai_thread_command_with_settings(
+         $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+         'rename', 'Configured Thread', null,
+         'gpt-5.6-terra', 'high', $6::text, $7::text
+       ) as response`,
+      [
+        workspaceId,
+        userId,
+        commandId,
+        connectionId,
+        session!.id,
+        "configure-existing-thread",
+        "configure-existing-thread-request-hash".padEnd(64, "0"),
+      ],
+    );
+
+    expect(result.rows[0].response.command).toMatchObject({
+      id: commandId,
+      action: "rename",
+      external_thread_id: "thread-settings",
+      model: "gpt-5.6-terra",
+      reasoning_effort: "high",
+    });
+  });
+
+  it("freezes model settings on each queued Web turn and returns them on claim", async () => {
+    const inventory = await syncInventory(
+      [
+        {
+          directory_key: "main",
+          name: "Main app",
+          working_directory: "/workspace/main",
+        },
+      ],
+      [
+        {
+          external_conversation_ref: "thread-turn-settings",
+          name: "Turn settings Thread",
+          working_directory: "/workspace/main",
+          directory_key: "main",
+        },
+      ],
+      "turn-model-settings",
+    );
+    const session = inventory.sessions.find(
+      (candidate) =>
+        candidate.external_conversation_ref === "thread-turn-settings",
+    );
+    expect(session).toBeDefined();
+
+    const created = await database.query<{
+      response: {
+        task: {
+          id: string;
+          model: string | null;
+          reasoning_effort: string | null;
+        };
+      };
+    }>(
+      `select public.create_session_turn_with_settings(
+         $1::uuid, $2::uuid, $3::uuid, 'Switch model', 'Run this turn', 50,
+         '[]'::jsonb, 'gpt-5.6-terra', 'high', $4::text, $5::text
+       ) as response`,
+      [
+        workspaceId,
+        userId,
+        session!.id,
+        "create-turn-with-model",
+        "create-turn-with-model-request-hash".padEnd(64, "0"),
+      ],
+    );
+    expect(created.rows[0].response.task).toMatchObject({
+      model: "gpt-5.6-terra",
+      reasoning_effort: "high",
+    });
+
+    const claimed = await database.query<{
+      response: {
+        task: {
+          id: string;
+          model: string | null;
+          reasoning_effort: string | null;
+        } | null;
+      };
+    }>(
+      `select public.claim_next_task(
+         $1::uuid, $2::uuid, $3::text, $4::uuid,
+         $5::text, 60, $6::text, $7::text
+       ) as response`,
+      [
+        workspaceId,
+        connectionId,
+        tokenHash,
+        session!.id,
+        "turn-model-claim-hash",
+        "claim-turn-with-model",
+        "claim-turn-with-model-request-hash".padEnd(64, "0"),
+      ],
+    );
+    expect(claimed.rows[0].response.task).toMatchObject({
+      id: created.rows[0].response.task.id,
+      model: "gpt-5.6-terra",
+      reasoning_effort: "high",
+    });
   });
 
   it("rejects an empty new-style directory allowlist", async () => {

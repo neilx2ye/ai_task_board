@@ -53,7 +53,11 @@ export const sessionConversationQuerySchema = z
   );
 
 export const createSessionTurnSchema = z
-  .object({ content: nonEmptyText.max(100_000) })
+  .object({
+    content: nonEmptyText.max(100_000),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
   .strict();
 
 export const createTaskSchema = z
@@ -155,7 +159,11 @@ export const createThreadSchema = z
   .strict();
 
 export const renameThreadSchema = z
-  .object({ name: nonEmptyText.max(200) })
+  .object({
+    name: nonEmptyText.max(200),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
   .strict();
 
 const userSubtaskSchema = z

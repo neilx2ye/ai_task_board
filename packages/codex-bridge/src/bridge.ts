@@ -65,6 +65,8 @@ type ClaimedTask = {
   title: string;
   description: string | null;
   acceptance_criteria: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   claim_token: string;
 };
 
@@ -2158,6 +2160,8 @@ class SessionWorker {
     const workspaceRoot = path.resolve(
       threadCwd(this.thread) ?? this.configuration.workingDirectory,
     );
+    const model = stringValue(task.model);
+    const reasoningEffort = stringValue(task.reasoning_effort);
     await this.trackMutatingRequest(
       this.appServer.threadResume(
         {
@@ -2213,6 +2217,8 @@ class SessionWorker {
             threadId: this.thread.id,
             clientUserMessageId: task.id,
             input: [{ type: "text", text, text_elements: [] }, ...imageInputs],
+            ...(model ? { model } : {}),
+            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
             // The Board persists AI replies only, so do not ask Codex to produce
             // a reasoning summary that would be discarded.
             summary: "none",
@@ -3425,6 +3431,43 @@ class DeviceBridge {
       }
       const name = stringValue(command.name);
       if (!name) throw new Error("Thread 改名指令缺少名称");
+      const model = stringValue(command.model);
+      const reasoningEffort = stringValue(command.reasoning_effort);
+      if (model || reasoningEffort) {
+        const workspaceRoot = path.resolve(
+          threadCwd(worker?.thread ?? { id: threadId }) ??
+            this.configuration.workingDirectory,
+        );
+        const resumed = await this.appServer.threadResume({
+          threadId,
+          excludeTurns: true,
+          ...(model ? { model } : {}),
+          ...(reasoningEffort
+            ? { config: { model_reasoning_effort: reasoningEffort } }
+            : {}),
+          ...threadPermissionOverrides(
+            this.configuration.permissionMode,
+            workspaceRoot,
+          ),
+        });
+        const effectiveModel = stringValue(resumed.model);
+        const effectiveReasoningEffort = stringValue(
+          resumed.reasoningEffort,
+        );
+        if (model && effectiveModel !== model) {
+          throw new Error(
+            `Codex 未应用请求的模型 ${model}（实际：${effectiveModel ?? "未返回"}）`,
+          );
+        }
+        if (
+          reasoningEffort &&
+          effectiveReasoningEffort !== reasoningEffort
+        ) {
+          throw new Error(
+            `Codex 未应用请求的思考强度 ${reasoningEffort}（实际：${effectiveReasoningEffort ?? "未返回"}）`,
+          );
+        }
+      }
       await this.appServer.threadSetName({ threadId, name });
       return threadId;
     }

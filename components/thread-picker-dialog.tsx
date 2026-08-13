@@ -94,6 +94,7 @@ export function ThreadPickerList({
       {sessions.map((session) => {
         const visible = visibleIds.has(session.id);
         const deletable = canDeleteThread(session);
+        const model = session.configured_model ?? session.model;
         const statusMeta =
           SESSION_STATUS_META[effectiveSessionStatus(session)];
         return (
@@ -126,7 +127,14 @@ export function ThreadPickerList({
               </span>
               <span className="block truncate text-xs text-muted-foreground">
                 {session.working_directory ?? session.platform}
-                {session.model ? ` · ${session.model}` : ""}
+                {model ? ` · ${model}` : ""}
+                {session.configured_reasoning_effort
+                  ? ` / ${session.configured_reasoning_effort}`
+                  : ""}
+                {session.thread_settings_status === "queued" ||
+                session.thread_settings_status === "running"
+                  ? " · 设置待应用"
+                  : ""}
               </span>
             </button>
             <Badge className={cn("shrink-0", statusMeta.badgeClass)}>

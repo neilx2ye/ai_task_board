@@ -51,6 +51,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDateTime } from "@/components/utils";
 import {
@@ -68,6 +75,15 @@ import {
   effectiveSessionStatus,
   isSessionAlive,
 } from "@/lib/domain/session-presence";
+import {
+  CODEX_MODEL_OPTIONS,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  REASONING_EFFORT_LABELS,
+  codexModelOption,
+  compatibleReasoningEffort,
+  type ReasoningEffort,
+} from "@/lib/codex-models";
 import type {
   ActorType,
   ArtifactRow,
@@ -827,7 +843,18 @@ function SessionConversationContent({
   const createTurn = useCreateSessionTurn(sessionId ?? "");
   const [composer, setComposer] = useState("");
   const [images, setImages] = useState<File[]>([]);
+  const initialModel =
+    session?.configured_model ?? session?.model ?? DEFAULT_CODEX_MODEL;
+  const [model, setModel] = useState(initialModel);
+  const [reasoningEffort, setReasoningEffort] = useState<string>(() =>
+    compatibleReasoningEffort(
+      initialModel,
+      session?.configured_reasoning_effort ??
+        DEFAULT_CODEX_REASONING_EFFORT,
+    ),
+  );
   const [sendError, setSendError] = useState<string | null>(null);
+  const turnSettingsTouchedRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -842,6 +869,13 @@ function SessionConversationContent({
     [conversationQuery.data?.pages],
   );
   const currentSession = details?.session ?? session;
+  const latestTurnSettings = useMemo(
+    () =>
+      [...(details?.tasks ?? [])]
+        .reverse()
+        .find((task) => task.model || task.reasoning_effort) ?? null,
+    [details?.tasks],
+  );
   const taskById = useMemo(
     () => new Map((details?.tasks ?? []).map((task) => [task.id, task])),
     [details?.tasks],
@@ -893,6 +927,18 @@ function SessionConversationContent({
     prependSnapshotRef.current = null;
   }, [active, sessionId]);
 
+  useEffect(() => {
+    if (turnSettingsTouchedRef.current || !latestTurnSettings) return;
+    const nextModel = latestTurnSettings.model ?? model;
+    setModel(nextModel);
+    setReasoningEffort(
+      compatibleReasoningEffort(
+        nextModel,
+        latestTurnSettings.reasoning_effort ?? reasoningEffort,
+      ),
+    );
+  }, [latestTurnSettings, model, reasoningEffort]);
+
   useLayoutEffect(() => {
     const snapshot = prependSnapshotRef.current;
     if (!snapshot || pageCount <= snapshot.pageCount) return;
@@ -938,6 +984,8 @@ function SessionConversationContent({
       await createTurn.mutateAsync({
         content: content || "请查看附带的图片。",
         images,
+        model,
+        reasoning_effort: reasoningEffort,
       });
       setComposer("");
       setImages([]);
@@ -955,6 +1003,24 @@ function SessionConversationContent({
   const statusMeta = SESSION_STATUS_META[sessionStatus];
   const sessionAlive = currentSession ? isSessionAlive(currentSession) : false;
   const canSend = sessionAlive && !pendingStructuredRequest;
+  const selectedModel = codexModelOption(model);
+  const availableEfforts =
+    selectedModel?.efforts ??
+    (Object.keys(REASONING_EFFORT_LABELS) as ReasoningEffort[]);
+  const customModel = selectedModel ? null : model;
+  const customReasoningEffort = availableEfforts.includes(
+    reasoningEffort as ReasoningEffort,
+  )
+    ? null
+    : reasoningEffort;
+
+  const onModelChange = (value: string) => {
+    turnSettingsTouchedRef.current = true;
+    setModel(value);
+    setReasoningEffort((current) =>
+      compatibleReasoningEffort(value, current),
+    );
+  };
 
   return (
     <>
@@ -1153,42 +1219,92 @@ function SessionConversationContent({
               >
                 <PaperclipIcon />
               </Button>
-              <Textarea
-                aria-label="发送下一任务"
-                value={composer}
-                maxLength={100_000}
-                disabled={!canSend || createTurn.isPending}
-                onChange={(event) => setComposer(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter" &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
+              <div className="relative min-w-0 flex-1">
+                <Textarea
+                  aria-label="发送下一任务"
+                  value={composer}
+                  maxLength={100_000}
+                  disabled={!canSend || createTurn.isPending}
+                  onChange={(event) => setComposer(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  onPaste={(event) => {
+                    const pasted = Array.from(event.clipboardData.files).filter((file) =>
+                      file.type.startsWith("image/"),
+                    );
+                    if (!pasted.length) return;
                     event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                onPaste={(event) => {
-                  const pasted = Array.from(event.clipboardData.files).filter((file) =>
-                    file.type.startsWith("image/"),
-                  );
-                  if (!pasted.length) return;
-                  event.preventDefault();
-                  const combined = [...images, ...pasted].slice(0, 4);
-                  if (
-                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
-                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
-                  ) {
-                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
-                    return;
-                  }
-                  setImages(combined);
-                  setSendError(null);
-                }}
-                placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
-                className="min-h-20 flex-1 resize-none"
-              />
+                    const combined = [...images, ...pasted].slice(0, 4);
+                    if (
+                      combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                      combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                    ) {
+                      setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                      return;
+                    }
+                    setImages(combined);
+                    setSendError(null);
+                  }}
+                  placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
+                  className="min-h-24 resize-none pb-11"
+                />
+                <div className="absolute right-2 bottom-2 left-2 flex min-w-0 items-center gap-1.5">
+                  <Select value={model} onValueChange={onModelChange}>
+                    <SelectTrigger
+                      aria-label="下一 Turn 的模型"
+                      title="选择下一 Turn 的模型"
+                      className="h-7 w-auto min-w-0 max-w-44 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customModel ? (
+                        <SelectItem value={customModel}>{customModel}</SelectItem>
+                      ) : null}
+                      {CODEX_MODEL_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={reasoningEffort}
+                    onValueChange={(value) => {
+                      turnSettingsTouchedRef.current = true;
+                      setReasoningEffort(value);
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label="下一 Turn 的思考强度"
+                      title="选择下一 Turn 的思考强度"
+                      className="h-7 w-auto min-w-0 max-w-40 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customReasoningEffort ? (
+                        <SelectItem value={customReasoningEffort}>
+                          {customReasoningEffort}
+                        </SelectItem>
+                      ) : null}
+                      {availableEfforts.map((effort) => (
+                        <SelectItem key={effort} value={effort}>
+                          {REASONING_EFFORT_LABELS[effort]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <Button
                 type="submit"
                 size="icon"
@@ -1228,7 +1344,8 @@ function SessionConversationContent({
               </div>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              发送后会自动生成任务名称，并作为下一项任务预留给此会话。
+              本次模型与思考强度会随下一 Turn 发送，并成为这个 Thread
+              后续 Turn 的默认设置。
             </p>
           </div>
         </form>

@@ -342,7 +342,11 @@ describe("session conversation REST API", () => {
   it("queues a trimmed Thread rename for a Workspace owner", async () => {
     const request = jsonRequest(
       `/api/user/sessions/${sessionId}`,
-      { name: "  Release work  " },
+      {
+        name: "  Release work  ",
+        model: " gpt-5.6-terra ",
+        reasoning_effort: " high ",
+      },
       { "Idempotency-Key": "web/thread/rename-1" },
     );
     const response = await renameThread(request, {
@@ -353,7 +357,11 @@ describe("session conversation REST API", () => {
     expect(domainMocks.renameThread).toHaveBeenCalledWith(
       expect.objectContaining({ role: "owner" }),
       sessionId,
-      { name: "Release work" },
+      {
+        name: "Release work",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
+      },
       "web/thread/rename-1",
     );
   });
@@ -427,7 +435,11 @@ describe("session conversation REST API", () => {
   it("creates the next turn with trimmed content and a required idempotency key", async () => {
     const request = jsonRequest(
       `/api/user/sessions/${sessionId}`,
-      { content: "  请继续修复派发链路  " },
+      {
+        content: "  请继续修复派发链路  ",
+        model: " gpt-5.6-terra ",
+        reasoning_effort: " high ",
+      },
       { "Idempotency-Key": "  web/session/turn-1  " },
     );
     const response = await createTurn(request, {
@@ -438,7 +450,11 @@ describe("session conversation REST API", () => {
     expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
       userContext,
       sessionId,
-      { content: "请继续修复派发链路" },
+      {
+        content: "请继续修复派发链路",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
+      },
       "web/session/turn-1",
     );
   });
@@ -446,6 +462,8 @@ describe("session conversation REST API", () => {
   it("accepts image files in a multipart session turn", async () => {
     const form = new FormData();
     form.set("content", "分析截图");
+    form.set("model", "gpt-5.6-luna");
+    form.set("reasoning_effort", "medium");
     const image = new File([new Uint8Array([137, 80, 78, 71])], "screen.png", {
       type: "image/png",
     });
@@ -465,6 +483,8 @@ describe("session conversation REST API", () => {
       sessionId,
       {
         content: "分析截图",
+        model: "gpt-5.6-luna",
+        reasoning_effort: "medium",
         images: [expect.objectContaining({ name: "screen.png", type: "image/png", size: 4 })],
       },
       "turn-with-image",

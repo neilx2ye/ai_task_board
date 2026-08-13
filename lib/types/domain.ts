@@ -33,6 +33,8 @@ export type ClaimedTask = Pick<
   | "root_task_id"
   | "status"
   | "lease_expires_at"
+  | "model"
+  | "reasoning_effort"
 > & { claim_token: string };
 
 export type TaskDetails = {
@@ -91,6 +93,12 @@ export type SessionListItem = AISessionRow & {
   connection: SessionConnectionSummary;
   current_task: SessionCurrentTaskSummary | null;
   queued_task_count: number;
+  /** Latest non-failed model selection submitted through Web management. */
+  configured_model: string | null;
+  /** Latest non-failed reasoning selection submitted through Web management. */
+  configured_reasoning_effort: string | null;
+  /** Aggregate delivery state for the selected model / reasoning settings. */
+  thread_settings_status: "queued" | "running" | "succeeded" | null;
 };
 
 export type SessionActivityItem = Omit<

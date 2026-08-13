@@ -32,7 +32,17 @@ lines.on("line", (line) => {
     else send({ id: message.id, error: { code: -32602, message: "Thread not found" } });
   } else if (message.method === "thread/resume") {
     const thread = allThreads().find((candidate) => candidate.id === message.params.threadId);
-    send({ id: message.id, result: { thread, cwd: thread?.cwd } });
+    process.stderr.write("THREAD_RESUME " + JSON.stringify(message.params) + "\\n");
+    send({
+      id: message.id,
+      result: {
+        thread,
+        cwd: thread?.cwd,
+        model: message.params.model ?? "gpt-5.6-sol",
+        reasoningEffort:
+          message.params.config?.model_reasoning_effort ?? "max",
+      },
+    });
   } else if (message.method === "thread/start") {
     const thread = {
       id: "thread-created",
@@ -137,6 +147,8 @@ describe("Codex Bridge Web Thread management", () => {
         id: "22222222-2222-4222-8222-222222222222",
         action: "rename",
         name: "Renamed from Web",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
         external_thread_id: "thread-existing",
       },
       {
@@ -332,6 +344,15 @@ describe("Codex Bridge Web Thread management", () => {
     );
     expect(stderr).toContain(
       'THREAD_RENAME {"threadId":"thread-existing","name":"Renamed from Web"}',
+    );
+    expect(stderr).toContain(
+      'THREAD_RESUME {"threadId":"thread-existing","excludeTurns":true,' +
+        '"model":"gpt-5.6-terra",' +
+        '"config":{"model_reasoning_effort":"high"},' +
+        `"cwd":${JSON.stringify(temporaryDirectory)},` +
+        '"approvalPolicy":"on-request",' +
+        '"approvalsReviewer":"user",' +
+        '"sandbox":"danger-full-access"}',
     );
     expect(stderr).toContain(
       'THREAD_DELETE {"threadId":"thread-existing"}',
