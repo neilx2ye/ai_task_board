@@ -23,7 +23,7 @@ import {
 } from "@/lib/validation/bridge-config";
 
 const BRIDGE_SETTINGS_COLUMNS =
-  "connection_id, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
+  "connection_id, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, model_catalog, model_catalog_updated_at, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 const LEGACY_BRIDGE_SETTINGS_COLUMNS =
   "connection_id, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 
@@ -39,6 +39,8 @@ type LegacyBridgeSettingsRow = Omit<
   | "desired_working_directories"
   | "effective_working_directories"
   | "constraint_allow_working_directory_configuration"
+  | "model_catalog"
+  | "model_catalog_updated_at"
 >;
 
 function isMissingWorkingDirectorySchema(error: DatabaseErrorLike): boolean {
@@ -57,6 +59,7 @@ function isMissingWorkingDirectorySchema(error: DatabaseErrorLike): boolean {
     "desired_working_directories",
     "effective_working_directories",
     "constraint_allow_working_directory_configuration",
+    "model_catalog",
     "p_working_directories",
   ].some((field) => source.includes(field));
 }
@@ -69,6 +72,8 @@ function withWorkingDirectoryDefaults(
     desired_working_directories: null,
     effective_working_directories: null,
     constraint_allow_working_directory_configuration: false,
+    model_catalog: null,
+    model_catalog_updated_at: null,
   };
 }
 

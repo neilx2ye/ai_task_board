@@ -56,6 +56,21 @@ lines.on("line", (line) => {
   }
 
   const responses = {
+    "model/list": {
+      data: [{
+        id: "custom-fast",
+        model: "provider/custom-fast",
+        displayName: "Custom Fast",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Fast" },
+          { reasoningEffort: "medium", description: "Balanced" },
+        ],
+        inputModalities: ["text", "image"],
+        isDefault: true,
+      }],
+      nextCursor: null,
+    },
     "thread/list": {
       data: [{ id: "thread-listed", cursor: message.params.cursor }],
       nextCursor: null,
@@ -201,6 +216,19 @@ describe("CodexAppServerClient", () => {
 
     await expect(client.threadList({ cursor: "page-2" })).resolves.toMatchObject({
       data: [{ id: "thread-listed", cursor: "page-2" }],
+      nextCursor: null,
+    });
+    await expect(
+      client.modelList({ limit: 100, includeHidden: false }),
+    ).resolves.toMatchObject({
+      data: [{
+        model: "provider/custom-fast",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low" },
+          { reasoningEffort: "medium" },
+        ],
+      }],
       nextCursor: null,
     });
     await expect(

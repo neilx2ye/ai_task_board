@@ -126,8 +126,19 @@ export function groupSessionsByConnection(
   );
 
   for (const session of sessions) {
-    if (!connectionById.has(session.connection.id)) {
+    const existingConnection = connectionById.get(session.connection.id);
+    if (!existingConnection) {
       connectionById.set(session.connection.id, session.connection);
+    } else if (
+      existingConnection.model_catalog == null &&
+      session.connection.model_catalog != null
+    ) {
+      connectionById.set(session.connection.id, {
+        ...existingConnection,
+        model_catalog: session.connection.model_catalog,
+        model_catalog_updated_at:
+          session.connection.model_catalog_updated_at ?? null,
+      });
     }
     appendToIndex(sessionsByConnection, session.connection.id, session);
   }

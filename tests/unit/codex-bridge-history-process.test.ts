@@ -52,6 +52,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-history-codex/0.147" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-history", source: "cli", cwd: "/workspace/history", parentThreadId: null, createdAt: 1786290000 }],

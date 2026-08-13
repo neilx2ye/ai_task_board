@@ -150,6 +150,8 @@ export type AIConnectionBridgeSettingsRow = {
   constraint_allow_history_sync: boolean | null;
   constraint_max_history_turns: number | null;
   constraint_allow_working_directory_configuration: boolean | null;
+  model_catalog: Json | null;
+  model_catalog_updated_at: string | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -194,6 +196,8 @@ export type AIConnectionBridgeSettingsInsert = {
   constraint_allow_history_sync?: boolean | null;
   constraint_max_history_turns?: number | null;
   constraint_allow_working_directory_configuration?: boolean | null;
+  model_catalog?: Json | null;
+  model_catalog_updated_at?: string | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;

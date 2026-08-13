@@ -28,9 +28,10 @@ import {
   useRenameThread,
 } from "@/hooks/use-sessions";
 import {
-  CODEX_MODEL_OPTIONS,
-  REASONING_EFFORT_LABELS,
-  type ReasoningEffort,
+  codexModelOptions,
+  compatibleReasoningEffort,
+  defaultCodexModel,
+  reasoningEffortLabel,
 } from "@/lib/codex-models";
 import type {
   SessionConnectionSummary,
@@ -58,31 +59,34 @@ export function CreateThreadDialog({
 }) {
   const createThread = useCreateThread(connection.id);
   const [name, setName] = useState("");
-  const [model, setModel] = useState("gpt-5.6-sol");
-  const [reasoningEffort, setReasoningEffort] = useState<
-    ReasoningEffort | typeof INHERIT_CODEX_SETTING
-  >("max");
+  const modelOptions = codexModelOptions(connection.model_catalog);
+  const initialModel = defaultCodexModel(modelOptions);
+  const initialModelOption = modelOptions.find(
+    (option) => option.value === initialModel,
+  );
+  const [model, setModel] = useState(initialModel);
+  const [reasoningEffort, setReasoningEffort] = useState<string>(
+    compatibleReasoningEffort(
+      initialModel,
+      initialModelOption?.defaultEffort,
+      modelOptions,
+    ),
+  );
   const [error, setError] = useState<string | null>(null);
 
-  const selectedModel = CODEX_MODEL_OPTIONS.find(
+  const selectedModel = modelOptions.find(
     (option) => option.value === model,
   );
   const availableEfforts =
-    selectedModel?.efforts ??
-    (Object.keys(REASONING_EFFORT_LABELS) as ReasoningEffort[]);
+    selectedModel?.efforts ?? [];
 
   const onModelChange = (value: string) => {
     setModel(value);
     if (value === INHERIT_CODEX_SETTING) return;
-    const option = CODEX_MODEL_OPTIONS.find(
-      (candidate) => candidate.value === value,
-    );
-    if (
-      option &&
-      reasoningEffort !== INHERIT_CODEX_SETTING &&
-      !option.efforts.includes(reasoningEffort)
-    ) {
-      setReasoningEffort(option.efforts.at(-1) ?? "medium");
+    if (reasoningEffort !== INHERIT_CODEX_SETTING) {
+      setReasoningEffort(
+        compatibleReasoningEffort(value, reasoningEffort, modelOptions),
+      );
     }
   };
 
@@ -142,7 +146,7 @@ export function CreateThreadDialog({
                   <SelectItem value={INHERIT_CODEX_SETTING}>
                     使用 Codex 默认
                   </SelectItem>
-                  {CODEX_MODEL_OPTIONS.map((option) => (
+                  {modelOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -156,11 +160,7 @@ export function CreateThreadDialog({
               </Label>
               <Select
                 value={reasoningEffort}
-                onValueChange={(value) =>
-                  setReasoningEffort(
-                    value as ReasoningEffort | typeof INHERIT_CODEX_SETTING,
-                  )
-                }
+                onValueChange={setReasoningEffort}
               >
                 <SelectTrigger id={`new-thread-effort-${connection.id}`}>
                   <SelectValue />
@@ -171,7 +171,10 @@ export function CreateThreadDialog({
                   </SelectItem>
                   {availableEfforts.map((effort) => (
                     <SelectItem key={effort} value={effort}>
-                      {REASONING_EFFORT_LABELS[effort]}
+                      {reasoningEffortLabel(
+                        effort,
+                        selectedModel?.effortDescriptions[effort],
+                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>

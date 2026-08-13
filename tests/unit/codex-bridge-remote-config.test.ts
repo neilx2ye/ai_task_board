@@ -15,6 +15,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-config-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{
@@ -43,6 +45,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-delayed-retirement" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: threads.slice(0, message.params.limit || threads.length),

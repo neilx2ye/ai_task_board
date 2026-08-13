@@ -4,10 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
 import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
+import type { CodexModelCatalogEntry } from "@/lib/codex-models";
 import type { AIConnectionRow } from "@/lib/types/database";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
-export type PublicConnection = Omit<AIConnectionRow, "api_token_hash">;
+export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
+  model_catalog?: CodexModelCatalogEntry[] | null;
+  model_catalog_updated_at?: string | null;
+};
 
 export type ConnectionWithToken = {
   connection: PublicConnection;

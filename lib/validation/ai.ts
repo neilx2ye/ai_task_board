@@ -42,9 +42,57 @@ const syncedBridgeDirectorySchema = z
   })
   .strict();
 
+const syncedModelReasoningEffortSchema = z
+  .object({
+    reasoning_effort: nonEmptyText.max(100),
+    description: z.string().trim().max(2_000).nullable().default(null),
+  })
+  .strict();
+
+const syncedModelCatalogEntrySchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    model: nonEmptyText.max(200),
+    display_name: nonEmptyText.max(200),
+    description: z.string().trim().max(2_000).nullable().default(null),
+    default_reasoning_effort: nonEmptyText.max(100).nullable().default(null),
+    supported_reasoning_efforts: z
+      .array(syncedModelReasoningEffortSchema)
+      .max(20)
+      .default([]),
+    input_modalities: z.array(nonEmptyText.max(100)).max(20).default([]),
+    is_default: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const efforts = new Set<string>();
+    value.supported_reasoning_efforts.forEach((effort, index) => {
+      if (efforts.has(effort.reasoning_effort)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate reasoning_effort: ${effort.reasoning_effort}`,
+          path: ["supported_reasoning_efforts", index, "reasoning_effort"],
+        });
+      }
+      efforts.add(effort.reasoning_effort);
+    });
+    const modalities = new Set<string>();
+    value.input_modalities.forEach((modality, index) => {
+      if (modalities.has(modality)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate input modality: ${modality}`,
+          path: ["input_modalities", index],
+        });
+      }
+      modalities.add(modality);
+    });
+  });
+
 export const syncSessionsSchema = z
   .object({
     bridge_version: nonEmptyText.max(100),
+    model_catalog: z.array(syncedModelCatalogEntrySchema).max(500).optional(),
     directories: z
       .array(syncedBridgeDirectorySchema)
       .min(1)
@@ -94,10 +142,32 @@ export const syncSessionsSchema = z
       }
     });
 
+    const models = new Set<string>();
+    let defaultModelCount = 0;
+    value.model_catalog?.forEach((entry, index) => {
+      if (models.has(entry.model)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate model: ${entry.model}`,
+          path: ["model_catalog", index, "model"],
+        });
+      }
+      models.add(entry.model);
+      if (entry.is_default) defaultModelCount += 1;
+    });
+    if (defaultModelCount > 1) {
+      context.addIssue({
+        code: "custom",
+        message: "Model catalog must contain at most one default model",
+        path: ["model_catalog"],
+      });
+    }
+
     if (
       new TextEncoder().encode(
         JSON.stringify({
           directories: value.directories ?? null,
+          model_catalog: value.model_catalog ?? null,
           threads: value.threads,
         }),
       ).byteLength >

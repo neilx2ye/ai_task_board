@@ -97,6 +97,8 @@ export default function SessionsPage() {
             last_seen_at: connection.last_seen_at,
             bridge_version: connection.bridge_version,
             revoked_at: connection.revoked_at,
+            model_catalog: connection.model_catalog,
+            model_catalog_updated_at: connection.model_catalog_updated_at,
           })),
         directoriesQuery.data ?? [],
       ),

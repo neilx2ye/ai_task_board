@@ -72,6 +72,47 @@ describe("AI command validation", () => {
     ).toBe(false);
   });
 
+  it("normalizes an App Server model catalog and rejects duplicate models", () => {
+    const model = {
+      id: " custom-fast ",
+      model: " provider/custom-fast ",
+      display_name: " Custom Fast ",
+      default_reasoning_effort: " balanced ",
+      supported_reasoning_efforts: [
+        { reasoning_effort: " quick ", description: " Fast response " },
+        { reasoning_effort: " balanced ", description: null },
+      ],
+      input_modalities: [" text ", " image "],
+      is_default: true,
+    };
+    const parsed = syncSessionsSchema.parse({
+      bridge_version: "0.10.0",
+      model_catalog: [model],
+      threads: [],
+    });
+
+    expect(parsed.model_catalog).toEqual([{
+      id: "custom-fast",
+      model: "provider/custom-fast",
+      display_name: "Custom Fast",
+      description: null,
+      default_reasoning_effort: "balanced",
+      supported_reasoning_efforts: [
+        { reasoning_effort: "quick", description: "Fast response" },
+        { reasoning_effort: "balanced", description: null },
+      ],
+      input_modalities: ["text", "image"],
+      is_default: true,
+    }]);
+    expect(
+      syncSessionsSchema.safeParse({
+        bridge_version: "0.10.0",
+        model_catalog: [model, { ...model, id: "duplicate-id" }],
+        threads: [],
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects unrecognized fields instead of silently accepting workspace scope", () => {
     const result = reportCurrentTaskSchema.safeParse({
       title: "Already running",

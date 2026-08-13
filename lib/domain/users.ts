@@ -9,6 +9,7 @@ import {
   hashToken,
 } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import { parseCodexModelCatalog } from "@/lib/codex-models";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import {
   chunkValues,
@@ -88,6 +89,43 @@ function sessionTaskSummary(
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;
+
+function isMissingModelCatalogSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("model_catalog");
+}
+
+async function loadConnectionModelSettings(
+  admin: AdminClient,
+  workspaceId: string,
+  connectionIds: readonly string[],
+) {
+  return collectChunkedRows(connectionIds, async (ids) => {
+    const { data, error } = await admin
+      .from("ai_connection_bridge_settings")
+      .select("connection_id, model_catalog, model_catalog_updated_at")
+      .eq("workspace_id", workspaceId)
+      .in("connection_id", [...ids]);
+    if (error && !isMissingModelCatalogSchema(error)) {
+      throw mapDatabaseError(error);
+    }
+    return data ?? [];
+  });
+}
 
 type ThreadSettingsCommand = Pick<
   AIThreadCommandRow,
@@ -173,7 +211,13 @@ async function loadSessionListItems(
       ),
     ),
   ];
-  const [connections, currentTasks, pendingTasks, threadSettingCommands] =
+  const [
+    connections,
+    connectionSettings,
+    currentTasks,
+    pendingTasks,
+    threadSettingCommands,
+  ] =
     await Promise.all([
     collectChunkedRows(connectionIds, async (ids) => {
       const { data, error } = await admin
@@ -184,6 +228,7 @@ async function loadSessionListItems(
       if (error) throw mapDatabaseError(error);
       return data ?? [];
     }),
+    loadConnectionModelSettings(admin, workspaceId, connectionIds),
     collectChunkedRows(currentTaskIds, async (ids) => {
       const { data, error } = await admin
         .from("tasks")
@@ -232,6 +277,9 @@ async function loadSessionListItems(
   const connectionById = new Map(
     connections.map((connection) => [connection.id, connection]),
   );
+  const connectionSettingsById = new Map(
+    connectionSettings.map((settings) => [settings.connection_id, settings]),
+  );
   const currentTaskById = new Map(
     currentTasks.map((task) => [task.id, sessionTaskSummary(task)]),
   );
@@ -262,18 +310,32 @@ async function loadSessionListItems(
     const settings = session.external_conversation_ref
       ? threadSettings.get(session.external_conversation_ref)
       : undefined;
+    const connectionModelSettings = connectionSettingsById.get(
+      session.connection_id,
+    );
     return {
       ...session,
       status: currentTask?.awaiting_user_input ? "waiting" : session.status,
       name: session.user_name ?? session.name,
-      connection: connection ?? {
-        id: session.connection_id,
-        name: "已撤销的连接",
-        platform: session.platform,
-        last_seen_at: null,
-        bridge_version: null,
-        revoked_at: new Date(0).toISOString(),
-      },
+      connection: connection
+        ? {
+            ...connection,
+            model_catalog: parseCodexModelCatalog(
+              connectionModelSettings?.model_catalog,
+            ),
+            model_catalog_updated_at:
+              connectionModelSettings?.model_catalog_updated_at ?? null,
+          }
+        : {
+            id: session.connection_id,
+            name: "已撤销的连接",
+            platform: session.platform,
+            last_seen_at: null,
+            bridge_version: null,
+            revoked_at: new Date(0).toISOString(),
+            model_catalog: null,
+            model_catalog_updated_at: null,
+          },
       current_task:
         currentTask ??
         waitingTaskBySession.get(session.id) ??
@@ -523,7 +585,26 @@ export async function listConnections(context: UserWorkspaceContext) {
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
   if (error) throw mapDatabaseError(error);
-  return { connections: data ?? [] };
+  const connections = data ?? [];
+  const settings = await loadConnectionModelSettings(
+    admin,
+    context.workspaceId,
+    connections.map((connection) => connection.id),
+  );
+  const settingsByConnectionId = new Map(
+    settings.map((row) => [row.connection_id, row]),
+  );
+  return {
+    connections: connections.map((connection) => {
+      const modelSettings = settingsByConnectionId.get(connection.id);
+      return {
+        ...connection,
+        model_catalog: parseCodexModelCatalog(modelSettings?.model_catalog),
+        model_catalog_updated_at:
+          modelSettings?.model_catalog_updated_at ?? null,
+      };
+    }),
+  };
 }
 
 export async function createConnection(

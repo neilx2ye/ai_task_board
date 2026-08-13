@@ -153,6 +153,19 @@ describe("Bridge thread inventory REST API", () => {
       "/api/ai/sessions/sync",
       {
         bridge_version: " 0.7.0 ",
+        model_catalog: [
+          {
+            id: " custom-fast ",
+            model: " provider/custom-fast ",
+            display_name: " Custom Fast ",
+            default_reasoning_effort: " balanced ",
+            supported_reasoning_efforts: [
+              { reasoning_effort: " balanced ", description: null },
+            ],
+            input_modalities: [" text "],
+            is_default: true,
+          },
+        ],
         directories: [
           {
             directory_key: " main ",
@@ -182,6 +195,20 @@ describe("Bridge thread inventory REST API", () => {
       expect.objectContaining({ connectionId, workspaceId }),
       expect.objectContaining({
         bridge_version: "0.7.0",
+        model_catalog: [
+          {
+            id: "custom-fast",
+            model: "provider/custom-fast",
+            display_name: "Custom Fast",
+            description: null,
+            default_reasoning_effort: "balanced",
+            supported_reasoning_efforts: [
+              { reasoning_effort: "balanced", description: null },
+            ],
+            input_modalities: ["text"],
+            is_default: true,
+          },
+        ],
         directories: [
           {
             directory_key: "main",

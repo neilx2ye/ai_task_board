@@ -35,6 +35,7 @@ export async function syncSessions(
   input: SyncSessionsInput,
   idempotencyKey: string,
 ): Promise<unknown> {
+  const admin = createAdminClient();
   const parameters = {
     p_workspace_id: auth.workspaceId,
     p_connection_id: auth.connectionId,
@@ -49,11 +50,14 @@ export async function syncSessions(
     p_idempotency_key: idempotencyKey,
     p_request_hash: hashRequest("sync_ai_sessions_with_directories", input),
   };
-  const { data, error } = await createAdminClient().rpc(
+  const { data, error } = await admin.rpc(
     "sync_ai_sessions_with_directories",
     parameters,
   );
-  if (!error) return data;
+  if (!error) {
+    await persistModelCatalog(admin, auth, input);
+    return data;
+  }
   if (!isMissingDirectorySyncFunction(error)) throw mapDatabaseError(error);
 
   // Rolling-deployment compatibility: a newly upgraded Bridge always reports
@@ -69,7 +73,7 @@ export async function syncSessions(
     bridge_version: input.bridge_version,
     threads: legacyThreads,
   };
-  return callDomainRpc("sync_ai_sessions", {
+  const result = await callDomainRpc("sync_ai_sessions", {
     p_workspace_id: auth.workspaceId,
     p_connection_id: auth.connectionId,
     p_api_token_hash: auth.tokenHash,
@@ -78,6 +82,26 @@ export async function syncSessions(
     p_idempotency_key: idempotencyKey,
     p_request_hash: hashRequest("sync_ai_sessions", legacyInput),
   });
+  await persistModelCatalog(admin, auth, input);
+  return result;
+}
+
+async function persistModelCatalog(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: AIAuthContext,
+  input: SyncSessionsInput,
+): Promise<void> {
+  if (input.model_catalog === undefined) return;
+  const { error } = await admin
+    .from("ai_connection_bridge_settings")
+    .update({
+      model_catalog: JSON.parse(JSON.stringify(input.model_catalog)) as Json,
+      model_catalog_updated_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", auth.workspaceId)
+    .eq("connection_id", auth.connectionId);
+  if (!error || isMissingModelCatalogSchema(error)) return;
+  throw mapDatabaseError(error);
 }
 
 function isMissingDirectorySyncFunction(error: {
@@ -91,6 +115,25 @@ function isMissingDirectorySyncFunction(error: {
     .filter(Boolean)
     .join(" ")
     .includes("sync_ai_sessions_with_directories");
+}
+
+function isMissingModelCatalogSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("model_catalog");
 }
 
 export async function heartbeatSession(

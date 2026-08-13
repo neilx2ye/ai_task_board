@@ -76,13 +76,14 @@ import {
   isSessionAlive,
 } from "@/lib/domain/session-presence";
 import {
-  CODEX_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL,
   DEFAULT_CODEX_REASONING_EFFORT,
   REASONING_EFFORT_LABELS,
   codexModelOption,
+  codexModelOptions,
   compatibleReasoningEffort,
-  type ReasoningEffort,
+  defaultCodexModel,
+  reasoningEffortLabel,
 } from "@/lib/codex-models";
 import type {
   ActorType,
@@ -843,14 +844,24 @@ function SessionConversationContent({
   const createTurn = useCreateSessionTurn(sessionId ?? "");
   const [composer, setComposer] = useState("");
   const [images, setImages] = useState<File[]>([]);
+  const modelOptions = useMemo(
+    () => codexModelOptions(session?.connection.model_catalog),
+    [session?.connection.model_catalog],
+  );
   const initialModel =
-    session?.configured_model ?? session?.model ?? DEFAULT_CODEX_MODEL;
+    session?.configured_model ??
+    session?.model ??
+    defaultCodexModel(modelOptions) ??
+    DEFAULT_CODEX_MODEL;
+  const initialModelOption = codexModelOption(initialModel, modelOptions);
   const [model, setModel] = useState(initialModel);
   const [reasoningEffort, setReasoningEffort] = useState<string>(() =>
     compatibleReasoningEffort(
       initialModel,
       session?.configured_reasoning_effort ??
+        initialModelOption?.defaultEffort ??
         DEFAULT_CODEX_REASONING_EFFORT,
+      modelOptions,
     ),
   );
   const [sendError, setSendError] = useState<string | null>(null);
@@ -930,14 +941,18 @@ function SessionConversationContent({
   useEffect(() => {
     if (turnSettingsTouchedRef.current || !latestTurnSettings) return;
     const nextModel = latestTurnSettings.model ?? model;
+    const nextModelOption = codexModelOption(nextModel, modelOptions);
     setModel(nextModel);
     setReasoningEffort(
       compatibleReasoningEffort(
         nextModel,
-        latestTurnSettings.reasoning_effort ?? reasoningEffort,
+        latestTurnSettings.reasoning_effort ??
+          nextModelOption?.defaultEffort ??
+          reasoningEffort,
+        modelOptions,
       ),
     );
-  }, [latestTurnSettings, model, reasoningEffort]);
+  }, [latestTurnSettings, model, modelOptions, reasoningEffort]);
 
   useLayoutEffect(() => {
     const snapshot = prependSnapshotRef.current;
@@ -1003,14 +1018,12 @@ function SessionConversationContent({
   const statusMeta = SESSION_STATUS_META[sessionStatus];
   const sessionAlive = currentSession ? isSessionAlive(currentSession) : false;
   const canSend = sessionAlive && !pendingStructuredRequest;
-  const selectedModel = codexModelOption(model);
+  const selectedModel = codexModelOption(model, modelOptions);
   const availableEfforts =
     selectedModel?.efforts ??
-    (Object.keys(REASONING_EFFORT_LABELS) as ReasoningEffort[]);
+    Object.keys(REASONING_EFFORT_LABELS);
   const customModel = selectedModel ? null : model;
-  const customReasoningEffort = availableEfforts.includes(
-    reasoningEffort as ReasoningEffort,
-  )
+  const customReasoningEffort = availableEfforts.includes(reasoningEffort)
     ? null
     : reasoningEffort;
 
@@ -1018,7 +1031,7 @@ function SessionConversationContent({
     turnSettingsTouchedRef.current = true;
     setModel(value);
     setReasoningEffort((current) =>
-      compatibleReasoningEffort(value, current),
+      compatibleReasoningEffort(value, current, modelOptions),
     );
   };
 
@@ -1269,7 +1282,7 @@ function SessionConversationContent({
                       {customModel ? (
                         <SelectItem value={customModel}>{customModel}</SelectItem>
                       ) : null}
-                      {CODEX_MODEL_OPTIONS.map((option) => (
+                      {modelOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
@@ -1298,7 +1311,10 @@ function SessionConversationContent({
                       ) : null}
                       {availableEfforts.map((effort) => (
                         <SelectItem key={effort} value={effort}>
-                          {REASONING_EFFORT_LABELS[effort]}
+                          {reasoningEffortLabel(
+                            effort,
+                            selectedModel?.effortDescriptions[effort],
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>

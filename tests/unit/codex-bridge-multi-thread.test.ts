@@ -24,6 +24,23 @@ lines.on("line", (line) => {
   if (message.method === "initialize") {
     process.stderr.write("FAKE_INITIALIZE " + JSON.stringify(message.params) + "\\n");
     send({ id: message.id, result: { userAgent: "fake-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: {
+      data: [{
+        id: "custom-fast",
+        model: "provider/custom-fast",
+        displayName: "Custom Fast",
+        description: "Configured by the fake provider",
+        defaultReasoningEffort: "balanced",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "quick", description: "Fast" },
+          { reasoningEffort: "balanced", description: "Balanced" },
+        ],
+        inputModalities: ["text", "image"],
+        isDefault: true,
+      }],
+      nextCursor: null,
+    } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: { data: threads, nextCursor: null, backwardsCursor: null } });
   } else if (message.method === "thread/resume") {
@@ -103,6 +120,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-delayed-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-delayed", cwd: "/workspace/delayed", parentThreadId: null }],
@@ -129,6 +148,7 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send({ id: message.id, result: { userAgent: "fake-empty" } });
+  else if (message.method === "model/list") send({ id: message.id, result: { data: [], nextCursor: null } });
   else if (message.method === "thread/list") send({ id: message.id, result: { data: [], nextCursor: null } });
 });
 `;
@@ -140,6 +160,7 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send({ id: message.id, result: { userAgent: "fake-crash" } });
+  else if (message.method === "model/list") send({ id: message.id, result: { data: [], nextCursor: null } });
   else if (message.method === "thread/list") process.exit(7);
 });
 `;
@@ -152,6 +173,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-backlog" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-overflow", cwd: "/workspace/overflow", parentThreadId: null }],
@@ -234,6 +257,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
       const activities: SeenActivity[] = [];
       let syncedInventory: Array<Record<string, unknown>> = [];
       let syncedDirectories: Array<Record<string, unknown>> = [];
+      let syncedModelCatalog: Array<Record<string, unknown>> = [];
       const completedSessions = new Set<string>();
       const wakeResponses = new Set<ServerResponse>();
       let resolveCompleted!: () => void;
@@ -263,6 +287,9 @@ describe("Codex Bridge multi-thread device runtime", () => {
           const body = await bodyOf(request);
           const threads = body.threads as Array<Record<string, unknown>>;
           syncedDirectories = body.directories as Array<
+            Record<string, unknown>
+          >;
+          syncedModelCatalog = body.model_catalog as Array<
             Record<string, unknown>
           >;
           syncedInventory = threads;
@@ -392,6 +419,21 @@ describe("Codex Bridge multi-thread device runtime", () => {
           directory_key: "b",
           name: "Project B",
           working_directory: workingDirectoryB,
+        },
+      ]);
+      expect(syncedModelCatalog).toEqual([
+        {
+          id: "custom-fast",
+          model: "provider/custom-fast",
+          display_name: "Custom Fast",
+          description: "Configured by the fake provider",
+          default_reasoning_effort: "balanced",
+          supported_reasoning_efforts: [
+            { reasoning_effort: "quick", description: "Fast" },
+            { reasoning_effort: "balanced", description: "Balanced" },
+          ],
+          input_modalities: ["text", "image"],
+          is_default: true,
         },
       ]);
       expect(syncedInventory).toEqual(

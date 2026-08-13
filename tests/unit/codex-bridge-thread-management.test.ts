@@ -24,6 +24,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-thread-manager" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: { data: threads, nextCursor: null } });
   } else if (message.method === "thread/read") {

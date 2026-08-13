@@ -4,13 +4,19 @@ vi.mock("server-only", () => ({}));
 
 const databaseMocks = vi.hoisted(() => ({
   rpc: vi.fn(),
+  from: vi.fn(),
+  update: vi.fn(),
+  eq: vi.fn(),
 }));
 const rpcMocks = vi.hoisted(() => ({
   callDomainRpc: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => ({ rpc: databaseMocks.rpc }),
+  createAdminClient: () => ({
+    rpc: databaseMocks.rpc,
+    from: databaseMocks.from,
+  }),
 }));
 vi.mock("@/lib/domain/rpc", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/domain/rpc")>();
@@ -50,6 +56,14 @@ const input: SyncSessionsInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  const updateQuery = {
+    error: null,
+    update: databaseMocks.update,
+    eq: databaseMocks.eq,
+  };
+  databaseMocks.from.mockReturnValue(updateQuery);
+  databaseMocks.update.mockReturnValue(updateQuery);
+  databaseMocks.eq.mockReturnValue(updateQuery);
   vi.stubEnv("AI_TOKEN_PEPPER", "test-only-pepper-with-at-least-32-characters");
 });
 
@@ -72,6 +86,49 @@ describe("Session inventory migration compatibility", () => {
       }),
     );
     expect(rpcMocks.callDomainRpc).not.toHaveBeenCalled();
+  });
+
+  it("stores a reported model catalog only after inventory succeeds", async () => {
+    const result = { sessions: [{ id: "session-1" }] };
+    databaseMocks.rpc.mockResolvedValue({ data: result, error: null });
+    const modelCatalog = [{
+      id: "custom-fast",
+      model: "provider/custom-fast",
+      display_name: "Custom Fast",
+      description: null,
+      default_reasoning_effort: "balanced",
+      supported_reasoning_efforts: [
+        { reasoning_effort: "balanced", description: "Balanced" },
+      ],
+      input_modalities: ["text"],
+      is_default: true,
+    }];
+
+    await expect(
+      syncSessions(
+        auth,
+        { ...input, model_catalog: modelCatalog },
+        "inventory/catalog",
+      ),
+    ).resolves.toBe(result);
+
+    expect(databaseMocks.from).toHaveBeenCalledWith(
+      "ai_connection_bridge_settings",
+    );
+    expect(databaseMocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model_catalog: modelCatalog,
+        model_catalog_updated_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      }),
+    );
+    expect(databaseMocks.eq).toHaveBeenCalledWith(
+      "workspace_id",
+      auth.workspaceId,
+    );
+    expect(databaseMocks.eq).toHaveBeenCalledWith(
+      "connection_id",
+      auth.connectionId,
+    );
   });
 
   it.each(["PGRST202", "42883"])(

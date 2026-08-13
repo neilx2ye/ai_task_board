@@ -83,6 +83,39 @@ export interface AppServerThreadListResponse {
   [key: string]: unknown;
 }
 
+export interface AppServerModelReasoningEffort {
+  reasoningEffort: string;
+  description?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerModel {
+  id: string;
+  model: string;
+  displayName: string;
+  description?: string | null;
+  hidden?: boolean;
+  defaultReasoningEffort?: string | null;
+  supportedReasoningEfforts?: AppServerModelReasoningEffort[];
+  inputModalities?: string[];
+  supportsPersonality?: boolean;
+  isDefault?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AppServerModelListParams {
+  cursor?: string | null;
+  limit?: number | null;
+  includeHidden?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AppServerModelListResponse {
+  data: AppServerModel[];
+  nextCursor: string | null;
+  [key: string]: unknown;
+}
+
 export interface AppServerThreadReadParams {
   threadId: string;
   includeTurns?: boolean;
@@ -583,6 +616,13 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerThreadListResponse> {
     return this.initializedRequest("thread/list", params, options);
+  }
+
+  async modelList(
+    params: AppServerModelListParams = {},
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerModelListResponse> {
+    return this.initializedRequest("model/list", params, options);
   }
 
   async threadRead(

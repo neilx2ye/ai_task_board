@@ -118,7 +118,7 @@ npx --yes ai-task-board-codex-bridge@0.9.0
 
 ## Web Console 管理 Threads
 
-Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新建、重命名和删除 Codex Thread；Bridge 0.7 起，新建按钮位于具体工作目录节点。新建对话框可以显式选择 Codex 模型和思考强度，也可以让任一设置继续继承设备默认值；选择值随持久化指令交给 Bridge，并作为 App Server 的新 Thread 配置应用。操作先作为持久化指令写入 Board，只有持有该 Connection 当前运行租约的 Bridge 才能领取并执行，因此多个进程不会同时修改同一设备。新建命令始终只保存当前设备实际已上报的目录 key，Bridge 再从当前有效清单解析绝对路径；即使 0.8 开启 Web 路径管理，也不能在单条 Thread 命令里绕过清单注入路径。重命名与删除也只能针对当前 Bridge 清单内的受管 Thread。设置了固定 `CODEX_THREAD_ID` 时，新建和删除会被拒绝。
+Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新建、重命名和删除 Codex Thread；Bridge 0.7 起，新建按钮位于具体工作目录节点。新建对话框可以显式选择 Codex 模型和思考强度，也可以让任一设置继续继承设备默认值；选择值随持久化指令交给 Bridge，并作为 App Server 的新 Thread 配置应用。Bridge 启动时会调用 App Server `model/list`，把当前 provider 可见的模型、默认思考强度和支持强度上报给 Board；新建 Thread 和会话输入框都优先使用这份目录，旧版 App Server 或目录读取失败时才显示兼容列表。使用自定义 `model_provider` 时，应同时通过 Codex 的 `model_catalog_json` 描述可选择模型；API 地址、认证环境变量和值始终只留在 Bridge 设备上。操作先作为持久化指令写入 Board，只有持有该 Connection 当前运行租约的 Bridge 才能领取并执行，因此多个进程不会同时修改同一设备。新建命令始终只保存当前设备实际已上报的目录 key，Bridge 再从当前有效清单解析绝对路径；即使 0.8 开启 Web 路径管理，也不能在单条 Thread 命令里绕过清单注入路径。重命名与删除也只能针对当前 Bridge 清单内的受管 Thread。设置了固定 `CODEX_THREAD_ID` 时，新建和删除会被拒绝。
 
 删除只允许空闲且没有已预留任务的 Thread。请求被接受后，Board Session 会立即隐藏并停止接收新任务，再由 Bridge 调用 Codex App Server 的硬删除接口；缺少硬删除方法的兼容 App Server 会退化为归档。看板中的审计与已同步历史仍保留。
 
@@ -202,7 +202,7 @@ systemctl --user enable --now ai-task-board-codex-bridge.service
 |---|---|
 | `item/agentMessage/delta`、agent message 完成 | AI 回复增量与最终消息 |
 
-回复使用稳定的 thread/turn/item/chunk 外部引用去重。HTTP 5xx、限流或临时网络错误会退避重试。常见 Token、Authorization、API key、password 和 secret 形式会做尽力脱敏，过长内容会被截断；这不是完整的数据防泄漏系统，仍应限制 Codex 可读 Secret，并评估把 AI 回复同步到共享 Board 的边界。Inventory 必然上传 thread ID、绝对 `working_directory` 和模型标签给该 Workspace 的成员；只有本机直接开启标题，或同时允许 Web 配置与远程标题并由网页开启时，才额外把 thread 标题/首条 prompt 预览用于 Session 名称。
+回复使用稳定的 thread/turn/item/chunk 外部引用去重。HTTP 5xx、限流或临时网络错误会退避重试。常见 Token、Authorization、API key、password 和 secret 形式会做尽力脱敏，过长内容会被截断；这不是完整的数据防泄漏系统，仍应限制 Codex 可读 Secret，并评估把 AI 回复同步到共享 Board 的边界。Inventory 必然上传 thread ID、绝对 `working_directory`、当前模型标签，以及 `model/list` 返回的可见模型名称与能力元数据给该 Workspace 的成员；provider API 地址、Token 和认证环境变量不会上传。只有本机直接开启标题，或同时允许 Web 配置与远程标题并由网页开启时，才额外把 thread 标题/首条 prompt 预览用于 Session 名称。
 
 ## 思考与工具边界
 

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   type AppServerIncomingRequest,
+  type AppServerModel,
   type AppServerNotification,
   type AppServerThread,
   AppServerRpcError,
@@ -59,6 +60,8 @@ const MAX_NOTIFICATION_BACKLOG = 256;
 const MAX_ACTIVITY_BACKLOG = 64;
 const USER_INPUT_POLL_INTERVAL_MS = 1_500;
 const MAX_CONCURRENT_TURNS = 32;
+const MAX_MODEL_CATALOG_ENTRIES = 500;
+const MODEL_CATALOG_PAGE_SIZE = 100;
 
 type ClaimedTask = {
   id: string;
@@ -276,6 +279,22 @@ type InventoryDirectory = {
   working_directory: string;
 };
 
+type InventoryModelReasoningEffort = {
+  reasoning_effort: string;
+  description: string | null;
+};
+
+type InventoryModel = {
+  id: string;
+  model: string;
+  display_name: string;
+  description: string | null;
+  default_reasoning_effort: string | null;
+  supported_reasoning_efforts: InventoryModelReasoningEffort[];
+  input_modalities: string[];
+  is_default: boolean;
+};
+
 type SyncSessionsResponse = {
   sessions: Session[];
 };
@@ -316,6 +335,75 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function boundedCatalogString(
+  value: unknown,
+  maximumLength: number,
+): string | null {
+  const parsed = stringValue(value);
+  return parsed && parsed.length <= maximumLength ? parsed : null;
+}
+
+function inventoryModel(
+  value: AppServerModel,
+  allowDefault: boolean,
+): InventoryModel | null {
+  if (!isRecord(value)) return null;
+  const model = boundedCatalogString(value.model, 200);
+  const id = boundedCatalogString(value.id, 200) ?? model;
+  if (!id || !model) return null;
+
+  const efforts: InventoryModelReasoningEffort[] = [];
+  const seenEfforts = new Set<string>();
+  if (Array.isArray(value.supportedReasoningEfforts)) {
+    for (const candidate of value.supportedReasoningEfforts.slice(0, 20)) {
+      if (!isRecord(candidate)) continue;
+      const reasoningEffort = boundedCatalogString(
+        candidate.reasoningEffort,
+        100,
+      );
+      if (!reasoningEffort || seenEfforts.has(reasoningEffort)) continue;
+      seenEfforts.add(reasoningEffort);
+      efforts.push({
+        reasoning_effort: reasoningEffort,
+        description:
+          typeof candidate.description === "string"
+            ? candidate.description.trim().slice(0, 2_000) || null
+            : null,
+      });
+    }
+  }
+
+  const inputModalities = Array.isArray(value.inputModalities)
+    ? [
+        ...new Set(
+          value.inputModalities
+            .slice(0, 20)
+            .map((modality) => boundedCatalogString(modality, 100))
+            .filter((modality): modality is string => Boolean(modality)),
+        ),
+      ]
+    : [];
+  const defaultEffort = boundedCatalogString(
+    value.defaultReasoningEffort,
+    100,
+  );
+
+  return {
+    id,
+    model,
+    display_name:
+      boundedCatalogString(value.displayName, 200) ?? model,
+    description:
+      typeof value.description === "string"
+        ? value.description.trim().slice(0, 2_000) || null
+        : null,
+    default_reasoning_effort: defaultEffort,
+    supported_reasoning_efforts: efforts,
+    input_modalities: inputModalities,
+    is_default: allowDefault && value.isDefault === true,
+  };
 }
 
 export function parseStructuredUserInputRequest(
@@ -1169,10 +1257,14 @@ class BoardClient {
 
   async syncSessions(
     threads: ThreadRecord[],
+    modelCatalog: readonly InventoryModel[] | undefined,
     signal?: AbortSignal,
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      ...(modelCatalog === undefined
+        ? {}
+        : { model_catalog: modelCatalog }),
       directories: this.configuration.workingDirectories.map(
         (directory): InventoryDirectory => ({
           directory_key: directory.key,
@@ -2709,6 +2801,7 @@ class DeviceBridge {
   private latestSuccessfulReportSequence = 0;
   private legacyConfigurationCompatibility = false;
   private inventoryReady = false;
+  private modelCatalog: InventoryModel[] | undefined;
 
   constructor(
     private readonly configuration: BridgeConfiguration,
@@ -2767,6 +2860,7 @@ class DeviceBridge {
         "高风险警告：CODEX_THREAD_SCOPE=all 会管理当前系统用户的跨项目顶层 Codex threads\n",
       );
     }
+    await this.discoverModelCatalog();
     await this.establishRemoteConfigurationLease();
     if (this.stopping) {
       await this.stop();
@@ -3260,6 +3354,7 @@ class DeviceBridge {
     if (this.stopping) return;
     const sessions = await this.board.syncSessions(
       threads,
+      this.modelCatalog,
       this.stopController.signal,
     );
     if (this.stopping) return;
@@ -3334,6 +3429,57 @@ class DeviceBridge {
       `Codex Bridge 已同步 ${threads.length} 个 thread，最多并行 ${this.configuration.maxConcurrentTurns} 个 turn\n`,
     );
     this.inventoryReady = true;
+  }
+
+  private async discoverModelCatalog(): Promise<void> {
+    const models: InventoryModel[] = [];
+    const seenModels = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    let defaultClaimed = false;
+
+    try {
+      do {
+        const response = await this.appServer.modelList(
+          {
+            cursor,
+            limit: MODEL_CATALOG_PAGE_SIZE,
+            includeHidden: false,
+          },
+          { signal: this.stopController.signal, timeoutMs: 5_000 },
+        );
+        if (!Array.isArray(response.data)) {
+          throw new Error("model/list 未返回模型数组");
+        }
+        for (const candidate of response.data) {
+          const normalized = inventoryModel(candidate, !defaultClaimed);
+          if (!normalized || seenModels.has(normalized.model)) continue;
+          if (normalized.is_default) defaultClaimed = true;
+          seenModels.add(normalized.model);
+          models.push(normalized);
+          if (models.length >= MAX_MODEL_CATALOG_ENTRIES) break;
+        }
+        if (models.length >= MAX_MODEL_CATALOG_ENTRIES) break;
+
+        const nextCursor = stringValue(response.nextCursor);
+        if (!nextCursor) break;
+        if (seenCursors.has(nextCursor)) {
+          throw new Error("model/list 返回了重复分页游标");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      } while (!this.stopping);
+
+      this.modelCatalog = models;
+      process.stdout.write(
+        `已从 Codex App Server 读取 ${models.length} 个可用模型\n`,
+      );
+    } catch (error) {
+      if (this.stopping) return;
+      process.stderr.write(
+        `读取 Codex 模型目录失败，Web 将使用已有目录或兼容列表：${errorMessage(error)}\n`,
+      );
+    }
   }
 
   private async processThreadCommands(): Promise<boolean> {
