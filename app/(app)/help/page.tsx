@@ -202,10 +202,11 @@ export default function HelpPage() {
               href="#codex-bridge"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
             >
-              下方启动命令
+              下方交互式安装命令
             </a>
-            ，替换看板地址、一次性连接令牌和工作目录后运行。命令必须由拥有本机
-            Codex 登录与工作区的用户执行；同一台设备和 Connection 只运行一个 Bridge。
+            ，按提示填写看板地址、一次性连接令牌和工作目录。命令必须由拥有本机
+            Codex 登录与工作区的用户执行；安装器会为该用户配置服务，同一台设备和
+            Connection 只运行一个 Bridge。
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
             Bridge 上线后，在「AI 连接 → Bridge 设置」确认实际配置，再到
@@ -219,9 +220,9 @@ export default function HelpPage() {
             工作目录下新建一个 Thread，再发送一条测试消息确认 AI 回复能够回传。
           </Step>
           <Step index={6} title="确认可用后配置常驻运行">
-            固定 Bridge 包版本，并使用 systemd、launchd 或其他本机进程管理器负责
-            开机启动和异常重启。连接令牌应通过 Secret 管理器或权限受限的环境文件注入，
-            不要写入仓库、服务文件、截图或共享日志。
+            Linux 交互式安装会创建并启动当前用户的 systemd user service；确认服务状态
+            和日志正常，并按需启用 linger，确保用户未登录时仍能运行。连接令牌会保存到
+            权限受限的环境文件中，不要把它写入仓库、截图或共享日志。
           </Step>
         </ol>
       </Section>
@@ -232,7 +233,17 @@ export default function HelpPage() {
           AI Connection，通过 stdio 启动本机 Codex App Server，并为每个允许的本地
           thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
-        <CopyableCodeBlock copyLabel="复制 Bridge 启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Linux 推荐使用交互式安装。安装器会收集所需配置，并以执行命令的当前用户创建和
+          启动 systemd user service，因此 Bridge 会使用该用户的 Codex 配置：
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
+          {`npx --yes ai-task-board-bridge@0.9.0 setup`}
+        </CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          如需前台运行或自动化部署，也可以直接通过环境变量配置：
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
 CODEX_THREAD_SCOPE='cwd' \\
@@ -243,7 +254,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-codex-bridge@0.9.0`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@0.9.0 run`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -254,8 +265,10 @@ npx --yes ai-task-board-codex-bridge@0.9.0`}</CopyableCodeBlock>
             Codex TUI、IDE 或另一 Bridge 写入同一个 thread。
           </li>
           <li>
-            npm 包不会自动安装系统服务；长期运行时请固定包版本，并使用 systemd、
-            launchd 或其他进程管理器负责开机启动和异常重启。
+            Linux 上的 <code>setup</code> 会安装并启动当前用户的
+            <code className="ml-1">ai-task-board-bridge.service</code>。可使用
+            <code className="mx-1">systemctl --user status ai-task-board-bridge.service</code>
+            查看状态；其他系统请使用对应的本机进程管理器。
           </li>
           <li>
             本机显式允许 Web 配置后，Workspace Owner 可以在“AI 连接 → Bridge 设置”

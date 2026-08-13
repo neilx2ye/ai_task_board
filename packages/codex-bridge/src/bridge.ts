@@ -3788,7 +3788,7 @@ async function main(): Promise<void> {
     unsetEnv: ["AI_TASK_BOARD_CONNECTION_TOKEN"],
     clientInfo: {
       name: "ai_task_board_bridge",
-      title: "AI Task Board Codex Bridge",
+      title: "AI Task Board Bridge",
       version: BRIDGE_VERSION,
     },
     capabilities: { experimentalApi: true, requestAttestation: false },

@@ -16,8 +16,8 @@
     "test:e2e": "playwright test",
     "demo": "tsx scripts/demo.ts",
     "bridge:codex": "tsx scripts/codex-bridge.ts",
-    "bridge:build": "npm run build --workspace ai-task-board-codex-bridge",
-    "bridge:pack": "npm pack --workspace ai-task-board-codex-bridge"
+    "bridge:build": "npm run build --workspace ai-task-board-bridge",
+    "bridge:pack": "npm pack --workspace ai-task-board-bridge"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

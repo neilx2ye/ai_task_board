@@ -55,13 +55,35 @@ describe("Harness activity sanitization", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("ai-task-board-codex-bridge");
+    expect(result.stdout).toContain("ai-task-board-bridge");
+    expect(result.stdout).toContain("ai-task-board-bridge setup");
+    expect(result.stdout).toContain("current user's systemd service");
     expect(result.stdout).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
     expect(result.stdout).toContain("accept (default), decline, or accept-session");
     expect(result.stdout).toContain(
       "danger-full-access (default), safe, or inherit",
     );
     expect(result.stderr).toBe("");
+  });
+
+  it("requires a terminal for the interactive setup command", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "packages/codex-bridge/src/cli.ts",
+        "setup",
+      ],
+      {
+        cwd: path.resolve(process.cwd()),
+        encoding: "utf8",
+        env: process.env,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("setup 需要交互式终端");
   });
 
   it("redacts common token shapes without corrupting ordinary text", () => {

@@ -422,7 +422,7 @@ export class CodexAppServerClient {
     this.defaultInitializeParams = {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
-        title: "AI Task Board Codex Bridge",
+        title: "AI Task Board Bridge",
         version: "0.9.0",
       },
       capabilities: options.capabilities ?? null,

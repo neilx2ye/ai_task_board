@@ -35,7 +35,34 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 
 设备只需能通过 HTTPS 访问 `AI_TASK_BOARD_URL`，无需克隆 Board 仓库，也无需允许公网反向连接设备。
 
-## 启动 0.9 CLI
+## 交互式安装 0.9 CLI
+
+Linux 上推荐直接启动交互式安装器：
+
+```bash
+npx --yes ai-task-board-bridge@0.9.0 setup
+```
+
+不带参数运行且当前终端是 TTY、同时缺少 Board URL 或 Connection Token 时，也会自动
+进入相同的 setup。安装器依次确认当前有效 UID、Board 地址、隐藏输入的 Connection
+Token、工作目录、Codex 配置目录与可执行文件、Thread 范围和数量、权限/审批模式以及
+provider 凭据环境变量、是否允许 Web 配置，最后才写文件和启动服务。新安装默认选择 `cwd`、`safe`、
+`decline`；高风险选项仍可在交互中明确选择。
+
+安装目标按当前有效用户计算，而不是按 npm 全局目录的所有者计算。不要使用 `sudo npx`
+来代替目标用户运行；否则有效用户是 root，安装器会警告，并且继续后得到的是 root 的
+用户服务和 Codex 配置。为另一名 Linux 用户安装时，应登录该用户的 shell 后再次运行
+setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但通常应为它们创建
+不同的 Board Connection/Token；同一 Connection 同时只能有一个 Bridge 获得运行租约。
+
+安装器不会写入模型覆盖。它在 unit 和受保护环境文件中显式固定当前用户的 `HOME` 与
+所选 `CODEX_HOME`，再由该环境中的 `codex app-server` 读取用户级登录、
+`config.toml`、provider 与默认模型；已经保存在 Thread/Turn 上的模型选择仍可优先于
+用户默认值。若 `config.toml` 的自定义 provider 通过 `env_key` 或
+`env_http_headers` 引用环境变量（例如 `DEEPSEEK_API_KEY`），安装器会检测变量名并用
+隐藏输入确认其值；它只保存用户确认的变量，不会把整个交互 shell 环境复制进服务。
+
+### 前台与自动化兼容模式
 
 下面的设备级配置不固定 thread：
 
@@ -43,7 +70,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -52,6 +79,10 @@ npx --yes ai-task-board-codex-bridge@0.9.0
 > 用户权限范围内不受沙箱写入或网络限制，并且无需网页逐次确认。只应在工作区、Codex
 > 配置和 Connection 使用者都可信时使用；需要限制写入和网络时，请显式设置
 > `CODEX_BRIDGE_PERMISSION_MODE=safe`。
+
+这里的高风险默认值只描述原有环境变量运行模式；交互式新安装会明确询问并默认选择
+`safe` + `decline`。脚本和容器可继续直接设置环境变量，也可显式运行 `run` 子命令；
+非交互输入不会意外进入 setup。
 
 默认 `CODEX_THREAD_SCOPE=cwd`：未设置 `CODEX_THREAD_ID` 时，只发现记录 cwd 与本机目录白名单中任一目录**完全相同**的顶层 thread（不会自动包含子目录）。未设置 `CODEX_WORKING_DIRECTORIES` 时，白名单只有兼容项 `CODEX_WORKING_DIRECTORY`。如确需不受白名单约束地管理跨项目 thread，必须显式设置高风险选项 `CODEX_THREAD_SCOPE=all`。
 
@@ -62,7 +93,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -74,7 +105,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -102,6 +133,7 @@ npx --yes ai-task-board-codex-bridge@0.9.0
 | `CODEX_MAX_CONCURRENT_TURNS` | 否 | `2` | 兼容的启动并发值，范围 `1..32`；启用 Web 配置后由网页值直接替换 |
 | `CODEX_BRIDGE_APPROVAL_MODE` | 否 | `accept` | App Server 审批策略；`accept` 自动同意与当前活跃 turn 关联的受支持请求（高风险），也可设为 `decline` 或 `accept-session` |
 | `CODEX_BRIDGE_PERMISSION_MODE` | 否 | `danger-full-access` | `danger-full-access` 完全访问且无沙箱（高风险）；`safe` 限制为该 thread cwd 的 `workspace-write` 并关闭网络；`inherit` 不发送覆盖、沿用本机设置，边界不确定时同样属于高风险 |
+| `CODEX_HOME` | 否 | 当前用户的 `~/.codex` | Codex 登录、配置与 thread 数据目录；交互安装会显式固定为所选的当前用户目录 |
 | `CODEX_BINARY` | 否 | `codex` | Codex CLI 可执行文件路径或名称 |
 | `AI_TASK_BOARD_POLL_INTERVAL_MS` | 否 | `5000` | SSE 不可用时的初始轮询间隔，范围 `500..60000` 毫秒 |
 | `AI_TASK_BOARD_LEASE_SECONDS` | 否 | `900` | 任务租约与续租时长，范围 `60..3600` 秒 |
@@ -150,36 +182,32 @@ App Server 发起命令、文件变更或权限审批时，默认 `CODEX_BRIDGE_
 
 ## systemd 常驻运行
 
-npm CLI 不会自动写入或启用 systemd。先用 `command -v npx` 和 `command -v codex` 确认当前用户实际使用的路径，再为拥有 Codex 数据的用户创建 user service。一个设备/Connection 使用一个 unit：
+`setup` 会幂等创建或更新以下当前用户文件；设置了绝对路径形式的
+`XDG_CONFIG_HOME` / `XDG_DATA_HOME` 时会遵循它们：
 
-```ini
-[Unit]
-Description=AI Task Board Codex Bridge
-Wants=network-online.target
-After=network-online.target
+- `~/.config/ai-task-board/codex-bridge.env`：权限 `0600`，保存 Token、明确选择的
+  安全配置、绝对 `CODEX_BINARY`、当前用户的 `HOME` / `CODEX_HOME` 和安装时的
+  `PATH`，以及用户确认传给自定义 Codex provider 的凭据变量。重跑 setup 会保留它不认识的高级变量；若检测到有效的
+  `CODEX_WORKING_DIRECTORIES`，会询问是否保留。
+- `~/.config/systemd/user/ai-task-board-bridge.service`：当前用户的 user unit。
+  unit 故意不包含 `User=`；`systemctl --user` 连接的 user manager 本身就固定了 UID。
+- `~/.local/share/ai-task-board/codex-bridge/versions/<version>/`：从当前 npx 包复制的
+  固定版本运行文件。服务使用绝对 Node 路径直接启动这里的 `dist/cli.js run`，不依赖
+  后续可能被清理的 npx cache，也不会在每次重启时重新下载 npm 包。
 
-[Service]
-Type=simple
-WorkingDirectory=/path/to/a/safe/start-directory
-EnvironmentFile=%h/.config/ai-task-board/codex-bridge.env
-ExecStart=/absolute/path/to/npx --yes ai-task-board-codex-bridge@0.9.0
-Restart=on-failure
-RestartSec=5
-KillSignal=SIGTERM
-TimeoutStopSec=30
-
-[Install]
-WantedBy=default.target
-```
-
-环境文件至少包含 `AI_TASK_BOARD_URL` 和 `AI_TASK_BOARD_CONNECTION_TOKEN`。建议同时显式设置 `CODEX_BINARY`、`CODEX_WORKING_DIRECTORY`、`CODEX_THREAD_SCOPE=cwd`、`CODEX_MAX_THREADS`，并明确选择 `CODEX_BRIDGE_PERMISSION_MODE` 与 `CODEX_BRIDGE_APPROVAL_MODE`，避免在部署时忽略默认 `danger-full-access` + `accept` 的高风险组合；需要受限执行时使用 `safe`，需要统一拒绝审批时使用 `decline`。要在网页调整配置，再显式设置 `CODEX_BRIDGE_WEB_CONFIG=true`。网页开启标题还要设置 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true`，开启历史还要设置 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，管理项目路径还要设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`；这些授权彼此独立。可用 `CODEX_BRIDGE_MAX_HISTORY_TURNS` 收紧历史上限，也可设置 `CODEX_THREAD_ID` 精确限定。将文件权限设为 `0600`，再执行：
+写入完成后，安装器执行 `systemctl --user daemon-reload`、`enable` 和 `restart`。
+查看状态和日志：
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now ai-task-board-codex-bridge.service
+systemctl --user status ai-task-board-bridge.service
+journalctl --user -u ai-task-board-bridge.service -f
 ```
 
-若服务需要在用户退出登录后继续运行，由管理员为该用户启用 lingering。不要为同一设备/Connection 再启动第二个 unit 或手工 Bridge 进程。
+重新运行同版本的 setup 可更新配置并重启 unit。若服务需要在用户退出登录后继续运行，
+安装器会检查 linger 并在未开启时给出提示；`loginctl enable-linger` 仍需由管理员决定和
+执行。从旧名称升级时，setup 会停用 `ai-task-board-codex-bridge.service` 后启动新的
+`ai-task-board-bridge.service`，若新服务启动失败则恢复旧服务，避免两个 Bridge 并行。
+不要为同一设备/Connection 再启动第二个 unit 或手工 Bridge 进程。
 
 ## 任务与 thread 如何流转
 
@@ -234,11 +262,13 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 - **同一 thread 仍是单写入者。** 不要同时从 Bridge、TUI、IDE 或另一自动化进程提交 turn；不同 thread 才能安全并行。
 - **本机 App Server 是受信协议边界。** Bridge 会把单个活动流累计限制在 100,000 个 code unit 并分成至多约 8 KiB 的上传块，但当前 stdio JSONL reader 在解析前仍会缓冲完整单行 frame；不要把不受信任的程序伪装成 `CODEX_BINARY`。
 - **执行语义是 at-least-once。** 如果本地 turn 已产生副作用，但进程在完成 Task 或写下 durable checkpoint 前崩溃，租约恢复后可能再次提交。事件幂等只能去重已上传活动，不能撤销发布、付款、删除等外部副作用；不可逆操作必须使用 Harness 自身幂等键或人工确认。
-- **npm 包不负责进程托管。** npx 只安装并启动 CLI；systemd、launchd 或其他管理器负责开机启动、日志和失败重启。
+- **交互式托管目前只覆盖 Linux systemd。** Linux setup 会安装 systemd user service；非 Linux、容器或无 user manager 的环境仍需用环境变量模式交给 launchd 或其他进程管理器。
 
 ## 常见故障
 
 - 启动时报 `AI_TASK_BOARD_URL is required` 或 `AI_TASK_BOARD_CONNECTION_TOKEN is required`：确认两个必填变量位于 systemd 实际读取的环境文件中。
+- `setup 需要交互式终端`：在真实 TTY 中运行 setup；CI、容器入口和重定向输入应继续使用环境变量与 `run` 子命令。
+- `systemctl --user` 无法连接：确认命令是在目标用户的登录会话中执行，且系统提供 systemd user manager；不要通过 `sudo npx` 猜测目标用户。
 - `codex app-server` 启动失败：用同一 OS 用户检查 `CODEX_BINARY`、Codex 登录和自定义 Codex home；systemd 的 PATH 通常比交互式 shell 更短。
 - 找不到任何 thread：确认当前用户确实拥有本地 Codex 数据，且默认 scope 下 thread 记录的 cwd 与 `CODEX_WORKING_DIRECTORY` 或 `CODEX_WORKING_DIRECTORIES` 中某个路径完全相同；若设置了 `CODEX_THREAD_ID`，检查 ID 是否正确且对应未归档的顶层 thread。
 - 同步、结构化问题或配置 API 返回 `404`：先升级 Board 数据库 migration 与 API；0.8 Bridge 不会为目录/thread 同步或同 turn 问答回退到旧版接口。只有未启用 Web 配置时，缺少配置端点才会降级为继续使用本地配置。

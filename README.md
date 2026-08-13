@@ -19,7 +19,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 
 - Next.js App Router、React、TypeScript、Tailwind CSS
 - `@supabase/supabase-js` 与 `@supabase/ssr`
-- `ai-task-board-codex-bridge` 独立 CLI 包与本机 Codex App Server JSONL 协议
+- `ai-task-board-bridge` 独立 CLI 包与本机 Codex App Server JSONL 协议
 - Supabase Hosted PostgreSQL、Auth、Realtime、Storage、RLS
 - Zod、TanStack Query
 - Vitest、Playwright
@@ -102,20 +102,24 @@ Content-Type: application/json
 需要让网页主动排队下一轮 Codex 工作时，使用独立的 [Codex Bridge](docs/codex-bridge.md) CLI 包：
 
 ```bash
-AI_TASK_BOARD_URL=https://board.example.com \
-AI_TASK_BOARD_CONNECTION_TOKEN='<connection_token>' \
-CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0 setup
 ```
 
-> **高风险默认值：** Bridge 默认使用
-> `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、无沙箱）和
-> `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）。只应在工作区、Codex
-> 配置和 Connection 使用者都可信时采用此组合；需要限制写入与网络时，请显式设置
-> `CODEX_BRIDGE_PERMISSION_MODE=safe`。
+Linux 交互式安装器会询问 Board、Connection Token、工作目录、Codex 配置目录、
+provider 凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**
+自己的 systemd user service。它显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认
+读取这个用户的 Codex 登录、`config.toml`、provider 和模型配置；新安装的交互默认值为
+`safe` + `decline`。
+无参数且缺少必填环境变量时，交互终端也会自动进入 setup。
 
-仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。长期服务应固定明确版本，
-并由 systemd、launchd 或其他进程管理器负责重启；npm 包本身不会安装系统服务。
+原有环境变量前台/自动化启动方式仍然兼容。该模式未显式配置时继续使用
+`CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、无沙箱）和
+`CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）。只应在工作区、Codex
+配置和 Connection 使用者都可信时采用此组合；需要限制写入与网络时，请显式设置
+`CODEX_BRIDGE_PERMISSION_MODE=safe`。
+
+仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。非 Linux 或无需 systemd
+时，可继续使用环境变量方式交给其他进程管理器。
 
 一个常驻 Bridge 代表一台设备上的一个 AI Connection，并为自动发现的每个未归档顶层 Codex thread 同步独立 Board Session；默认 `CODEX_THREAD_SCOPE=cwd` 精确匹配 `CODEX_WORKING_DIRECTORY`，也可用 `CODEX_WORKING_DIRECTORIES` JSON 白名单同时管理多个目录，并在网页按“设备 → 工作目录 → Thread”展示。Bridge 0.8 在设备同时启用 `CODEX_BRIDGE_WEB_CONFIG=true` 与 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 后，允许 Owner 在“Bridge 设置”中管理项目名称、稳定 key 与本机绝对路径；Bridge 会在应用前验证路径确实存在且为目录。总计最多 50 个 thread（可调至 500）；设备级并行 turn 数可直接在 Web 设置为 1 到 32，默认启动值为 2。跨白名单发现必须显式设置高风险的 `CODEX_THREAD_SCOPE=all`；`CODEX_THREAD_ID` 是覆盖范围的单 thread 精确兼容过滤器。Bridge 必须以拥有本地 Codex 登录、会话存储和目标工作树的同一操作系统用户运行，不能放进 Next.js 服务进程。
 

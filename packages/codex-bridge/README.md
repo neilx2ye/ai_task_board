@@ -1,6 +1,6 @@
-# AI Task Board Codex Bridge
+# AI Task Board Bridge
 
-`ai-task-board-codex-bridge` is the device-level Codex companion for AI Task
+`ai-task-board-bridge` is the device-level Codex companion for AI Task
 Board. One long-running Bridge process represents one device/AI Connection. It
 starts the local `codex app-server` over stdio, discovers non-archived top-level
 Codex threads, maps each thread to a Board Session, receives reserved work, and
@@ -9,19 +9,54 @@ streams supported progress back to the Board.
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Run the 0.8 CLI
+## Interactive Linux setup
 
 Node.js 18 or newer and a compatible, logged-in `codex` CLI are required. Run
 the Bridge as the same OS user that owns the local Codex data and workspaces:
 
 ```bash
+npx --yes ai-task-board-bridge@0.9.0 setup
+```
+
+The setup wizard asks for the Board URL, hidden Connection Token, working
+directory, Codex home and executable, custom-provider credential environment
+variables, thread limits, permission/approval modes, and the Web configuration
+gate. It then installs and starts
+`ai-task-board-bridge.service` in the effective user's systemd user
+manager. Running with no command also enters setup in a TTY when either required
+Board setting is missing.
+
+The generated unit has no `User=` directive: a systemd user manager already
+runs as its owning UID. Setup explicitly binds that user's `HOME` and
+`CODEX_HOME`, captures an absolute Codex executable, stores secrets in a `0600`
+EnvironmentFile, and copies the current package to the user's XDG data directory
+so the service does not depend on an ephemeral npx cache. Do not use `sudo npx`
+unless a root-owned service and root's Codex configuration are actually desired.
+Each Linux user can install an independent unit with the same name; use separate
+Board Connections unless only one of them should acquire the runtime lease.
+Provider variables referenced by `env_key` or `env_http_headers` in
+`config.toml` are detected by name and confirmed with hidden input; setup does
+not copy the user's entire shell environment.
+
+New interactive installs default to `safe` permissions and `decline` approvals.
+The wizard requires an explicit selection before installing, and rerunning it
+updates the configuration and restarts the service. Upgrades disable the legacy
+`ai-task-board-codex-bridge.service` before starting
+`ai-task-board-bridge.service`, with rollback if the new service fails to start.
+
+## Foreground and automation mode
+
+The original environment-variable interface remains available and does not
+install a service:
+
+```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0 run
 ```
 
-> **High-risk defaults:** the Bridge uses
+> **High-risk foreground defaults:** when these values are omitted, the Bridge uses
 > `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access` (no sandbox) together with
 > `CODEX_BRIDGE_APPROVAL_MODE=accept` (automatic device-side approval). Use
 > this combination only when the workspace, Codex configuration, and Connection
@@ -36,7 +71,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -44,7 +79,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-codex-bridge@0.9.0
+npx --yes ai-task-board-bridge@0.9.0
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -208,11 +243,11 @@ App Server child environment, but processes under the same OS UID are not a
 strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
 upgraded before starting 0.8; there is no 404 fallback to the old registration
-API. For persistent use, pin version `0.9.0`
-in systemd, launchd, or another process manager; the npm CLI does not install or
-enable a service itself. Run only one Bridge for the same device/Connection, and
+API. On Linux, use `setup` for a pinned local runtime and systemd user service.
+On other platforms, pin version `0.9.0` in launchd or another process manager.
+Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-codex-bridge@0.9.0 --help` for the complete
+Use `npx --yes ai-task-board-bridge@0.9.0 --help` for the complete
 environment-variable list.

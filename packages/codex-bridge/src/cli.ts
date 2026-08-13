@@ -2,10 +2,19 @@
 
 import { readFile } from "node:fs/promises";
 
-const HELP = `AI Task Board Codex Bridge
+const HELP = `AI Task Board Bridge
 
 Usage:
-  ai-task-board-codex-bridge
+  ai-task-board-bridge setup
+  ai-task-board-bridge run
+  ai-task-board-bridge
+
+Commands:
+  setup  Interactively configure and install the current user's systemd service
+  run    Run the Bridge using environment variables (used by the service)
+
+With no command, an interactive terminal enters setup when required configuration
+is missing. Existing environment-variable launches continue to run immediately.
 
 Required environment variables:
   AI_TASK_BOARD_URL               Board HTTPS base URL
@@ -29,6 +38,7 @@ Optional environment variables:
   CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 2)
   CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session; accept is automatic
   CODEX_BRIDGE_PERMISSION_MODE    danger-full-access (default), safe, or inherit; full/inherit may be high risk
+  CODEX_HOME                      Codex config/data directory (default: current user's ~/.codex)
   CODEX_BINARY                    Codex executable (default: codex)
   AI_TASK_BOARD_POLL_INTERVAL_MS  Poll interval when SSE is unavailable (500..60000)
   AI_TASK_BOARD_LEASE_SECONDS     Task lease duration (60..3600, default: 900)
@@ -55,9 +65,29 @@ async function run(): Promise<void> {
     process.stdout.write(`${await packageVersion()}\n`);
     return;
   }
-  if (args.length > 0) {
+  if (args.length === 1 && args[0] === "setup") {
+    const { runInteractiveSetup } = await import("./setup.js");
+    await runInteractiveSetup({ packageVersion: await packageVersion() });
+    return;
+  }
+  if (args.length > 1 || (args.length === 1 && args[0] !== "run")) {
     process.stderr.write(`Unknown option: ${args[0]}\n\n${HELP}`);
     process.exitCode = 1;
+    return;
+  }
+
+  const explicitRun = args[0] === "run";
+  const missingRequiredConfiguration =
+    !process.env.AI_TASK_BOARD_URL?.trim() ||
+    !process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim();
+  if (
+    !explicitRun &&
+    missingRequiredConfiguration &&
+    process.stdin.isTTY &&
+    process.stdout.isTTY
+  ) {
+    const { runInteractiveSetup } = await import("./setup.js");
+    await runInteractiveSetup({ packageVersion: await packageVersion() });
     return;
   }
 
@@ -66,6 +96,6 @@ async function run(): Promise<void> {
 }
 
 void run().catch((error) => {
-  process.stderr.write(`Codex Bridge 启动失败：${String(error)}\n`);
+  process.stderr.write(`Codex Bridge 操作失败：${String(error)}\n`);
   process.exitCode = 1;
 });
