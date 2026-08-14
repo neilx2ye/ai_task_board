@@ -25,9 +25,11 @@ import { useSessions } from "@/hooks/use-sessions";
 import {
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
+  supportsWebThreadRename,
   useConnections,
 } from "@/hooks/use-connections";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { agentDisplayName } from "@/lib/agent-platforms";
 import {
   groupSessionsByConnection,
   type SessionConnectionGroup,
@@ -416,6 +418,15 @@ export default function SessionsPage() {
             pickerContext?.group.connection ?? { bridge_version: null },
           )
         }
+        canRename={
+          Boolean(isOwner && pickerContext) &&
+          supportsWebThreadRename(
+            pickerContext?.group.connection ?? {
+              bridge_version: null,
+              platform: "",
+            },
+          )
+        }
         canCreate={pickerCanCreate}
         onToggle={setSessionVisible}
         onCreate={() => {
@@ -483,7 +494,11 @@ export default function SessionsPage() {
             if (!open) setRenameSession(null);
           }}
           onSubmitted={() =>
-            setNotice("Thread 名称已更新，并已提交给 Bridge 同步到本机 Codex。")
+            setNotice(
+              `Thread 名称已更新，并已提交给 Bridge 同步到本机 ${agentDisplayName(
+                renameSession.connection.platform,
+              )}。`,
+            )
           }
         />
       ) : null}
@@ -498,7 +513,9 @@ export default function SessionsPage() {
           onSubmitted={() => {
             deselectSession(deleteSession.id);
             setNotice(
-              "Thread 已从 Console 隐藏，并已提交给在线 Bridge 从本机 Codex 删除。",
+              `Thread 已从 Console 隐藏，并已提交给在线 Bridge 从本机 ${agentDisplayName(
+                deleteSession.connection.platform,
+              )} 删除。`,
             );
           }}
         />

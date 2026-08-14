@@ -35,13 +35,17 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 
 设备只需能通过 HTTPS 访问 `AI_TASK_BOARD_URL`，无需克隆 Board 仓库，也无需允许公网反向连接设备。
 
-## 交互式安装 0.9 CLI
+## 统一包中的交互式安装
 
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@0.9.0 setup
+npx --yes ai-task-board-bridge@1.0.0 setup codex
 ```
+
+`ai-task-board-bridge` 也是 Kimi Bridge 的唯一公开安装包。不带 `codex` 目标时，
+安装器会先询问安装 Codex、Kimi，还是两者；选择 `both` 会依次安装两个隔离服务，
+并分别索取对应平台的 Connection Token。
 
 不带参数运行且当前终端是 TTY、同时缺少 Board URL 或 Connection Token 时，也会自动
 进入相同的 setup。安装器依次确认当前有效 UID、Board 地址、隐藏输入的 Connection
@@ -70,7 +74,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@0.9.0
+npx --yes ai-task-board-bridge@1.0.0 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -93,7 +97,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@0.9.0
+npx --yes ai-task-board-bridge@1.0.0 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -105,7 +109,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@0.9.0
+npx --yes ai-task-board-bridge@1.0.0 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。

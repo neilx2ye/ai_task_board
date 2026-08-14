@@ -1,20 +1,25 @@
 export type ReasoningEffort = string;
 
-export type CodexModelCatalogEffort = {
+export type AgentModelCatalogEffort = {
   reasoning_effort: string;
   description: string | null;
 };
 
-export type CodexModelCatalogEntry = {
+export type AgentModelCatalogEntry = {
   id: string;
   model: string;
   display_name: string;
   description: string | null;
   default_reasoning_effort: string | null;
-  supported_reasoning_efforts: readonly CodexModelCatalogEffort[];
+  supported_reasoning_efforts: readonly AgentModelCatalogEffort[];
   input_modalities: readonly string[];
   is_default: boolean;
 };
+
+/** @deprecated Use the provider-neutral name for new code. */
+export type CodexModelCatalogEffort = AgentModelCatalogEffort;
+/** @deprecated Use the provider-neutral name for new code. */
+export type CodexModelCatalogEntry = AgentModelCatalogEntry;
 
 export type CodexModelOption = {
   value: string;
@@ -190,6 +195,20 @@ export function codexModelOptions(
     ),
     isDefault: entry.is_default,
   }));
+}
+
+/**
+ * Uses the live catalog for every Agent. Only Codex keeps a static compatibility
+ * list because those entries are part of the legacy pre-catalog UI contract.
+ */
+export function agentModelOptions(
+  catalog: readonly AgentModelCatalogEntry[] | null | undefined,
+  platform: string | null | undefined,
+): readonly CodexModelOption[] {
+  if (catalog?.length) return codexModelOptions(catalog);
+  return platform?.toLowerCase().includes("codex")
+    ? CODEX_MODEL_OPTIONS
+    : [];
 }
 
 export function defaultCodexModel(

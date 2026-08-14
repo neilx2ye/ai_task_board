@@ -234,11 +234,12 @@ export default function HelpPage() {
           thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Linux 推荐使用交互式安装。安装器会收集所需配置，并以执行命令的当前用户创建和
-          启动 systemd user service，因此 Bridge 会使用该用户的 Codex 配置：
+          Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi，还是两者，再以
+          执行命令的当前用户创建对应的 systemd user service。选择 Codex 后会继续收集
+          Codex 配置：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@0.9.0 setup`}
+          {`npx --yes ai-task-board-bridge@1.0.0 setup`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           如需前台运行或自动化部署，也可以直接通过环境变量配置：
@@ -254,7 +255,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-bridge@0.9.0 run`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.0.0 run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -308,6 +309,50 @@ npx --yes ai-task-board-bridge@0.9.0 run`}</CopyableCodeBlock>
           请通过受保护的环境变量或 Secret 管理器注入连接令牌，不要把真实令牌写入命令、
           仓库或共享日志。示例中的值都是占位符。
         </p>
+      </Section>
+
+      <Section id="kimi-bridge" title="Kimi Bridge（Kimi Code ACP）">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Kimi Bridge 是独立的设备 companion，通过 Kimi ACP 连接真实的本机 Kimi
+          Code Sessions。它不会把 Kimi 伪装成 Codex 模型；请先在「AI 连接」新建平台为
+          “Kimi Code”的连接，再由拥有 Kimi 登录和目标工作区的同一系统用户安装。Kimi
+          运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
+          {`npx --yes ai-task-board-bridge@1.0.0 setup kimi`}
+        </CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Kimi Code 连接：
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
+KIMI_BRIDGE_MODE='auto' \
+KIMI_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.0.0 run kimi`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            Bridge 会动态上报 Kimi ACP 返回的模型和 low/high/max 等思考强度；新建
+            Session 与下一 Turn 的模型选择不会使用 Codex 兼容列表。
+          </li>
+          <li>
+            可用 <code>KIMI_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；网页新建
+            只发送稳定目录 key，不能注入任意本机路径。
+          </li>
+          <li>
+            Kimi ACP 支持新建和删除 Session，但当前没有可靠的改名方法，所以 Kimi
+            连接会隐藏 Thread 改名入口；网页创建时填写的名称仍作为看板显示名保留。
+          </li>
+          <li>
+            <code>KIMI_BRIDGE_MODE=yolo</code> 与
+            <code className="ml-1">KIMI_BRIDGE_APPROVAL_MODE=accept</code>
+            都会扩大自动执行范围。安装器默认拒绝额外权限，请只在可信工作区显式开启。
+          </li>
+          <li>
+            Board Connection Token 会从 <code>kimi acp</code> 子进程环境移除；同一 OS
+            用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
+          </li>
+        </ul>
       </Section>
 
       <Section id="task-status" title="任务状态说明">

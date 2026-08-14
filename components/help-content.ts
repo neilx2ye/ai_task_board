@@ -11,6 +11,7 @@ export type HelpSection = {
 export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "getting-started", label: "新设备配置" },
   { id: "codex-bridge", label: "Codex Bridge" },
+  { id: "kimi-bridge", label: "Kimi Bridge" },
   { id: "task-status", label: "任务状态" },
   { id: "ai-integration", label: "AI 接入" },
   { id: "attachments", label: "附件" },

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
+import { isKimiPlatform } from "@/lib/agent-platforms";
 import type {
   BridgeAppliedConfiguration,
   BridgeConfiguration as BridgeConfigurationDto,
@@ -36,6 +37,10 @@ export function supportsBridgeSettings(connection: {
   bridge_version: string | null;
   platform: string;
 }): boolean {
+  // Kimi Bridge currently reports a local-only lease/status envelope. The
+  // existing dialog exposes Codex-specific remote controls, so do not present
+  // those controls as Kimi capabilities.
+  if (isKimiPlatform(connection.platform)) return false;
   return (
     connection.bridge_version !== null ||
     connection.platform.toLowerCase().includes("codex")

@@ -106,6 +106,12 @@ describe("Bridge configuration UI model", () => {
     expect(
       supportsBridgeSettings({ bridge_version: null, platform: "Claude" }),
     ).toBe(false);
+    expect(
+      supportsBridgeSettings({
+        bridge_version: "0.9.0-kimi.1",
+        platform: "Kimi Code",
+      }),
+    ).toBe(false);
   });
 
   it("never claims an old or unreported Bridge applied the desired config", () => {

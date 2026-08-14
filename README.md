@@ -1,8 +1,8 @@
 # AI Task Board
 
-AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT、Claude、Codex、Gemini 或自定义 Agent 在 CLI / APP 中建立上下文并完成推理与工具调用，通过 REST API、可选 MCP 或本机 Bridge 注册会话、接收预留任务并回传 AI 回复；网页端按连接组织会话，可直接发送下一任务并查看回复。
+AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT、Claude、Codex、Kimi Code、Gemini 或自定义 Agent 在 CLI / APP 中建立上下文并完成推理与工具调用，通过 REST API、可选 MCP 或本机 Bridge 注册会话、接收预留任务并回传 AI 回复；网页端按连接组织会话，可直接发送下一任务并查看回复。
 
-项目的控制面是一个 Next.js 单体应用，正式数据存储只依赖 **Supabase Hosted**：Auth、PostgreSQL/RPC、Realtime、RLS 与私有 Storage。不包含 SQLite、Docker Compose、自托管 Supabase 或消息队列。可选的 Codex Bridge 在设备上通过本地 Codex App Server 管理 thread；Next.js 服务本身不运行模型。
+项目的控制面是一个 Next.js 单体应用，正式数据存储只依赖 **Supabase Hosted**：Auth、PostgreSQL/RPC、Realtime、RLS 与私有 Storage。不包含 SQLite、Docker Compose、自托管 Supabase 或消息队列。可选的 Codex Bridge 与 Kimi Bridge 分别在设备上通过本地 App Server / ACP 管理会话；Next.js 服务本身不运行模型。
 
 ## 功能概览
 
@@ -14,12 +14,13 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 - REST 和 MCP 共用领域服务、Zod 输入校验与稳定业务错误码。
 - Supabase Auth/RLS 隔离 Workspace，Realtime 驱动页面刷新；网页附件以 multipart 上传到私有 Bucket，并通过 60 秒签名 URL 下载。
 - 可选的设备级 Codex Bridge 通过 stdio App Server 自动发现多个顶层 thread，通过认证 SSE 接收任务唤醒，并只把 AI 回复增量同步到各自的会话对话框；Workspace Owner 还可从网页新建、重命名和删除受管 Thread。
+- 独立的 Kimi Bridge 通过 Kimi ACP 发现真实 Kimi Sessions，上报 Kimi 模型与思考强度，并支持网页新建、执行和删除；ACP 不支持可靠改名，因此 Kimi 连接不会展示改名入口。
 
 ## 技术组成
 
 - Next.js App Router、React、TypeScript、Tailwind CSS
 - `@supabase/supabase-js` 与 `@supabase/ssr`
-- `ai-task-board-bridge` 独立 CLI 包与本机 Codex App Server JSONL 协议
+- `ai-task-board-bridge` 统一 npm CLI，内含 Codex App Server 与 Kimi ACP 两套独立运行时
 - Supabase Hosted PostgreSQL、Auth、Realtime、Storage、RLS
 - Zod、TanStack Query
 - Vitest、Playwright
@@ -99,13 +100,18 @@ Content-Type: application/json
 
 完整的可复制请求见 [REST API 示例](docs/rest-api.md)。MCP 的远程服务配置、工具清单和 JSON-RPC 调用见 [MCP 接入](docs/mcp.md)。两种传输返回相同的业务对象和稳定错误码。
 
-需要让网页主动排队下一轮 Codex 工作时，使用独立的 [Codex Bridge](docs/codex-bridge.md) CLI 包：
+需要让网页主动排队下一轮 Agent 工作时，使用统一的 `ai-task-board-bridge` npm 包：
 
 ```bash
-npx --yes ai-task-board-bridge@0.9.0 setup
+npx --yes ai-task-board-bridge@1.0.0 setup
 ```
 
-Linux 交互式安装器会询问 Board、Connection Token、工作目录、Codex 配置目录、
+安装器会先询问安装 Codex Bridge、Kimi Bridge，还是两者；也可用 `setup codex`、
+`setup kimi` 或 `setup both` 直接选择。两套运行时仍使用独立的 Board Connection、
+令牌、目录白名单和 systemd 服务。Kimi ACP 运行时已嵌入这个公开包，不需要再发布或
+安装第二个 npm 包。
+
+Codex 的 Linux 交互流程会询问 Board、Connection Token、工作目录、Codex 配置目录、
 provider 凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**
 自己的 systemd user service。它显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认
 读取这个用户的 Codex 登录、`config.toml`、provider 和模型配置；新安装的交互默认值为
@@ -126,6 +132,27 @@ provider 凭据环境变量、权限与审批策略，并把 Bridge 安装为**�
 Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 回复增量会聚合后近实时写入 Board，思考摘要、命令、工具过程和用量不会同步。默认 `danger-full-access` 权限 profile 仍显式使用 `on-request` 和用户 reviewer，但不启用沙箱，不限制该 OS 用户本来可以写入的路径或网络；默认 `accept` 会在设备端立即批准与当前活跃 turn 关联的受支持审批请求，因此无需网页逐次确认。这两个默认值相互独立，但组合后会在当前 OS 用户权限范围内无沙箱执行，属于高风险配置。可将权限模式显式设为 `safe`，把 turn 限制到 `workspace-write`、该 thread cwd、无隐式 tmp 写根且无网络；`inherit` 则完全不发送权限与审批覆盖，沿用 thread 或本机 Codex 设置，可能同样继承完全访问，只有明确了解本机配置时才应使用。审批也可设为 `decline` 或 `accept-session`；审批模式不会改变沙箱。
 
 Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保留原 turn 与 claim，提交后原地继续。Session 名称默认不上传 thread 标题/首条 prompt；启用 `CODEX_BRIDGE_WEB_CONFIG=true` 后，可在“AI 连接 → Bridge 设置”调整启停、标题、历史同步及数量/并发上限，其中最大并行 turn 数由 Web 直接控制，不再区分本机与 Web 上限。Thread 数和历史数量仍受本机上限约束。网页开启标题还要求本机显式允许 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` 或已经设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`；开启历史还要求 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`；管理本机工作目录还要求 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`，三类敏感能力均保持设备端显式授权。历史同步受默认 50、最大 200 个最近完成 turn 的本机上限约束，并上传用户消息与最终 AI 回复；历史用户消息会对有权访问该 Workspace 的成员可见。关闭同步或降低上限不会删除 Board 已导入的只追加历史。Inventory 会同步 thread ID、绝对工作目录和当前模型标签；Bridge 还会通过 App Server `model/list` 上报当前 provider 的可见模型及支持强度，供新建 Thread 和每个 Turn 的输入框动态选择，provider 凭据仍只保留在设备上。Bridge 0.5 起，Workspace Owner 可在“AI 会话”页新建、重命名和删除当前设备清单内的 Thread，也可在“AI 连接”页重命名连接；Bridge 0.7 会在选中的设备目录下新建，旧版仍使用设备默认工作目录，删除只接受没有活跃或已预留任务的 Thread。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先应用仓库当前 migration，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
+
+### Kimi Bridge
+
+先在「AI 连接」中新建平台为 **Kimi Code** 的独立连接，再在已经登录 Kimi Code 的设备上运行：
+
+```bash
+npx --yes ai-task-board-bridge@1.0.0 setup kimi
+```
+
+前台或自动化部署可使用环境变量：
+
+```bash
+AI_TASK_BOARD_URL='https://task.neilx.online' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
+KIMI_BRIDGE_MODE='auto' \
+KIMI_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.0.0 run kimi
+```
+
+Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
 
 ## 单会话上下文演示
 
@@ -201,7 +228,7 @@ PLAYWRIGHT_BASE_URL=https://preview.example.com npm run test:e2e
 ## 当前限制
 
 - MVP 面向个人或小团队，没有组织计费、复杂角色、自定义工作流或 DAG 可视化编辑器。
-- Next.js 控制面不内置模型或通用 Agent 执行环境；一个 Codex Bridge 是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
+- Next.js 控制面不内置模型或通用 Agent 执行环境；Codex Bridge 与 Kimi Bridge 都是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
 - 浏览器 Realtime 用于界面失效和重拉；客户端维护最新 `TaskEvent` ID，断线重订阅后按游标补拉遗漏事件并全量重拉，以 30 秒轮询兜底。Bridge 则使用独立的认证 SSE 唤醒端点，SSE 只发送固定空事件，任务内容仍从 REST 领取。
 - Codex Bridge 只会近实时回传 AI 回复，不同步思考、命令、工具或用量；当前没有可靠的运行中 steering、网页审批或远程进程中断，SSE 不可用时会自适应轮询，最长约 60 秒发现新任务。
 - Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。默认 `danger-full-access` + `accept` 会无沙箱执行并自动同意关联当前活跃 turn 的受支持审批，属于高风险配置；需要限制写入和网络时应显式选择 `safe`，而 `inherit` 的实际边界取决于 thread 与本机 Codex 设置。
@@ -224,7 +251,8 @@ supabase/migrations/  数据库结构、RLS、Storage Policy 与原子 RPC
 supabase/seed.sql      可选开发 Seed
 docs/                 REST、MCP 与演示说明
 scripts/demo.ts        单会话上下文可执行演示
-packages/codex-bridge/ 可通过 npx 运行的独立 Codex Bridge npm 包
+packages/codex-bridge/ 可通过 npx 运行的统一 Bridge npm 包与 Codex 运行时
+packages/kimi-bridge/  嵌入统一 npm 包的私有 Kimi ACP 运行时
 scripts/codex-bridge.ts 仓库开发环境的 Bridge 兼容入口
 tests/                 Vitest 单元/集成测试与 Playwright E2E
 ```

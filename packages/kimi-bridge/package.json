@@ -1,20 +1,17 @@
 {
-  "name": "ai-task-board-bridge",
-  "version": "1.0.0",
-  "description": "Unified interactive installer and device bridge for Codex and Kimi Code on AI Task Board",
+  "name": "@ai-task-board/kimi-bridge-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal Kimi Code ACP runtime bundled with ai-task-board-bridge",
   "type": "module",
   "types": "./dist/index.d.ts",
   "keywords": [
     "ai-task-board",
-    "codex",
     "kimi-code",
     "acp",
     "bridge",
     "cli"
   ],
-  "bin": {
-    "ai-task-board-bridge": "dist/cli.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -26,21 +23,17 @@
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && node scripts/embed-kimi-runtime.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsx src/cli.ts",
     "prepack": "npm run build"
   },
   "engines": {
     "node": ">=18"
   },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neilx2ye/ai_task_board.git",
-    "directory": "packages/codex-bridge"
+    "directory": "packages/kimi-bridge"
   },
   "homepage": "https://github.com/neilx2ye/ai_task_board#readme",
   "license": "UNLICENSED",

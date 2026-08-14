@@ -1,24 +1,46 @@
 # AI Task Board Bridge
 
-`ai-task-board-bridge` is the device-level Codex companion for AI Task
-Board. One long-running Bridge process represents one device/AI Connection. It
-starts the local `codex app-server` over stdio, discovers non-archived top-level
-Codex threads, maps each thread to a Board Session, receives reserved work, and
-streams supported progress back to the Board.
+`ai-task-board-bridge` is the single public npm package for AI Task Board's
+device companions. Its interactive installer asks whether to install Codex
+Bridge, Kimi Bridge, or both. The two runtimes remain separate processes with
+separate Board Connections, tokens, working-directory allowlists, and systemd
+services.
+
+Codex Bridge starts the local `codex app-server` over stdio, discovers
+non-archived top-level Codex threads, maps each thread to a Board Session,
+receives reserved work, and streams supported progress back to the Board. Kimi
+Bridge starts the logged-in Kimi Code ACP server and manages real Kimi Sessions;
+it does not expose Kimi as a fake Codex model.
 
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Interactive Linux setup
+## Unified interactive Linux setup
 
-Node.js 18 or newer and a compatible, logged-in `codex` CLI are required. Run
-the Bridge as the same OS user that owns the local Codex data and workspaces:
+Node.js 18 or newer is required. Run setup as the same OS user that owns the
+selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@0.9.0 setup
+npx --yes ai-task-board-bridge@1.0.0 setup
 ```
 
-The setup wizard asks for the Board URL, hidden Connection Token, working
+The first prompt offers `Codex Bridge`, `Kimi Bridge`, and `both`. Automation or
+repeat installs can bypass that first prompt:
+
+```bash
+npx --yes ai-task-board-bridge@1.0.0 setup codex
+npx --yes ai-task-board-bridge@1.0.0 setup kimi
+npx --yes ai-task-board-bridge@1.0.0 setup both
+```
+
+Installing both runs the two setup flows in sequence. Create a separate Board
+Connection with the matching platform for each runtime; a Codex token must not
+be reused for Kimi or vice versa. The public tarball embeds the private Kimi ACP
+runtime, so no second npm package needs to be published or installed.
+
+### Codex setup
+
+The Codex setup wizard asks for the Board URL, hidden Connection Token, working
 directory, Codex home and executable, custom-provider credential environment
 variables, thread limits, permission/approval modes, and the Web configuration
 gate. It then installs and starts
@@ -53,7 +75,7 @@ install a service:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@0.9.0 run
+npx --yes ai-task-board-bridge@1.0.0 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -71,7 +93,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@0.9.0
+npx --yes ai-task-board-bridge@1.0.0
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -79,7 +101,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@0.9.0
+npx --yes ai-task-board-bridge@1.0.0
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -244,10 +266,39 @@ strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
 upgraded before starting 0.8; there is no 404 fallback to the old registration
 API. On Linux, use `setup` for a pinned local runtime and systemd user service.
-On other platforms, pin version `0.9.0` in launchd or another process manager.
+On other platforms, pin version `1.0.0` in launchd or another process manager.
 Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@0.9.0 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.0.0 --help` for the complete
 environment-variable list.
+
+## Kimi Bridge
+
+Kimi Bridge requires a logged-in Kimi Code CLI and a dedicated Board Connection
+whose platform is `Kimi Code`. Interactive setup installs the separate
+`ai-task-board-kimi-bridge.service`, stores its token in a `0600` environment
+file, and stages the embedded Kimi runtime plus ACP dependencies under the
+current user's XDG data directory.
+
+Foreground or non-systemd operation uses the same public npm package:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
+KIMI_BRIDGE_MODE='auto' \
+KIMI_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.0.0 run kimi
+```
+
+`KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
+`{key,name?,path}` entries. The Bridge dynamically reports Kimi ACP's model and
+thought-level catalog. Web creation and deletion operate on real Kimi Sessions;
+rename remains hidden because Kimi Code 0.34 does not expose a reliable ACP
+rename operation. The Board token is removed from the `kimi acp` child
+environment, and only final replies plus bounded completion metadata are
+uploaded. Interactive setup defaults to declining extra ACP permissions;
+`KIMI_BRIDGE_MODE=yolo` and `KIMI_BRIDGE_APPROVAL_MODE=accept` are explicit
+high-risk opt-ins.

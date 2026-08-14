@@ -47,7 +47,14 @@ import {
 import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 
-const PLATFORMS = ["ChatGPT", "Claude", "Codex", "Gemini", "自定义 Agent"];
+const PLATFORMS = [
+  "ChatGPT",
+  "Claude",
+  "Codex",
+  "Kimi Code",
+  "Gemini",
+  "自定义 Agent",
+];
 
 function RenameConnectionDialog({
   connection,

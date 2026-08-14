@@ -139,6 +139,23 @@ describe("project-scoped Thread management", () => {
     expect(markup).not.toContain("更新指南");
   });
 
+  it("hides rename while keeping delete for Kimi ACP Sessions", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ThreadPickerList, {
+        sessions: projects[0].sessions,
+        visibleIds: new Set(["thread-app"]),
+        onToggle: vi.fn(),
+        onOpen: vi.fn(),
+        canManage: true,
+        canRename: false,
+        onRename: vi.fn(),
+        onDelete: vi.fn(),
+      }),
+    );
+    expect(markup).not.toContain('aria-label="重命名 Thread');
+    expect(markup).toContain('aria-label="删除 Thread');
+  });
+
   it("bulk-deletes only unchecked Threads that are currently deletable", () => {
     const selected = session("thread-selected", "保留", "/workspace/app");
     const deletable = session("thread-delete", "删除", "/workspace/app");

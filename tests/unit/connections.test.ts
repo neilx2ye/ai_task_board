@@ -4,6 +4,7 @@ import {
   activeConnections,
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
+  supportsWebThreadRename,
   type PublicConnection,
 } from "@/hooks/use-connections";
 
@@ -81,5 +82,19 @@ describe("activeConnections", () => {
         connection({ bridge_version: bridgeVersion as string | null }),
       ),
     ).toBe(expected);
+  });
+
+  it("对 Kimi Bridge 启用创建和删除，但隐藏 ACP 不支持的改名", () => {
+    const kimi = connection({
+      platform: "Kimi Code",
+      bridge_version: "0.9.0-kimi.1",
+    });
+    expect(supportsWebThreadManagement(kimi)).toBe(true);
+    expect(supportsWebThreadRename(kimi)).toBe(false);
+    expect(
+      supportsWebThreadRename(
+        connection({ platform: "Codex", bridge_version: "0.9.0" }),
+      ),
+    ).toBe(true);
   });
 });

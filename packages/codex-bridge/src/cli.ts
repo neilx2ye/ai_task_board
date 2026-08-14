@@ -5,16 +5,23 @@ import { readFile } from "node:fs/promises";
 const HELP = `AI Task Board Bridge
 
 Usage:
-  ai-task-board-bridge setup
-  ai-task-board-bridge run
+  ai-task-board-bridge setup [codex|kimi|both]
+  ai-task-board-bridge run [codex|kimi]
   ai-task-board-bridge
 
 Commands:
-  setup  Interactively configure and install the current user's systemd service
-  run    Run the Bridge using environment variables (used by the service)
+  setup  Interactively choose and install Codex Bridge, Kimi Bridge, or both
+  run    Run one Bridge using environment variables (default: codex)
 
-With no command, an interactive terminal enters setup when required configuration
-is missing. Existing environment-variable launches continue to run immediately.
+With no command, an interactive terminal opens the unified installer when required
+configuration is missing. Existing Codex environment launches remain compatible.
+On Linux, setup installs the current user's systemd service or services.
+
+Examples:
+  ai-task-board-bridge setup
+  ai-task-board-bridge setup kimi
+  ai-task-board-bridge setup both
+  ai-task-board-bridge run kimi
 
 Required environment variables:
   AI_TASK_BOARD_URL               Board HTTPS base URL
@@ -45,6 +52,15 @@ Optional environment variables:
   AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS  Full inventory interval (10000..600000)
   AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS  Web config interval (1000..600000)
 
+Kimi variables:
+  KIMI_WORKING_DIRECTORY          Working directory (default: cwd)
+  KIMI_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
+  KIMI_MAX_THREADS                Maximum Sessions to manage (1..500)
+  KIMI_MAX_CONCURRENT_TURNS       Device-wide concurrent turns (1..32)
+  KIMI_BRIDGE_APPROVAL_MODE       accept or decline
+  KIMI_BRIDGE_MODE                auto, default, plan, or yolo
+  KIMI_BINARY                     Kimi Code executable (default: kimi)
+
 Options:
   -h, --help     Show this help
   -v, --version  Show the package version
@@ -65,37 +81,74 @@ async function run(): Promise<void> {
     process.stdout.write(`${await packageVersion()}\n`);
     return;
   }
-  if (args.length === 1 && args[0] === "setup") {
-    const { runInteractiveSetup } = await import("./setup.js");
-    await runInteractiveSetup({ packageVersion: await packageVersion() });
+  if (args[0] === "setup") {
+    const {
+      parseBridgeSetupTarget,
+      promptForBridgeSetupTarget,
+      runBridgeSetup,
+    } = await import("./installer.js");
+    if (args.length > 2) {
+      process.stderr.write(`Unknown option: ${args[2]}\n\n${HELP}`);
+      process.exitCode = 1;
+      return;
+    }
+    const requestedTarget = parseBridgeSetupTarget(args[1]);
+    if (args[1] && !requestedTarget) {
+      process.stderr.write(`Unknown setup target: ${args[1]}\n\n${HELP}`);
+      process.exitCode = 1;
+      return;
+    }
+    const target = requestedTarget ?? (await promptForBridgeSetupTarget());
+    await runBridgeSetup(target, await packageVersion());
     return;
   }
-  if (args.length > 1 || (args.length === 1 && args[0] !== "run")) {
+  if (args[0] === "run") {
+    const { parseBridgeRunTarget, runAgentBridge } = await import(
+      "./installer.js"
+    );
+    if (args.length > 2) {
+      process.stderr.write(`Unknown option: ${args[2]}\n\n${HELP}`);
+      process.exitCode = 1;
+      return;
+    }
+    const target = args[1] ? parseBridgeRunTarget(args[1]) : "codex";
+    if (!target) {
+      process.stderr.write(`Unknown run target: ${args[1]}\n\n${HELP}`);
+      process.exitCode = 1;
+      return;
+    }
+    await runAgentBridge(target);
+    return;
+  }
+  if (args.length > 0) {
     process.stderr.write(`Unknown option: ${args[0]}\n\n${HELP}`);
     process.exitCode = 1;
     return;
   }
 
-  const explicitRun = args[0] === "run";
   const missingRequiredConfiguration =
     !process.env.AI_TASK_BOARD_URL?.trim() ||
     !process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim();
   if (
-    !explicitRun &&
     missingRequiredConfiguration &&
     process.stdin.isTTY &&
     process.stdout.isTTY
   ) {
-    const { runInteractiveSetup } = await import("./setup.js");
-    await runInteractiveSetup({ packageVersion: await packageVersion() });
+    const { promptForBridgeSetupTarget, runBridgeSetup } = await import(
+      "./installer.js"
+    );
+    await runBridgeSetup(
+      await promptForBridgeSetupTarget(),
+      await packageVersion(),
+    );
     return;
   }
 
-  const { runBridgeCli } = await import("./bridge.js");
-  await runBridgeCli();
+  const { runAgentBridge } = await import("./installer.js");
+  await runAgentBridge("codex");
 }
 
 void run().catch((error) => {
-  process.stderr.write(`Codex Bridge 操作失败：${String(error)}\n`);
+  process.stderr.write(`Bridge 操作失败：${String(error)}\n`);
   process.exitCode = 1;
 });

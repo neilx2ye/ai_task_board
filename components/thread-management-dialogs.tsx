@@ -28,17 +28,18 @@ import {
   useRenameThread,
 } from "@/hooks/use-sessions";
 import {
-  codexModelOptions,
+  agentModelOptions,
   compatibleReasoningEffort,
   defaultCodexModel,
   reasoningEffortLabel,
 } from "@/lib/codex-models";
+import { agentDisplayName } from "@/lib/agent-platforms";
 import type {
   SessionConnectionSummary,
   SessionListItem,
 } from "@/lib/types/domain";
 
-const INHERIT_CODEX_SETTING = "__inherit__";
+const INHERIT_AGENT_SETTING = "__inherit__";
 
 export function CreateThreadDialog({
   connection,
@@ -59,18 +60,26 @@ export function CreateThreadDialog({
 }) {
   const createThread = useCreateThread(connection.id);
   const [name, setName] = useState("");
-  const modelOptions = codexModelOptions(connection.model_catalog);
-  const initialModel = defaultCodexModel(modelOptions);
+  const agentName = agentDisplayName(connection.platform);
+  const modelOptions = agentModelOptions(
+    connection.model_catalog,
+    connection.platform,
+  );
+  const initialModel = modelOptions.length
+    ? defaultCodexModel(modelOptions)
+    : INHERIT_AGENT_SETTING;
   const initialModelOption = modelOptions.find(
     (option) => option.value === initialModel,
   );
   const [model, setModel] = useState(initialModel);
   const [reasoningEffort, setReasoningEffort] = useState<string>(
-    compatibleReasoningEffort(
-      initialModel,
-      initialModelOption?.defaultEffort,
-      modelOptions,
-    ),
+    initialModel === INHERIT_AGENT_SETTING
+      ? INHERIT_AGENT_SETTING
+      : compatibleReasoningEffort(
+          initialModel,
+          initialModelOption?.defaultEffort,
+          modelOptions,
+        ),
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -82,8 +91,11 @@ export function CreateThreadDialog({
 
   const onModelChange = (value: string) => {
     setModel(value);
-    if (value === INHERIT_CODEX_SETTING) return;
-    if (reasoningEffort !== INHERIT_CODEX_SETTING) {
+    if (value === INHERIT_AGENT_SETTING) {
+      setReasoningEffort(INHERIT_AGENT_SETTING);
+      return;
+    }
+    if (reasoningEffort !== INHERIT_AGENT_SETTING) {
       setReasoningEffort(
         compatibleReasoningEffort(value, reasoningEffort, modelOptions),
       );
@@ -98,9 +110,9 @@ export function CreateThreadDialog({
       await createThread.mutateAsync({
         name: submittedName,
         directory_key: directoryKey,
-        model: model === INHERIT_CODEX_SETTING ? null : model,
+        model: model === INHERIT_AGENT_SETTING ? null : model,
         reasoning_effort:
-          reasoningEffort === INHERIT_CODEX_SETTING
+          reasoningEffort === INHERIT_AGENT_SETTING
             ? null
             : reasoningEffort,
       });
@@ -117,7 +129,7 @@ export function CreateThreadDialog({
         <DialogHeader>
           <DialogTitle>新建 Thread</DialogTitle>
           <DialogDescription>
-            请求会发送给「{connection.name}」上的 Codex Bridge，并在本机创建真实
+            请求会发送给「{connection.name}」上的 {agentName} Bridge，并在本机创建真实
             Thread
             {directoryName ? `，归入「${directoryName}」` : ""}。
           </DialogDescription>
@@ -143,8 +155,8 @@ export function CreateThreadDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={INHERIT_CODEX_SETTING}>
-                    使用 Codex 默认
+                  <SelectItem value={INHERIT_AGENT_SETTING}>
+                    使用 {agentName} 默认
                   </SelectItem>
                   {modelOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
@@ -166,7 +178,7 @@ export function CreateThreadDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={INHERIT_CODEX_SETTING}>
+                  <SelectItem value={INHERIT_AGENT_SETTING}>
                     使用模型默认
                   </SelectItem>
                   {availableEfforts.map((effort) => (
@@ -183,8 +195,8 @@ export function CreateThreadDialog({
           </div>
           <p className="text-xs text-muted-foreground">
             {selectedModel?.description ??
-              "模型与思考强度由运行 Bridge 的 Codex 配置决定。"}
-            {reasoningEffort === INHERIT_CODEX_SETTING
+              `模型与思考强度由运行 Bridge 的 ${agentName} 配置决定。`}
+            {reasoningEffort === INHERIT_AGENT_SETTING
               ? " 思考强度继承模型默认值。"
               : " 更高强度通常需要更多时间和用量。"}
           </p>
@@ -229,6 +241,9 @@ export function RenameThreadDialog({
   onSubmitted: () => void;
 }) {
   const renameThread = useRenameThread(session.id);
+  const agentName = agentDisplayName(
+    session.connection?.platform ?? session.platform,
+  );
   const [name, setName] = useState(session.name);
   const [error, setError] = useState<string | null>(null);
 
@@ -250,7 +265,7 @@ export function RenameThreadDialog({
         <DialogHeader>
           <DialogTitle>重命名 Thread</DialogTitle>
           <DialogDescription>
-            新名称会立即用于 Web Console，并由 Bridge 同步到本机 Codex。
+            新名称会立即用于 Web Console，并由 Bridge 同步到本机 {agentName}。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -307,6 +322,9 @@ export function DeleteThreadDialog({
   onSubmitted: () => void;
 }) {
   const deleteThread = useDeleteThread(session.id);
+  const agentName = agentDisplayName(
+    session.connection?.platform ?? session.platform,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const onConfirm = async () => {
@@ -325,7 +343,7 @@ export function DeleteThreadDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={`删除 Thread「${session.name}」？`}
-      description="Thread 会立即从 Web Console 隐藏，并由在线 Bridge 从本机 Codex 删除。看板中的关联审计数据会保留。此操作无法在 Console 中恢复。"
+      description={`Thread 会立即从 Web Console 隐藏，并由在线 Bridge 从本机 ${agentName} 删除。看板中的关联审计数据会保留。此操作无法在 Console 中恢复。`}
       confirmLabel="删除 Thread"
       destructive
       pending={deleteThread.isPending}
@@ -356,6 +374,9 @@ export function DeleteUnselectedThreadsDialog({
   onSubmitted: (deletedCount: number) => void;
 }) {
   const deleteThreads = useDeleteThreads();
+  const agentName = agentDisplayName(
+    sessions[0]?.connection?.platform ?? sessions[0]?.platform,
+  );
   const [remainingSessions, setRemainingSessions] = useState(sessions);
   const [deletedCount, setDeletedCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -392,7 +413,7 @@ export function DeleteUnselectedThreadsDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={`删除 ${remainingSessions.length} 个未勾选 Thread？`}
-      description={`这些 Thread 属于项目「${projectName}」。它们会立即从 Web Console 隐藏，并由在线 Bridge 从本机 Codex 删除；看板中的关联审计数据会保留。${
+      description={`这些 Thread 属于项目「${projectName}」。它们会立即从 Web Console 隐藏，并由在线 Bridge 从本机 ${agentName} 删除；看板中的关联审计数据会保留。${
         skippedCount > 0
           ? ` 另有 ${skippedCount} 个未勾选 Thread 因有任务或已离开设备清单而不会删除。`
           : ""

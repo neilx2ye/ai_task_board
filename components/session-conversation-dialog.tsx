@@ -76,15 +76,15 @@ import {
   isSessionAlive,
 } from "@/lib/domain/session-presence";
 import {
-  DEFAULT_CODEX_MODEL,
   DEFAULT_CODEX_REASONING_EFFORT,
   REASONING_EFFORT_LABELS,
+  agentModelOptions,
   codexModelOption,
-  codexModelOptions,
   compatibleReasoningEffort,
   defaultCodexModel,
   reasoningEffortLabel,
 } from "@/lib/codex-models";
+import { agentDisplayName, isKimiPlatform } from "@/lib/agent-platforms";
 import type {
   ActorType,
   ArtifactRow,
@@ -116,6 +116,8 @@ type TimelineEntry =
       createdAt: string;
       event: TaskEventRow;
     };
+
+const INHERIT_AGENT_SETTING = "__agent_default__";
 
 const TOOL_ACTIVITY_KINDS = new Set<SessionActivityKind>([
   "command",
@@ -845,25 +847,36 @@ function SessionConversationContent({
   const [composer, setComposer] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const modelOptions = useMemo(
-    () => codexModelOptions(session?.connection.model_catalog),
-    [session?.connection.model_catalog],
+    () =>
+      agentModelOptions(
+        session?.connection.model_catalog,
+        session?.connection.platform,
+      ),
+    [session?.connection.model_catalog, session?.connection.platform],
   );
+  const recordedModel = session?.configured_model ?? session?.model;
   const initialModel =
-    session?.configured_model ??
-    session?.model ??
-    defaultCodexModel(modelOptions) ??
-    DEFAULT_CODEX_MODEL;
+    recordedModel ??
+    (!isKimiPlatform(session?.connection.platform) && modelOptions.length
+      ? defaultCodexModel(modelOptions)
+      : INHERIT_AGENT_SETTING);
   const initialModelOption = codexModelOption(initialModel, modelOptions);
   const [model, setModel] = useState(initialModel);
-  const [reasoningEffort, setReasoningEffort] = useState<string>(() =>
-    compatibleReasoningEffort(
+  const [reasoningEffort, setReasoningEffort] = useState<string>(() => {
+    if (
+      initialModel === INHERIT_AGENT_SETTING &&
+      !session?.configured_reasoning_effort
+    ) {
+      return INHERIT_AGENT_SETTING;
+    }
+    return compatibleReasoningEffort(
       initialModel,
       session?.configured_reasoning_effort ??
         initialModelOption?.defaultEffort ??
         DEFAULT_CODEX_REASONING_EFFORT,
       modelOptions,
-    ),
-  );
+    );
+  });
   const [sendError, setSendError] = useState<string | null>(null);
   const turnSettingsTouchedRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -999,8 +1012,11 @@ function SessionConversationContent({
       await createTurn.mutateAsync({
         content: content || "请查看附带的图片。",
         images,
-        model,
-        reasoning_effort: reasoningEffort,
+        model: model === INHERIT_AGENT_SETTING ? null : model,
+        reasoning_effort:
+          reasoningEffort === INHERIT_AGENT_SETTING
+            ? null
+            : reasoningEffort,
       });
       setComposer("");
       setImages([]);
@@ -1021,15 +1037,24 @@ function SessionConversationContent({
   const selectedModel = codexModelOption(model, modelOptions);
   const availableEfforts =
     selectedModel?.efforts ??
-    Object.keys(REASONING_EFFORT_LABELS);
-  const customModel = selectedModel ? null : model;
-  const customReasoningEffort = availableEfforts.includes(reasoningEffort)
+    (session?.connection.platform?.toLowerCase().includes("codex")
+      ? Object.keys(REASONING_EFFORT_LABELS)
+      : []);
+  const customModel =
+    selectedModel || model === INHERIT_AGENT_SETTING ? null : model;
+  const customReasoningEffort =
+    reasoningEffort === INHERIT_AGENT_SETTING ||
+    availableEfforts.includes(reasoningEffort)
     ? null
     : reasoningEffort;
 
   const onModelChange = (value: string) => {
     turnSettingsTouchedRef.current = true;
     setModel(value);
+    if (value === INHERIT_AGENT_SETTING) {
+      setReasoningEffort(INHERIT_AGENT_SETTING);
+      return;
+    }
     setReasoningEffort((current) =>
       compatibleReasoningEffort(value, current, modelOptions),
     );
@@ -1279,6 +1304,9 @@ function SessionConversationContent({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={INHERIT_AGENT_SETTING}>
+                        使用 {agentDisplayName(session?.connection.platform)} 默认
+                      </SelectItem>
                       {customModel ? (
                         <SelectItem value={customModel}>{customModel}</SelectItem>
                       ) : null}
@@ -1304,6 +1332,9 @@ function SessionConversationContent({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={INHERIT_AGENT_SETTING}>
+                        使用模型默认
+                      </SelectItem>
                       {customReasoningEffort ? (
                         <SelectItem value={customReasoningEffort}>
                           {customReasoningEffort}

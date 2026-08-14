@@ -10,7 +10,7 @@ import type {
   SessionActivityRow,
   SessionHistorySync,
 } from "@/lib/types/database";
-import type { CodexModelCatalogEntry } from "@/lib/codex-models";
+import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 
 export type AIAuthContext = {
   connectionId: string;
@@ -78,8 +78,8 @@ export type SessionConnectionSummary = Pick<
   | "bridge_version"
   | "revoked_at"
 > & {
-  /** Latest visible model catalog reported by this connection's App Server. */
-  model_catalog?: CodexModelCatalogEntry[] | null;
+  /** Latest visible model catalog reported by this connection's local Agent. */
+  model_catalog?: AgentModelCatalogEntry[] | null;
   model_catalog_updated_at?: string | null;
 };
 

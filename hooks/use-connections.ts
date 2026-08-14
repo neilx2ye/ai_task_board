@@ -4,12 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
 import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
-import type { CodexModelCatalogEntry } from "@/lib/codex-models";
+import { isKimiPlatform } from "@/lib/agent-platforms";
+import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 import type { AIConnectionRow } from "@/lib/types/database";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
 export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
-  model_catalog?: CodexModelCatalogEntry[] | null;
+  model_catalog?: AgentModelCatalogEntry[] | null;
   model_catalog_updated_at?: string | null;
 };
 
@@ -48,6 +49,15 @@ export function supportsWebThreadManagement(
   connection: Pick<AIConnectionRow, "bridge_version">,
 ): boolean {
   return supportsBridgeMinorVersion(connection, 5);
+}
+
+export function supportsWebThreadRename(
+  connection: Pick<AIConnectionRow, "bridge_version" | "platform">,
+): boolean {
+  return (
+    supportsWebThreadManagement(connection) &&
+    !isKimiPlatform(connection.platform)
+  );
 }
 
 export function supportsWorkingDirectoryInventory(

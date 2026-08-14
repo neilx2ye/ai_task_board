@@ -22,6 +22,7 @@ import { SESSION_STATUS_META } from "@/components/task-meta";
 import { cn } from "@/components/utils";
 import { effectiveSessionStatus } from "@/lib/domain/session-presence";
 import type { SessionDirectoryGroup } from "@/lib/domain/session-directory-groups";
+import { agentDisplayName } from "@/lib/agent-platforms";
 import type {
   SessionConnectionSummary,
   SessionListItem,
@@ -33,6 +34,7 @@ type ThreadPickerListProps = {
   onToggle: (sessionId: string, visible: boolean) => void;
   onOpen: (sessionId: string) => void;
   canManage: boolean;
+  canRename?: boolean;
   onRename: (session: SessionListItem) => void;
   onDelete: (session: SessionListItem) => void;
 };
@@ -86,6 +88,7 @@ export function ThreadPickerList({
   onToggle,
   onOpen,
   canManage,
+  canRename = canManage,
   onRename,
   onDelete,
 }: ThreadPickerListProps) {
@@ -142,24 +145,26 @@ export function ThreadPickerList({
             </Badge>
             {canManage ? (
               <div className="flex shrink-0 items-center gap-0.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  disabled={
-                    !session.inventory_active || session.archived_at !== null
-                  }
-                  onClick={() => onRename(session)}
-                  aria-label={`重命名 Thread「${session.name}」`}
-                  title={
-                    !session.inventory_active || session.archived_at !== null
-                      ? "Thread 已不在设备清单中"
-                      : "重命名"
-                  }
-                >
-                  <PencilIcon className="size-3.5" />
-                </Button>
+                {canRename ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    disabled={
+                      !session.inventory_active || session.archived_at !== null
+                    }
+                    onClick={() => onRename(session)}
+                    aria-label={`重命名 Thread「${session.name}」`}
+                    title={
+                      !session.inventory_active || session.archived_at !== null
+                        ? "Thread 已不在设备清单中"
+                        : "重命名"
+                    }
+                  >
+                    <PencilIcon className="size-3.5" />
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="ghost"
@@ -198,6 +203,7 @@ export function ThreadPickerDialog({
   onToggle,
   onOpen,
   canManage,
+  canRename,
   canCreate,
   onCreate,
   onRename,
@@ -212,6 +218,7 @@ export function ThreadPickerDialog({
   onToggle: (sessionId: string, visible: boolean) => void;
   onOpen: (sessionId: string) => void;
   canManage: boolean;
+  canRename: boolean;
   canCreate: boolean;
   onCreate: () => void;
   onRename: (session: SessionListItem) => void;
@@ -224,6 +231,7 @@ export function ThreadPickerDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const sessions = project?.sessions ?? [];
+  const agentName = agentDisplayName(connection?.platform);
   const deletePlan = getUnselectedThreadDeletePlan(sessions, visibleIds);
   const [bulkDeleteTarget, setBulkDeleteTarget] =
     useState<BulkDeleteTarget | null>(null);
@@ -340,7 +348,9 @@ export function ThreadPickerDialog({
             <DialogDescription>
               {connection && project
                 ? canManage
-                  ? `「${connection.name}」的项目「${project.name}」共 ${sessions.length} 个 Thread。勾选控制侧栏显示；未勾选项可批量删除，重命名和删除会同步到本机 Codex。`
+                  ? `「${connection.name}」的项目「${project.name}」共 ${sessions.length} 个 Thread。勾选控制侧栏显示；未勾选项可批量删除，${
+                      canRename ? "重命名和删除" : "删除"
+                    }会同步到本机 ${agentName}。`
                   : `「${connection.name}」的项目「${project.name}」共 ${sessions.length} 个 Thread。勾选控制侧栏显示；重命名和删除仅对 Workspace 所有者开放，并需要 Bridge 0.5。`
                 : "选择一个项目后管理其中的 Threads。"}
             </DialogDescription>
@@ -363,6 +373,7 @@ export function ThreadPickerDialog({
               onToggle={onToggle}
               onOpen={onOpen}
               canManage={canManage}
+              canRename={canRename}
               onRename={onRename}
               onDelete={onDelete}
             />
