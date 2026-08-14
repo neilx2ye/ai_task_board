@@ -47,14 +47,7 @@ import {
 import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 
-const PLATFORMS = [
-  "ChatGPT",
-  "Claude",
-  "Codex",
-  "Kimi Code",
-  "Gemini",
-  "自定义 Agent",
-];
+const SUPPORTED_CONNECTION_PLATFORMS = ["Codex", "Kimi Code"];
 
 function RenameConnectionDialog({
   connection,
@@ -142,7 +135,9 @@ function CreateConnectionDialog({
 }) {
   const createConnection = useCreateConnection();
   const [name, setName] = useState("");
-  const [platform, setPlatform] = useState(PLATFORMS[0]);
+  const [platform, setPlatform] = useState(
+    SUPPORTED_CONNECTION_PLATFORMS[0],
+  );
   const [error, setError] = useState<string | null>(null);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -181,7 +176,7 @@ function CreateConnectionDialog({
               maxLength={100}
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如：我的 Claude 桌面端"
+              placeholder="例如：我的 Codex 设备"
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -191,7 +186,7 @@ function CreateConnectionDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PLATFORMS.map((item) => (
+                {SUPPORTED_CONNECTION_PLATFORMS.map((item) => (
                   <SelectItem key={item} value={item}>
                     {item}
                   </SelectItem>
@@ -419,7 +414,7 @@ export default function ConnectionsPage() {
         <EmptyState
           icon={<CableIcon className="size-6" />}
           title="还没有 AI 连接"
-          description="创建一个连接，把令牌配置到 ChatGPT、Claude、Codex、Gemini 或自定义 Agent 中即可接入看板。"
+          description="创建 Codex 或 Kimi Code 连接，再把令牌配置到对应 Bridge 中即可接入看板。"
           action={
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />
