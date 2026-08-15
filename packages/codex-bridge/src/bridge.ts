@@ -70,6 +70,7 @@ type ClaimedTask = {
   acceptance_criteria: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
+  goal_mode?: boolean | null;
   claim_token: string;
 };
 
@@ -2299,6 +2300,26 @@ class SessionWorker {
         ),
       })),
     );
+    const goalMode = task.goal_mode === true;
+    if (goalMode && text.length > 4_000) {
+      throw new Error("Goal 目标不能超过 4000 个字符");
+    }
+    if (goalMode) {
+      await this.trackMutatingRequest(
+        this.appServer.threadGoalSet(
+          { threadId: this.thread.id, objective: text },
+          { timeoutMs: 0 },
+        ),
+      );
+    } else if (task.goal_mode === false) {
+      await this.trackMutatingRequest(
+        this.appServer.threadGoalClear(
+          { threadId: this.thread.id },
+          { timeoutMs: 0 },
+        ),
+      );
+    }
+    if (this.stopping) throw new Error("Codex Bridge 正在停止");
     this.awaitingTurnStart = true;
     this.preStartNotifications.length = 0;
     let started: Awaited<ReturnType<CodexAppServerClient["turnStart"]>>;

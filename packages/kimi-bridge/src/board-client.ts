@@ -28,6 +28,7 @@ export type ClaimedTask = {
   acceptance_criteria: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
+  goal_mode?: boolean | null;
   claim_token: string;
 };
 

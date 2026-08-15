@@ -357,6 +357,7 @@ export type TaskRow = {
   position: number | null;
   model: string | null;
   reasoning_effort: string | null;
+  goal_mode: boolean | null;
   assigned_session_id: string | null;
   claimed_by_session_id: string | null;
   claimed_at: string | null;
@@ -395,6 +396,7 @@ export type TaskInsert = {
   position?: number | null;
   model?: string | null;
   reasoning_effort?: string | null;
+  goal_mode?: boolean | null;
   assigned_session_id?: string | null;
   claimed_by_session_id?: string | null;
   claim_token_hash?: string | null;
@@ -1630,6 +1632,7 @@ export interface Database {
             p_images: Json;
             p_model: string | null;
             p_reasoning_effort: string | null;
+            p_goal_mode: boolean | null;
           };
         Returns: SessionTurnResponse;
       };

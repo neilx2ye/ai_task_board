@@ -10,6 +10,13 @@ import {
 
 type RouteContext = { params: Promise<{ sessionId: string }> };
 
+function parseFormBoolean(value: FormDataEntryValue | null): boolean | null | undefined {
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AppError("INVALID_REQUEST", "goal_mode must be true or false");
+}
+
 export async function POST(request: Request, route: RouteContext) {
   return withApiHandler(async () => {
     const { sessionId } = sessionParamsSchema.parse(await route.params);
@@ -28,6 +35,7 @@ export async function POST(request: Request, route: RouteContext) {
         content: formData.get("content"),
         model: formData.get("model"),
         reasoning_effort: formData.get("reasoning_effort"),
+        goal_mode: parseFormBoolean(formData.get("goal_mode")),
       });
       try {
         images = validateTurnImages(

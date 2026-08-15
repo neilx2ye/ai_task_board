@@ -1274,6 +1274,7 @@ export async function createSessionTurn(
     images,
     model: input.model ?? null,
     reasoning_effort: input.reasoning_effort ?? null,
+    goal_mode: input.goal_mode ?? null,
   };
   try {
     const result = await callDomainRpc("create_session_turn_with_settings", {
@@ -1285,6 +1286,7 @@ export async function createSessionTurn(
       p_images: images,
       p_model: input.model ?? null,
       p_reasoning_effort: input.reasoning_effort ?? null,
+      p_goal_mode: input.goal_mode ?? null,
       ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
     });
     if (!result.task || !result.message || !result.activity) {

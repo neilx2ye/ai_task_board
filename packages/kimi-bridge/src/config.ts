@@ -30,6 +30,8 @@ export type KimiBridgeConfiguration = {
   approvalMode: KimiApprovalMode;
   agentMode: KimiAgentMode;
   kimiBinary: string;
+  kimiWebServerUrl: string | null;
+  kimiWebServerToken: string | null;
 };
 
 function parseList(value: string): string[] {
@@ -180,6 +182,8 @@ export function loadConfiguration(
     approvalMode: parseApprovalMode(environment.KIMI_BRIDGE_APPROVAL_MODE),
     agentMode: parseAgentMode(environment.KIMI_BRIDGE_MODE),
     kimiBinary: environment.KIMI_BINARY?.trim() || "kimi",
+    kimiWebServerUrl: environment.KIMI_WEB_SERVER_URL?.trim() || null,
+    kimiWebServerToken: environment.KIMI_WEB_SERVER_TOKEN?.trim() || null,
   };
 }
 

@@ -207,6 +207,52 @@ export type AppServerThreadDeleteResponse = Record<string, never>;
 export type AppServerThreadArchiveParams = AppServerThreadDeleteParams;
 export type AppServerThreadArchiveResponse = Record<string, never>;
 
+export interface AppServerThreadGoal {
+  threadId: string;
+  objective: string;
+  status?: string | null;
+  tokenBudget?: number | null;
+  tokensUsed?: number | null;
+  timeUsedSeconds?: number | null;
+  createdAt?: number | null;
+  updatedAt?: number | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalSetParams {
+  threadId: string;
+  /** Omitting the objective preserves it while updating status/tokenBudget. */
+  objective?: string | null;
+  status?: "active" | "paused" | "blocked" | "complete" | string | null;
+  tokenBudget?: number | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalSetResponse {
+  goal: AppServerThreadGoal;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalGetParams {
+  threadId: string;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalGetResponse {
+  goal: AppServerThreadGoal | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalClearParams {
+  threadId: string;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalClearResponse {
+  cleared: boolean;
+  [key: string]: unknown;
+}
+
 export interface AppServerTurnStartParams {
   threadId: string;
   input: AppServerUserInput[];
@@ -679,6 +725,27 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerThreadArchiveResponse> {
     return this.initializedRequest("thread/archive", params, options);
+  }
+
+  async threadGoalSet(
+    params: AppServerThreadGoalSetParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalSetResponse> {
+    return this.initializedRequest("thread/goal/set", params, options);
+  }
+
+  async threadGoalGet(
+    params: AppServerThreadGoalGetParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalGetResponse> {
+    return this.initializedRequest("thread/goal/get", params, options);
+  }
+
+  async threadGoalClear(
+    params: AppServerThreadGoalClearParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalClearResponse> {
+    return this.initializedRequest("thread/goal/clear", params, options);
   }
 
   async turnStart(

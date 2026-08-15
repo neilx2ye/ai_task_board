@@ -486,6 +486,66 @@ describe("session conversation REST API", () => {
     );
   });
 
+  it("forwards an enabled Goal mode on the next JSON turn", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "修复所有失败的测试", goal_mode: true },
+        { "Idempotency-Key": "web/session/turn-goal-on" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      { content: "修复所有失败的测试", goal_mode: true },
+      "web/session/turn-goal-on",
+    );
+  });
+
+  it("parses a disabled Goal mode from a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "普通任务");
+    form.set("goal_mode", "false");
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-goal-off" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "普通任务",
+        model: null,
+        reasoning_effort: null,
+        goal_mode: false,
+      },
+      "turn-goal-off",
+    );
+  });
+
+  it("rejects a Goal objective longer than 4000 characters", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "长".repeat(4_001), goal_mode: true },
+        { "Idempotency-Key": "turn-goal-too-long" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.createSessionTurn).not.toHaveBeenCalled();
+  });
+
   it("accepts image files in a multipart session turn", async () => {
     const form = new FormData();
     form.set("content", "分析截图");

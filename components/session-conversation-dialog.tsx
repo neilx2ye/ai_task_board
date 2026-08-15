@@ -20,6 +20,7 @@ import {
   LoaderCircleIcon,
   PaperclipIcon,
   SendIcon,
+  TargetIcon,
   TerminalIcon,
   UserIcon,
   WrenchIcon,
@@ -85,7 +86,11 @@ import {
   defaultCodexModel,
   reasoningEffortLabel,
 } from "@/lib/codex-models";
-import { agentDisplayName, isKimiPlatform } from "@/lib/agent-platforms";
+import {
+  agentDisplayName,
+  isAntigravityPlatform,
+  isKimiPlatform,
+} from "@/lib/agent-platforms";
 import type {
   ActorType,
   ArtifactRow,
@@ -858,7 +863,9 @@ function SessionConversationContent({
   const recordedModel = session?.configured_model ?? session?.model;
   const initialModel =
     recordedModel ??
-    (!isKimiPlatform(session?.connection.platform) && modelOptions.length
+    (!isKimiPlatform(session?.connection.platform) &&
+      !isAntigravityPlatform(session?.connection.platform) &&
+      modelOptions.length
       ? defaultCodexModel(modelOptions)
       : INHERIT_AGENT_SETTING);
   const initialModelOption = codexModelOption(initialModel, modelOptions);
@@ -878,6 +885,7 @@ function SessionConversationContent({
       modelOptions,
     );
   });
+  const [goalMode, setGoalMode] = useState<"inherit" | "on" | "off">("inherit");
   const [sendError, setSendError] = useState<string | null>(null);
   const turnSettingsTouchedRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -1018,9 +1026,11 @@ function SessionConversationContent({
           reasoningEffort === INHERIT_AGENT_SETTING
             ? null
             : reasoningEffort,
+        goal_mode: goalMode === "inherit" ? null : goalMode === "on",
       });
       setComposer("");
       setImages([]);
+      setGoalMode("inherit");
       if (imageInputRef.current) imageInputRef.current.value = "";
     } catch (error) {
       setSendError(
@@ -1351,6 +1361,33 @@ function SessionConversationContent({
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select
+                    value={goalMode}
+                    onValueChange={(value) =>
+                      setGoalMode(value as "inherit" | "on" | "off")
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label="下一 Turn 的 Goal 模式"
+                      title="选择是否以 /goal 模式发送下一 Turn"
+                      className={cn(
+                        "h-7 w-auto min-w-0 max-w-32 border-0 px-2 py-1 text-xs shadow-none",
+                        goalMode === "on"
+                          ? "bg-primary/15 text-primary"
+                          : goalMode === "off"
+                            ? "bg-destructive/10 text-destructive"
+                            : "bg-muted/70",
+                      )}
+                    >
+                      <TargetIcon className="size-3.5 shrink-0" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">Goal 不变</SelectItem>
+                      <SelectItem value="on">开启 Goal</SelectItem>
+                      <SelectItem value="off">关闭 Goal</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <Button
@@ -1392,9 +1429,9 @@ function SessionConversationContent({
               </div>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              本次模型与思考强度会随下一 Turn 发送，并成为这个 Thread
-              后续 Turn 的默认设置。尚未发送的内容会自动暂存在本浏览器中，
-              关闭或刷新页面后可继续编辑。
+              本次模型、思考强度与 Goal 开关会随下一 Turn 发送；开启 Goal
+              会以本条 Prompt 为目标，关闭 Goal 会在发送前清除当前目标。
+              尚未发送的内容会自动暂存在本浏览器中，关闭或刷新页面后可继续编辑。
             </p>
           </div>
         </form>

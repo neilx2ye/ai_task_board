@@ -42,6 +42,7 @@ import {
   sanitizeValue,
   stringValue,
 } from "./utils.js";
+import { KimiWebGoalClient } from "./web-goal-client.js";
 
 const ACP_PROTOCOL = "kimi-acp/v1";
 const IMAGE_MIME_TYPES = new Set([
@@ -229,6 +230,8 @@ class SessionWorker {
   private runPromise: Promise<void> | null = null;
   private stopping = false;
   private activePrompt = false;
+  private goalClient: KimiWebGoalClient | null = null;
+  private goalClientError: Error | null = null;
 
   constructor(
     private info: SessionInfo,
@@ -383,6 +386,22 @@ class SessionWorker {
       task,
       this.stopController.signal,
     );
+
+    const text = [
+      task.description?.trim() || task.title,
+      task.acceptance_criteria
+        ? `\n\n验收条件：\n${task.acceptance_criteria}`
+        : "",
+    ].join("");
+    if (task.goal_mode === true || task.goal_mode === false) {
+      const goal = await this.goalControl();
+      if (task.goal_mode === true) {
+        await goal.setGoal(this.info.sessionId, text);
+      } else {
+        await goal.cancelGoal(this.info.sessionId);
+      }
+      if (this.stopping) throw new Error("Kimi Bridge 正在停止");
+    }
     const prepared = await prepareKimiSession(
       this.acp,
       this.info,
@@ -392,12 +411,6 @@ class SessionWorker {
     );
     this.onModelChanged(this.info.sessionId, prepared.model);
 
-    const text = [
-      task.description?.trim() || task.title,
-      task.acceptance_criteria
-        ? `\n\n验收条件：\n${task.acceptance_criteria}`
-        : "",
-    ].join("");
     const artifacts = await this.board.taskArtifacts(
       this.boardSession.id,
       task.id,
@@ -464,6 +477,32 @@ class SessionWorker {
       resultData,
       this.stopController.signal,
     );
+  }
+
+  private async goalControl(): Promise<KimiWebGoalClient> {
+    if (this.goalClient) return this.goalClient;
+    if (this.goalClientError) throw this.goalClientError;
+    try {
+      if (this.configuration.kimiWebServerUrl) {
+        this.goalClient = new KimiWebGoalClient({
+          baseUrl: this.configuration.kimiWebServerUrl,
+          token: this.configuration.kimiWebServerToken ?? undefined,
+        });
+      } else {
+        const discovered = await KimiWebGoalClient.discover();
+        this.goalClient = new KimiWebGoalClient({
+          baseUrl: discovered.baseUrl,
+          token: discovered.token || undefined,
+        });
+      }
+      return this.goalClient;
+    } catch (error) {
+      this.goalClientError =
+        error instanceof Error ? error : new Error(String(error));
+      throw new Error(
+        `无法访问 Kimi web 本地服务以控制 Goal：${this.goalClientError.message}`,
+      );
+    }
   }
 
   private async heartbeat(): Promise<void> {

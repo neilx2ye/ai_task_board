@@ -57,8 +57,16 @@ export const createSessionTurnSchema = z
     content: nonEmptyText.max(100_000),
     model: z.string().trim().min(1).max(200).nullable().optional(),
     reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+    goal_mode: z.boolean().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.goal_mode !== true || value.content.length <= 4_000,
+    {
+      message: "Goal 目标不能超过 4000 个字符",
+      path: ["content"],
+    },
+  );
 
 export const planningNotesQuerySchema = z
   .object({
