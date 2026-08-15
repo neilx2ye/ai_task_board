@@ -165,13 +165,11 @@ function quoteSystemdArgument(value: string): string {
 function escapeSystemdPath(value: string): string {
   assertSingleLine(value, "systemd 路径");
   if (!path.isAbsolute(value)) throw new Error(`systemd 路径必须是绝对路径：${value}`);
-  return value
-    .replace(/%/g, "%%")
-    .replace(/\\/g, "\\x5c")
-    .replace(/ /g, "\\x20")
-    .replace(/\t/g, "\\x09")
-    .replace(/"/g, "\\x22")
-    .replace(/'/g, "\\x27");
+  // `WorkingDirectory=` and `EnvironmentFile=` accept the rest of the line as
+  // a single bare path. systemd does not decode `\x20` in these settings, so
+  // literal spaces must be preserved rather than escaped. Only `%` needs
+  // doubling here, because systemd would otherwise treat it as a specifier.
+  return value.replace(/%/g, "%%");
 }
 
 export function renderSystemdUserUnit(

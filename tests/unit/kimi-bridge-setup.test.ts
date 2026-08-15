@@ -43,7 +43,8 @@ describe("Kimi Bridge interactive setup primitives", () => {
       environmentFile: "/home/alice/.config/board/kimi.env",
     });
     expect(unit).toContain("Description=AI Task Board Kimi Bridge");
-    expect(unit).toContain("WorkingDirectory=/srv/My\\x20App");
+    expect(unit).toContain("WorkingDirectory=/srv/My App");
+    expect(unit).not.toContain("\\x20");
     expect(unit).toContain(
       'ExecStart="/usr/bin/node" "/home/alice/.local/share/bridge/dist/cli.js" "run"',
     );

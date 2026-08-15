@@ -21,16 +21,16 @@ Node.js 18 or newer is required. Run setup as the same OS user that owns the
 selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.0 setup
+npx --yes ai-task-board-bridge@1.0.1 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, and `both`. Automation or
 repeat installs can bypass that first prompt:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.0 setup codex
-npx --yes ai-task-board-bridge@1.0.0 setup kimi
-npx --yes ai-task-board-bridge@1.0.0 setup both
+npx --yes ai-task-board-bridge@1.0.1 setup codex
+npx --yes ai-task-board-bridge@1.0.1 setup kimi
+npx --yes ai-task-board-bridge@1.0.1 setup both
 ```
 
 Installing both runs the two setup flows in sequence. Create a separate Board
@@ -75,7 +75,7 @@ install a service:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.0.0 run codex
+npx --yes ai-task-board-bridge@1.0.1 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -93,7 +93,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.0.0
+npx --yes ai-task-board-bridge@1.0.1
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -101,7 +101,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.0.0
+npx --yes ai-task-board-bridge@1.0.1
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -266,12 +266,12 @@ strong token-isolation boundary. Use a separate UID and/or a token proxy when
 strong isolation is required. Board schema and `/api/ai/sessions/sync` must be
 upgraded before starting 0.8; there is no 404 fallback to the old registration
 API. On Linux, use `setup` for a pinned local runtime and systemd user service.
-On other platforms, pin version `1.0.0` in launchd or another process manager.
+On other platforms, pin version `1.0.1` in launchd or another process manager.
 Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@1.0.0 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.0.1 --help` for the complete
 environment-variable list.
 
 ## Kimi Bridge
@@ -290,7 +290,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.0 run kimi
+npx --yes ai-task-board-bridge@1.0.1 run kimi
 ```
 
 `KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact

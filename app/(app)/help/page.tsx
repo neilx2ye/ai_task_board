@@ -239,7 +239,7 @@ export default function HelpPage() {
           Codex 配置：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.0.0 setup`}
+          {`npx --yes ai-task-board-bridge@1.0.1 setup`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           如需前台运行或自动化部署，也可以直接通过环境变量配置：
@@ -255,7 +255,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-bridge@1.0.0 run codex`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.0.1 run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -319,7 +319,7 @@ npx --yes ai-task-board-bridge@1.0.0 run codex`}</CopyableCodeBlock>
           运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.0.0 setup kimi`}
+          {`npx --yes ai-task-board-bridge@1.0.1 setup kimi`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Kimi Code 连接：
@@ -329,7 +329,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.0 run kimi`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             Bridge 会动态上报 Kimi ACP 返回的模型和 low/high/max 等思考强度；新建

@@ -106,7 +106,11 @@ env_http_headers = { "X-Tenant" = "DEEPSEEK_TENANT" }
     expect(unit).toContain(
       'Environment="CODEX_HOME=/home/alice/.codex-deepseek"',
     );
-    expect(unit).toContain("WorkingDirectory=/srv/my\\x20project");
+    expect(unit).toContain("WorkingDirectory=/srv/my project");
+    expect(unit).not.toContain("\\x20");
+    expect(unit).toContain(
+      "EnvironmentFile=/home/alice/.config/ai task board/bridge.env",
+    );
     expect(unit).toContain(
       'ExecStart="/opt/node versions/current/bin/node" "/home/alice/data%%20/bridge/dist/cli.js" "run"',
     );

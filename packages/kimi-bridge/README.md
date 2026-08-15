@@ -22,7 +22,7 @@ reply to the matching Board conversation.
 Run setup as the same OS user that owns the Kimi login and target workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.0 setup kimi
+npx --yes ai-task-board-bridge@1.0.1 setup kimi
 ```
 
 The installer writes a `0600` environment file, stages the CLI and its ACP SDK
@@ -38,7 +38,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.0 run kimi
+npx --yes ai-task-board-bridge@1.0.1 run kimi
 ```
 
 For several projects, set a stable exact-directory allowlist:
