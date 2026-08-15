@@ -71,6 +71,7 @@ import {
   useSessionConversation,
   mergeSessionConversationPages,
 } from "@/hooks/use-sessions";
+import { useUnsentPrompt } from "@/hooks/use-unsent-prompt";
 import {
   effectiveSessionStatus,
   isSessionAlive,
@@ -844,7 +845,7 @@ function SessionConversationContent({
   const sessionId = session?.id ?? null;
   const conversationQuery = useSessionConversation(sessionId);
   const createTurn = useCreateSessionTurn(sessionId ?? "");
-  const [composer, setComposer] = useState("");
+  const { draft: composer, setDraft: setComposer } = useUnsentPrompt(sessionId);
   const [images, setImages] = useState<File[]>([]);
   const modelOptions = useMemo(
     () =>
@@ -1392,7 +1393,8 @@ function SessionConversationContent({
             ) : null}
             <p className="text-xs text-muted-foreground">
               本次模型与思考强度会随下一 Turn 发送，并成为这个 Thread
-              后续 Turn 的默认设置。
+              后续 Turn 的默认设置。尚未发送的内容会自动暂存在本浏览器中，
+              关闭或刷新页面后可继续编辑。
             </p>
           </div>
         </form>
