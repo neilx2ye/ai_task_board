@@ -60,6 +60,46 @@ export const createSessionTurnSchema = z
   })
   .strict();
 
+export const planningNotesQuerySchema = z
+  .object({
+    connection_id: uuidSchema,
+    directory_ref: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+
+export const upsertPlanningNotesSchema = z
+  .object({
+    connection_id: uuidSchema,
+    directory_ref: z.string().trim().min(1).max(1000),
+    content: z.string().max(100_000),
+  })
+  .strict();
+
+export const createTurnPlanStepSchema = z
+  .object({
+    content: nonEmptyText.max(100_000),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
+  .strict();
+
+export const updateTurnPlanStepSchema = z
+  .object({
+    content: nonEmptyText.max(100_000).optional(),
+    position: z.number().int().optional(),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (value) => Object.keys(value).length > 0,
+    "At least one field is required",
+  );
+
+export const turnPlanStepParamsSchema = z
+  .object({ stepId: uuidSchema })
+  .strict();
+
 export const createTaskSchema = z
   .object({
     workspace_id: uuidSchema.optional(),
@@ -238,3 +278,6 @@ export type CreateThreadInput = z.infer<typeof createThreadSchema>;
 export type RenameThreadInput = z.infer<typeof renameThreadSchema>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
 export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;
+export type UpsertPlanningNotesInput = z.infer<typeof upsertPlanningNotesSchema>;
+export type CreateTurnPlanStepInput = z.infer<typeof createTurnPlanStepSchema>;
+export type UpdateTurnPlanStepInput = z.infer<typeof updateTurnPlanStepSchema>;

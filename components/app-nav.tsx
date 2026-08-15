@@ -7,6 +7,7 @@ import {
   CableIcon,
   CircleHelpIcon,
   LogOutIcon,
+  NotebookPenIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { cn } from "@/components/utils";
 
 const NAV_ITEMS = [
   { href: "/sessions", label: "会话与上下文", icon: BotIcon },
+  { href: "/planning", label: "任务规划", icon: NotebookPenIcon },
   { href: "/connections", label: "AI 连接", icon: CableIcon },
   { href: "/help", label: "帮助", icon: CircleHelpIcon },
 ] as const;

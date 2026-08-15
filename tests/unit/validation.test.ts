@@ -10,7 +10,14 @@ import {
   syncSessionsSchema,
 } from "@/lib/validation/ai";
 import { artifactReferenceSchema } from "@/lib/validation/common";
-import { createTaskSchema, updateTaskSchema } from "@/lib/validation/user";
+import {
+  createTaskSchema,
+  createTurnPlanStepSchema,
+  planningNotesQuerySchema,
+  updateTaskSchema,
+  updateTurnPlanStepSchema,
+  upsertPlanningNotesSchema,
+} from "@/lib/validation/user";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const artifactId = "22222222-2222-4222-8222-222222222222";
@@ -330,5 +337,65 @@ describe("user command validation", () => {
     expect(updateTaskSchema.safeParse({ assigned_session_id: null }).success).toBe(
       false,
     );
+  });
+});
+
+describe("planning workspace validation", () => {
+  it("accepts planning note upserts within limits", () => {
+    const parsed = upsertPlanningNotesSchema.parse({
+      connection_id: sessionId,
+      directory_ref: " configured:main ",
+      content: "一些想法",
+    });
+
+    expect(parsed.directory_ref).toBe("configured:main");
+    expect(
+      upsertPlanningNotesSchema.safeParse({
+        connection_id: sessionId,
+        directory_ref: " ",
+        content: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires connection and directory in planning note queries", () => {
+    expect(
+      planningNotesQuerySchema.safeParse({
+        connection_id: sessionId,
+        directory_ref: "path:/repo",
+      }).success,
+    ).toBe(true);
+    expect(
+      planningNotesQuerySchema.safeParse({ directory_ref: "path:/repo" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("validates turn plan step drafts", () => {
+    expect(createTurnPlanStepSchema.safeParse({ content: "第一步" }).success)
+      .toBe(true);
+    expect(createTurnPlanStepSchema.safeParse({ content: "  " }).success).toBe(
+      false,
+    );
+    expect(
+      createTurnPlanStepSchema.safeParse({
+        content: "x",
+        model: "gpt-5.6-sol",
+        reasoning_effort: "max",
+      }).success,
+    ).toBe(true);
+    expect(
+      createTurnPlanStepSchema.safeParse({ content: "x", position: 1 }).success,
+    ).toBe(false);
+  });
+
+  it("requires at least one turn plan patch field", () => {
+    expect(updateTurnPlanStepSchema.safeParse({}).success).toBe(false);
+    expect(updateTurnPlanStepSchema.safeParse({ position: 2048 }).success).toBe(
+      true,
+    );
+    expect(
+      updateTurnPlanStepSchema.safeParse({ position: 1.5 }).success,
+    ).toBe(false);
   });
 });

@@ -10,10 +10,12 @@ import {
 import { catchUpEventCursor } from "@/hooks/realtime-catchup";
 import {
   BRIDGE_DIRECTORIES_QUERY_KEY,
+  planningNotesQueryKey,
   sessionQueryKey,
   SESSIONS_QUERY_KEY,
   taskQueryKey,
   TASKS_QUERY_KEY,
+  turnPlansQueryKey,
 } from "@/hooks/query-keys";
 import { compareSessionActivities } from "@/hooks/use-sessions";
 import { useSupabase } from "@/hooks/use-supabase";
@@ -37,6 +39,8 @@ export const REALTIME_TABLES = [
   "ai_sessions",
   "ai_bridge_directories",
   "artifacts",
+  "planning_notes",
+  "session_turn_plans",
 ] as const;
 
 export type RealtimeTable = (typeof REALTIME_TABLES)[number];
@@ -93,6 +97,9 @@ export function realtimeInvalidations(
     for (const row of rows) {
       const taskId = nonEmptyString(row, "id");
       if (taskId) exact(taskQueryKey(taskId));
+      // 规划面板的 Turn 链进度直接来自任务状态，跟随任务变更刷新。
+      const sessionId = nonEmptyString(row, "assigned_session_id");
+      if (sessionId) exact(turnPlansQueryKey(sessionId));
     }
   } else if (table === "task_messages") {
     // The board list embeds each waiting task's latest AI message.
@@ -122,6 +129,19 @@ export function realtimeInvalidations(
     }
   } else if (table === "ai_bridge_directories") {
     exact(BRIDGE_DIRECTORIES_QUERY_KEY);
+  } else if (table === "planning_notes") {
+    for (const row of rows) {
+      const connectionId = nonEmptyString(row, "connection_id");
+      const directoryRef = nonEmptyString(row, "directory_ref");
+      if (connectionId && directoryRef) {
+        exact(planningNotesQueryKey(connectionId, directoryRef));
+      }
+    }
+  } else if (table === "session_turn_plans") {
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "session_id");
+      if (sessionId) exact(turnPlansQueryKey(sessionId));
+    }
   } else {
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "session_id");

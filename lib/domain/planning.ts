@@ -1,0 +1,249 @@
+import "server-only";
+
+import { deriveStableUuid, hashRequest } from "@/lib/auth/ai-token";
+import type { UserWorkspaceContext } from "@/lib/auth/user";
+import { AppError, mapDatabaseError } from "@/lib/domain/errors";
+import { callDomainRpc } from "@/lib/domain/rpc";
+import { taskTitleFromPrompt } from "@/lib/domain/task-title";
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { TurnPlanStep } from "@/lib/types/domain";
+import type {
+  SessionTurnPlanRow,
+  TaskStatus,
+} from "@/lib/types/database";
+import type {
+  CreateTurnPlanStepInput,
+  UpdateTurnPlanStepInput,
+  UpsertPlanningNotesInput,
+} from "@/lib/validation/user";
+
+export async function getPlanningNote(
+  context: UserWorkspaceContext,
+  connectionId: string,
+  directoryRef: string,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("planning_notes")
+    .select("*")
+    .eq("workspace_id", context.workspaceId)
+    .eq("connection_id", connectionId)
+    .eq("directory_ref", directoryRef)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  return { note: data };
+}
+
+export async function upsertPlanningNote(
+  context: UserWorkspaceContext,
+  input: UpsertPlanningNotesInput,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("planning_notes")
+    .upsert(
+      {
+        workspace_id: context.workspaceId,
+        connection_id: input.connection_id,
+        directory_ref: input.directory_ref,
+        content: input.content,
+        updated_by: context.userId,
+      },
+      { onConflict: "workspace_id,connection_id,directory_ref" },
+    )
+    .select("*")
+    .single();
+  if (error) throw mapDatabaseError(error);
+  return { note: data };
+}
+
+async function requireTurnPlanStep(
+  context: UserWorkspaceContext,
+  stepId: string,
+): Promise<SessionTurnPlanRow> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("session_turn_plans")
+    .select("*")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", stepId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!data) throw new AppError("TASK_NOT_FOUND", "Turn plan step not found");
+  return data;
+}
+
+export async function listTurnPlanSteps(
+  context: UserWorkspaceContext,
+  sessionId: string,
+): Promise<{ steps: TurnPlanStep[] }> {
+  const admin = createAdminClient();
+  const { data: plans, error } = await admin
+    .from("session_turn_plans")
+    .select("*")
+    .eq("workspace_id", context.workspaceId)
+    .eq("session_id", sessionId)
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw mapDatabaseError(error);
+
+  const taskIds = [
+    ...new Set(
+      (plans ?? []).flatMap((plan) =>
+        plan.dispatched_task_id ? [plan.dispatched_task_id] : [],
+      ),
+    ),
+  ];
+  const statusByTaskId = new Map<string, TaskStatus>();
+  if (taskIds.length > 0) {
+    const { data: tasks, error: tasksError } = await admin
+      .from("tasks")
+      .select("id, status")
+      .eq("workspace_id", context.workspaceId)
+      .in("id", taskIds);
+    if (tasksError) throw mapDatabaseError(tasksError);
+    for (const task of tasks ?? []) {
+      statusByTaskId.set(task.id, task.status);
+    }
+  }
+
+  return {
+    steps: (plans ?? []).map((plan) => ({
+      ...plan,
+      dispatched_task_status: plan.dispatched_task_id
+        ? (statusByTaskId.get(plan.dispatched_task_id) ?? null)
+        : null,
+    })),
+  };
+}
+
+export async function createTurnPlanStep(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  input: CreateTurnPlanStepInput,
+  idempotencyKey: string,
+) {
+  const admin = createAdminClient();
+  const { data: last } = await admin
+    .from("session_turn_plans")
+    .select("position")
+    .eq("workspace_id", context.workspaceId)
+    .eq("session_id", sessionId)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // The derived id makes a client retry return the originally created step
+  // instead of queuing the same prompt twice.
+  const id = deriveStableUuid(
+    `${context.workspaceId}\0${context.userId}\0turn-plan\0${idempotencyKey}`,
+  );
+  const row = {
+    id,
+    workspace_id: context.workspaceId,
+    session_id: sessionId,
+    position: (last?.position ?? 0) + 1024,
+    content: input.content,
+    model: input.model ?? null,
+    reasoning_effort: input.reasoning_effort ?? null,
+    created_by: context.userId,
+  };
+  const { data, error } = await admin
+    .from("session_turn_plans")
+    .insert(row)
+    .select("*")
+    .single();
+  if (!error) return { step: data };
+  if (error.code !== "23505") throw mapDatabaseError(error);
+
+  const existing = await requireTurnPlanStep(context, id);
+  return { step: existing };
+}
+
+export async function updateTurnPlanStep(
+  context: UserWorkspaceContext,
+  stepId: string,
+  input: UpdateTurnPlanStepInput,
+) {
+  const existing = await requireTurnPlanStep(context, stepId);
+  if (existing.status !== "draft") {
+    throw new AppError(
+      "INVALID_STATE_TRANSITION",
+      "Only draft turn plan steps can be edited",
+    );
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("session_turn_plans")
+    .update({
+      ...(input.content !== undefined ? { content: input.content } : null),
+      ...(input.position !== undefined ? { position: input.position } : null),
+      ...(input.model !== undefined ? { model: input.model } : null),
+      ...(input.reasoning_effort !== undefined
+        ? { reasoning_effort: input.reasoning_effort }
+        : null),
+    })
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", stepId)
+    .select("*")
+    .single();
+  if (error) throw mapDatabaseError(error);
+  return { step: data };
+}
+
+export async function deleteTurnPlanStep(
+  context: UserWorkspaceContext,
+  stepId: string,
+) {
+  const existing = await requireTurnPlanStep(context, stepId);
+  if (existing.status !== "draft") {
+    throw new AppError(
+      "INVALID_STATE_TRANSITION",
+      "Only draft turn plan steps can be deleted",
+    );
+  }
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("session_turn_plans")
+    .delete()
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", stepId);
+  if (error) throw mapDatabaseError(error);
+  return { deleted: true as const };
+}
+
+export async function dispatchTurnPlanChain(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  idempotencyKey: string,
+) {
+  const admin = createAdminClient();
+  // Titles follow the conversation composer's derivation so chained turns are
+  // named exactly like manually sent ones. The RPC re-reads the drafts inside
+  // its transaction, so a step removed in between simply keeps its SQL
+  // fallback title.
+  const { data: drafts, error } = await admin
+    .from("session_turn_plans")
+    .select("id, content")
+    .eq("workspace_id", context.workspaceId)
+    .eq("session_id", sessionId)
+    .eq("status", "draft");
+  if (error) throw mapDatabaseError(error);
+
+  const titles = Object.fromEntries(
+    (drafts ?? []).map((step) => [step.id, taskTitleFromPrompt(step.content)]),
+  );
+  return callDomainRpc("dispatch_session_turn_chain", {
+    p_workspace_id: context.workspaceId,
+    p_user_id: context.userId,
+    p_session_id: sessionId,
+    p_titles: titles,
+    p_idempotency_key: idempotencyKey,
+    p_request_hash: hashRequest("dispatch_session_turn_chain", {
+      sessionId,
+      titles,
+    }),
+  });
+}

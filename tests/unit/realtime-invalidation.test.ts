@@ -90,10 +90,13 @@ describe("Realtime cache invalidation", () => {
         "exact:tasks",
         "exact:tasks/task-1",
         "exact:sessions",
+        // 规划面板的 Turn 链进度跟随任务状态刷新。
+        "exact:turn-plans/session-1",
       ]),
     );
     expect(labels(invalidations)).not.toContain("exact:sessions/session-2");
     expect(labels(invalidations)).not.toContain("exact:sessions/session-1");
+    expect(labels(invalidations)).not.toContain("exact:turn-plans/session-2");
   });
 
   it("coalesces duplicate invalidations during the debounce window", async () => {
@@ -148,5 +151,40 @@ describe("Realtime cache invalidation", () => {
       queryKey: ["sessions", "session-2"],
       exact: true,
     });
+  });
+});
+
+describe("Planning workspace Realtime invalidation", () => {
+  it("targets the affected planning note", () => {
+    expect(
+      labels(
+        realtimeInvalidations("planning_notes", {
+          new: {
+            connection_id: "connection-1",
+            directory_ref: "configured:main",
+          },
+        }),
+      ),
+    ).toEqual(["exact:planning-notes/connection-1/configured:main"]);
+  });
+
+  it("targets the turn plan of the affected session", () => {
+    expect(
+      labels(
+        realtimeInvalidations("session_turn_plans", {
+          new: { session_id: "session-1" },
+          old: { session_id: "session-9" },
+        }),
+      ),
+    ).toEqual(["exact:turn-plans/session-1", "exact:turn-plans/session-9"]);
+  });
+
+  it("ignores planning rows without usable identifiers", () => {
+    expect(
+      realtimeInvalidations("planning_notes", { new: {} }),
+    ).toEqual([]);
+    expect(
+      realtimeInvalidations("session_turn_plans", { new: {} }),
+    ).toEqual([]);
   });
 });

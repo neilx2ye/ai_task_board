@@ -38,6 +38,7 @@ export type SessionActivityKind =
   | "error"
   | "usage"
   | "status";
+export type SessionTurnPlanStatus = "draft" | "dispatched" | "cancelled";
 
 type Relationship = {
   foreignKeyName: string;
@@ -703,6 +704,56 @@ export type IdempotencyRecordInsert = {
   expires_at?: string;
 };
 
+export type PlanningNoteRow = {
+  workspace_id: string;
+  connection_id: string;
+  directory_ref: string;
+  content: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlanningNoteInsert = {
+  workspace_id: string;
+  connection_id: string;
+  directory_ref: string;
+  content?: string;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionTurnPlanRow = {
+  id: string;
+  workspace_id: string;
+  session_id: string;
+  position: number;
+  content: string;
+  model: string | null;
+  reasoning_effort: string | null;
+  status: SessionTurnPlanStatus;
+  dispatched_task_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionTurnPlanInsert = {
+  id?: string;
+  workspace_id: string;
+  session_id: string;
+  position: number;
+  content: string;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  status?: SessionTurnPlanStatus;
+  dispatched_task_id?: string | null;
+  created_by: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type TaskRpcPayload = TaskRow & {
   structured_progress: {
     completed_leaves: number;
@@ -744,6 +795,9 @@ type TaskUserInputPollResponse = {
 type SessionTurnResponse = MessageResponse & {
   activity: SessionActivityRow;
   artifacts?: ArtifactRow[];
+};
+type DispatchTurnPlanChainResponse = {
+  dispatched: { step_id: string; task_id: string }[];
 };
 type SessionActivityResponse = {
   task: TaskRpcPayload | Pick<TaskRpcPayload, "id">;
@@ -1277,6 +1331,55 @@ export interface Database {
           },
         ]
       >;
+      planning_notes: TableDefinition<
+        PlanningNoteRow,
+        PlanningNoteInsert,
+        Partial<PlanningNoteRow>,
+        [
+          {
+            foreignKeyName: "planning_notes_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "planning_notes_connection_id_fkey";
+            columns: ["connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      session_turn_plans: TableDefinition<
+        SessionTurnPlanRow,
+        SessionTurnPlanInsert,
+        Partial<SessionTurnPlanRow>,
+        [
+          {
+            foreignKeyName: "session_turn_plans_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "session_turn_plans_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_turn_plans_task_fk";
+            columns: ["workspace_id", "dispatched_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
     };
     Views: Record<string, never>;
     Functions: {
@@ -1529,6 +1632,14 @@ export interface Database {
             p_reasoning_effort: string | null;
           };
         Returns: SessionTurnResponse;
+      };
+      dispatch_session_turn_chain: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_titles: Json;
+          };
+        Returns: DispatchTurnPlanChainResponse;
       };
       update_user_task: {
         Args: UserArgs &

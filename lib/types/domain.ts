@@ -3,9 +3,11 @@ import type {
   AISessionRow,
   ArtifactRow,
   Json,
+  SessionTurnPlanRow,
   TaskEventRow,
   TaskMessageRow,
   TaskRow,
+  TaskStatus,
   TaskUserInputRequestRow,
   SessionActivityRow,
   SessionHistorySync,
@@ -139,4 +141,9 @@ export type SessionConversation = {
       events_truncated: boolean;
     };
   };
+};
+
+/** 规划页 Turn 步骤：草稿字段 + 已派发步骤对应任务的实时状态。 */
+export type TurnPlanStep = SessionTurnPlanRow & {
+  dispatched_task_status: TaskStatus | null;
 };
