@@ -234,9 +234,9 @@ export default function HelpPage() {
           thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi，还是两者，再以
-          执行命令的当前用户创建对应的 systemd user service。选择 Codex 后会继续收集
-          Codex 配置：
+          Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi、Antigravity，
+          还是组合，再以执行命令的当前用户创建对应的 systemd user service。选择
+          Codex 后会继续收集 Codex 配置：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
           {`npx --yes ai-task-board-bridge@1.0.1 setup`}
@@ -350,6 +350,59 @@ npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
           </li>
           <li>
             Board Connection Token 会从 <code>kimi acp</code> 子进程环境移除；同一 OS
+            用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
+          </li>
+        </ul>
+      </Section>
+
+      <Section id="antigravity-bridge" title="Antigravity Bridge（Google Antigravity CLI）">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Antigravity Bridge 是独立的设备 companion，通过 Antigravity CLI 官方的
+          headless <code>stream-json</code> 接口驱动本机 <code>agy</code>。它不读取
+          Google 未公开的会话数据库；请先在「AI 连接」新建平台为 “Antigravity”
+          的连接，再由拥有 Antigravity 登录和目标工作区的同一系统用户安装。运行时
+          已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 安装命令">
+          {`npx --yes ai-task-board-bridge@1.0.1 setup antigravity`}
+        </CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Antigravity 连接：
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \\
+ANTIGRAVITY_BRIDGE_MODE='auto' \\
+ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \\
+npx --yes ai-task-board-bridge@1.0.1 run antigravity`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            需要 Antigravity CLI 1.1.8 或更新版本（<code>agy update</code> 升级）。
+            每个 Board Thread 对应一个本地会话绑定；首个任务创建真实 conversation，
+            后续 Turn 通过 <code>--conversation</code> 续接同一上下文。
+          </li>
+          <li>
+            Bridge 会从 <code>agy models</code> 动态上报模型和 low/medium/high
+            思考强度；新建 Thread 与下一 Turn 的模型选择不会使用 Codex 兼容列表。
+          </li>
+          <li>
+            可用 <code>ANTIGRAVITY_WORKING_DIRECTORIES</code> 配置多个精确 cwd
+            白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。
+          </li>
+          <li>
+            agy headless 没有公开的改名与历史读取接口，因此 Antigravity 连接会隐藏
+            Thread 改名，删除 Thread 只移除 Bridge 绑定、保留本机会话文件，也不会导入
+            TUI 中既有的会话。
+          </li>
+          <li>
+            <code>ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept</code> 会向 agy 传入
+            <code className="ml-1">--dangerously-skip-permissions</code>，自动批准全部
+            工具调用，属于高风险配置。安装器默认拒绝额外权限；可用
+            <code className="ml-1">ANTIGRAVITY_BRIDGE_SANDBOX=true</code>
+            额外启用 agy 终端沙箱。
+          </li>
+          <li>
+            Board Connection Token 会从 <code>agy</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
           </li>
         </ul>

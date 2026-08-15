@@ -1,8 +1,13 @@
 import { createInterface } from "node:readline/promises";
 import type { ReadStream, WriteStream } from "node:tty";
 
-export type BridgeSetupTarget = "codex" | "kimi" | "both";
-export type BridgeRunTarget = Exclude<BridgeSetupTarget, "both">;
+export type BridgeSetupTarget =
+  | "codex"
+  | "kimi"
+  | "antigravity"
+  | "both"
+  | "all";
+export type BridgeRunTarget = Exclude<BridgeSetupTarget, "both" | "all">;
 
 export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
   value: BridgeSetupTarget;
@@ -10,7 +15,9 @@ export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
 }> = [
   { value: "codex", label: "Codex Bridge" },
   { value: "kimi", label: "Kimi Bridge（Kimi Code ACP）" },
+  { value: "antigravity", label: "Antigravity Bridge（Google Antigravity CLI）" },
   { value: "both", label: "Codex Bridge 和 Kimi Bridge" },
+  { value: "all", label: "Codex、Kimi 和 Antigravity Bridge" },
 ];
 
 export function parseBridgeSetupTarget(
@@ -20,7 +27,9 @@ export function parseBridgeSetupTarget(
   if (!normalized) return null;
   if (normalized === "codex") return "codex";
   if (normalized === "kimi" || normalized === "kimi-code") return "kimi";
-  if (normalized === "both" || normalized === "all") return "both";
+  if (normalized === "antigravity" || normalized === "agy") return "antigravity";
+  if (normalized === "both") return "both";
+  if (normalized === "all") return "all";
   return null;
 }
 
@@ -28,7 +37,11 @@ export function parseBridgeRunTarget(
   value: string | undefined,
 ): BridgeRunTarget | null {
   const target = parseBridgeSetupTarget(value);
-  return target === "codex" || target === "kimi" ? target : null;
+  return target === "codex" ||
+    target === "kimi" ||
+    target === "antigravity"
+    ? target
+    : null;
 }
 
 export async function promptForBridgeSetupTarget(
@@ -37,7 +50,7 @@ export async function promptForBridgeSetupTarget(
 ): Promise<BridgeSetupTarget> {
   if (!input.isTTY || !output.isTTY) {
     throw new Error(
-      "setup 需要交互式终端；自动化请选择 setup codex、setup kimi 或 setup both",
+      "setup 需要交互式终端；自动化请选择 setup codex、setup kimi、setup antigravity 或 setup all",
     );
   }
 
@@ -59,7 +72,7 @@ export async function promptForBridgeSetupTarget(
       }
       const namedChoice = parseBridgeSetupTarget(answer);
       if (namedChoice) return namedChoice;
-      output.write("  请输入 1 到 3，或 codex、kimi、both。\n");
+      output.write("  请输入 1 到 5，或 codex、kimi、antigravity、both、all。\n");
     }
   } finally {
     readline.close();
@@ -81,6 +94,16 @@ async function setupKimi(packageVersion: string): Promise<void> {
   await runKimiInteractiveSetup({ packageVersion });
 }
 
+async function setupAntigravity(packageVersion: string): Promise<void> {
+  const runtimeModule = "./antigravity-runtime/index.js";
+  const { runAntigravityInteractiveSetup } = (await import(runtimeModule)) as {
+    runAntigravityInteractiveSetup: (options: {
+      packageVersion: string;
+    }) => Promise<void>;
+  };
+  await runAntigravityInteractiveSetup({ packageVersion });
+}
+
 export async function runBridgeSetup(
   target: BridgeSetupTarget,
   packageVersion: string,
@@ -93,12 +116,26 @@ export async function runBridgeSetup(
     await setupKimi(packageVersion);
     return;
   }
+  if (target === "antigravity") {
+    await setupAntigravity(packageVersion);
+    return;
+  }
+
+  if (target === "both") {
+    process.stdout.write(
+      "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n",
+    );
+    await setupCodex(packageVersion);
+    await setupKimi(packageVersion);
+    return;
+  }
 
   process.stdout.write(
-    "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n",
+    "\n将依次安装三个独立服务。Codex、Kimi 与 Antigravity 需要各自在看板中创建的 Connection Token。\n",
   );
   await setupCodex(packageVersion);
   await setupKimi(packageVersion);
+  await setupAntigravity(packageVersion);
 }
 
 export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {
@@ -108,9 +145,18 @@ export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {
     return;
   }
 
-  const runtimeModule = "./kimi-runtime/index.js";
-  const { runKimiBridgeCli } = (await import(runtimeModule)) as {
-    runKimiBridgeCli: () => Promise<void>;
+  if (target === "kimi") {
+    const runtimeModule = "./kimi-runtime/index.js";
+    const { runKimiBridgeCli } = (await import(runtimeModule)) as {
+      runKimiBridgeCli: () => Promise<void>;
+    };
+    await runKimiBridgeCli();
+    return;
+  }
+
+  const runtimeModule = "./antigravity-runtime/index.js";
+  const { runAntigravityBridgeCli } = (await import(runtimeModule)) as {
+    runAntigravityBridgeCli: () => Promise<void>;
   };
-  await runKimiBridgeCli();
+  await runAntigravityBridgeCli();
 }

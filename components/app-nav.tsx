@@ -6,6 +6,7 @@ import {
   BotIcon,
   CableIcon,
   CircleHelpIcon,
+  FolderTreeIcon,
   LogOutIcon,
   NotebookPenIcon,
   PanelLeftCloseIcon,
@@ -21,6 +22,7 @@ import { cn } from "@/components/utils";
 const NAV_ITEMS = [
   { href: "/sessions", label: "会话与上下文", icon: BotIcon },
   { href: "/planning", label: "任务规划", icon: NotebookPenIcon },
+  { href: "/files", label: "文件预览", icon: FolderTreeIcon },
   { href: "/connections", label: "AI 连接", icon: CableIcon },
   { href: "/help", label: "帮助", icon: CircleHelpIcon },
 ] as const;

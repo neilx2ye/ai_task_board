@@ -2,15 +2,18 @@
 
 `ai-task-board-bridge` is the single public npm package for AI Task Board's
 device companions. Its interactive installer asks whether to install Codex
-Bridge, Kimi Bridge, or both. The two runtimes remain separate processes with
-separate Board Connections, tokens, working-directory allowlists, and systemd
-services.
+Bridge, Kimi Bridge, Antigravity Bridge, or a combination. The three runtimes
+remain separate processes with separate Board Connections, tokens,
+working-directory allowlists, and systemd services.
 
 Codex Bridge starts the local `codex app-server` over stdio, discovers
 non-archived top-level Codex threads, maps each thread to a Board Session,
 receives reserved work, and streams supported progress back to the Board. Kimi
 Bridge starts the logged-in Kimi Code ACP server and manages real Kimi Sessions;
-it does not expose Kimi as a fake Codex model.
+it does not expose Kimi as a fake Codex model. Antigravity Bridge drives the
+logged-in Google Antigravity CLI (`agy`) through its official headless
+`stream-json` interface and keeps per-Thread conversation continuity; it never
+reads Google's private conversation databases.
 
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
@@ -24,19 +27,22 @@ selected agent login and workspaces:
 npx --yes ai-task-board-bridge@1.0.1 setup
 ```
 
-The first prompt offers `Codex Bridge`, `Kimi Bridge`, and `both`. Automation or
-repeat installs can bypass that first prompt:
+The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
+`both`, and `all`. Automation or repeat installs can bypass that first prompt:
 
 ```bash
 npx --yes ai-task-board-bridge@1.0.1 setup codex
 npx --yes ai-task-board-bridge@1.0.1 setup kimi
+npx --yes ai-task-board-bridge@1.0.1 setup antigravity
 npx --yes ai-task-board-bridge@1.0.1 setup both
+npx --yes ai-task-board-bridge@1.0.1 setup all
 ```
 
-Installing both runs the two setup flows in sequence. Create a separate Board
-Connection with the matching platform for each runtime; a Codex token must not
-be reused for Kimi or vice versa. The public tarball embeds the private Kimi ACP
-runtime, so no second npm package needs to be published or installed.
+Installing a combination runs the selected setup flows in sequence. Create a
+separate Board Connection with the matching platform for each runtime; a token
+for one runtime must not be reused for another. The public tarball embeds the
+private Kimi and Antigravity runtimes, so no second npm package needs to be
+published or installed.
 
 ### Codex setup
 
@@ -302,3 +308,36 @@ environment, and only final replies plus bounded completion metadata are
 uploaded. Interactive setup defaults to declining extra ACP permissions;
 `KIMI_BRIDGE_MODE=yolo` and `KIMI_BRIDGE_APPROVAL_MODE=accept` are explicit
 high-risk opt-ins.
+
+## Antigravity Bridge
+
+Antigravity Bridge requires Google Antigravity CLI 1.1.8 or newer with an active
+login (`agy update` upgrades; the interactive installer verifies the version) and
+a dedicated Board Connection whose platform is `Antigravity`. Interactive setup
+installs the separate `ai-task-board-antigravity-bridge.service`, stores its
+token in a `0600` environment file, and stages the embedded Antigravity runtime
+under the current user's XDG data directory.
+
+Foreground or non-systemd operation uses the same public npm package:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
+ANTIGRAVITY_BRIDGE_MODE='auto' \
+ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.0.1 run antigravity
+```
+
+`ANTIGRAVITY_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
+`{key,name?,path}` entries. The Bridge dynamically reports the `agy models`
+catalog with `low`/`medium`/`high` reasoning efforts. Each Web Thread is a
+stable local binding; the first claimed task creates the real agy conversation
+and later turns resume it with `--conversation`. Web creation and deletion are
+supported, rename stays hidden (no public headless rename API), and deleting a
+Thread removes only the Bridge binding so local history is preserved. The Board
+token is removed from the `agy` child environment, and only final replies plus
+bounded completion metadata are uploaded.
+`ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept` adds
+`--dangerously-skip-permissions` and is a high-risk opt-in;
+`ANTIGRAVITY_BRIDGE_SANDBOX=true` enables agy's terminal sandbox.

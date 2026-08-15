@@ -1361,33 +1361,35 @@ function SessionConversationContent({
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select
-                    value={goalMode}
-                    onValueChange={(value) =>
-                      setGoalMode(value as "inherit" | "on" | "off")
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label="下一 Turn 的 Goal 模式"
-                      title="选择是否以 /goal 模式发送下一 Turn"
-                      className={cn(
-                        "h-7 w-auto min-w-0 max-w-32 border-0 px-2 py-1 text-xs shadow-none",
-                        goalMode === "on"
-                          ? "bg-primary/15 text-primary"
-                          : goalMode === "off"
-                            ? "bg-destructive/10 text-destructive"
-                            : "bg-muted/70",
-                      )}
+                  {!isAntigravityPlatform(session?.connection.platform) && (
+                    <Select
+                      value={goalMode}
+                      onValueChange={(value) =>
+                        setGoalMode(value as "inherit" | "on" | "off")
+                      }
                     >
-                      <TargetIcon className="size-3.5 shrink-0" />
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="inherit">Goal 不变</SelectItem>
-                      <SelectItem value="on">开启 Goal</SelectItem>
-                      <SelectItem value="off">关闭 Goal</SelectItem>
-                    </SelectContent>
-                  </Select>
+                      <SelectTrigger
+                        aria-label="下一 Turn 的 Goal 模式"
+                        title="选择是否以 /goal 模式发送下一 Turn"
+                        className={cn(
+                          "h-7 w-auto min-w-0 max-w-32 border-0 px-2 py-1 text-xs shadow-none",
+                          goalMode === "on"
+                            ? "bg-primary/15 text-primary"
+                            : goalMode === "off"
+                              ? "bg-destructive/10 text-destructive"
+                              : "bg-muted/70",
+                        )}
+                      >
+                        <TargetIcon className="size-3.5 shrink-0" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="inherit">Goal 不变</SelectItem>
+                        <SelectItem value="on">开启 Goal</SelectItem>
+                        <SelectItem value="off">关闭 Goal</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               </div>
               <Button

@@ -147,3 +147,62 @@ export type SessionConversation = {
 export type TurnPlanStep = SessionTurnPlanRow & {
   dispatched_task_status: TaskStatus | null;
 };
+
+/** 文件浏览页：目录列表中的一个条目。 */
+export type FileExplorerEntry = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size: number | null;
+  modifiedAt: string | null;
+};
+
+/** 文件浏览页：目录列表响应。 */
+export type FileExplorerDirectory = {
+  path: string;
+  name: string;
+  entries: FileExplorerEntry[];
+  truncated: boolean;
+};
+
+/** 文件浏览页：候选项目路径。 */
+export type FileExplorerProject = {
+  name: string;
+  path: string;
+};
+
+/** 文件浏览页：可浏览根目录与候选项目列表。 */
+export type FileExplorerProjects = {
+  roots: string[];
+  projects: FileExplorerProject[];
+};
+
+/** 文件浏览页：单文件预览结果。 */
+export type FilePreview =
+  | {
+      kind: "text";
+      name: string;
+      path: string;
+      size: number;
+      modifiedAt: string | null;
+      content: string;
+      truncated: boolean;
+    }
+  | {
+      kind: "image";
+      name: string;
+      path: string;
+      size: number;
+      modifiedAt: string | null;
+      mime: string;
+      dataUrl: string;
+    }
+  | {
+      kind: "binary";
+      name: string;
+      path: string;
+      size: number | null;
+      modifiedAt: string | null;
+      mime: string | null;
+      reason: string;
+    };

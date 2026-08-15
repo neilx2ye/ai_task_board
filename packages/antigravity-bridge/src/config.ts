@@ -1,0 +1,288 @@
+import path from "node:path";
+
+import {
+  exactPath,
+  isRecord,
+  parseBoolean,
+  parseInteger,
+  stringValue,
+} from "./utils.js";
+
+const DIRECTORY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const DURATION_PATTERN = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/;
+
+export type ManagedWorkingDirectory = {
+  key: string;
+  name: string;
+  workingDirectory: string;
+};
+
+export type AntigravityApprovalMode = "accept" | "decline";
+export type AntigravityAgentMode = "default" | "accept-edits" | "plan" | "auto";
+
+export type AntigravityBridgeConfiguration = {
+  boardUrl: string;
+  connectionToken: string;
+  workingDirectories: ManagedWorkingDirectory[];
+  sessionNamePrefix: string | null;
+  capabilities: string[];
+  pollIntervalMs: number;
+  leaseSeconds: number;
+  maxThreads: number;
+  maxConcurrentTurns: number;
+  syncIntervalMs: number;
+  commandPollIntervalMs: number;
+  runtimeLeaseSeconds: number;
+  approvalMode: AntigravityApprovalMode;
+  agentMode: AntigravityAgentMode;
+  sandbox: boolean;
+  agyBinary: string;
+  registryFile: string;
+  printTimeoutMs: number;
+};
+
+function parseList(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[,，\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export function parseWorkingDirectories(
+  value: string | undefined,
+  fallbackWorkingDirectory: string,
+): ManagedWorkingDirectory[] {
+  if (!value?.trim()) {
+    const workingDirectory = path.resolve(fallbackWorkingDirectory);
+    return [
+      {
+        key: "default",
+        name: path.basename(workingDirectory) || workingDirectory,
+        workingDirectory,
+      },
+    ];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("ANTIGRAVITY_WORKING_DIRECTORIES 必须是合法 JSON 数组");
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 100) {
+    throw new Error("ANTIGRAVITY_WORKING_DIRECTORIES 必须包含 1 到 100 个目录");
+  }
+
+  const keys = new Set<string>();
+  const paths = new Set<string>();
+  return parsed.map((candidate, index) => {
+    if (!isRecord(candidate)) {
+      throw new Error(`ANTIGRAVITY_WORKING_DIRECTORIES[${index}] 必须是对象`);
+    }
+    const unknown = Object.keys(candidate).find(
+      (key) => !["key", "name", "path"].includes(key),
+    );
+    const key = stringValue(candidate.key);
+    const configuredPath = stringValue(candidate.path);
+    if (unknown || !key || !DIRECTORY_KEY_PATTERN.test(key)) {
+      throw new Error(`ANTIGRAVITY_WORKING_DIRECTORIES[${index}].key 格式无效`);
+    }
+    if (!configuredPath || configuredPath.length > 4_096) {
+      throw new Error(`ANTIGRAVITY_WORKING_DIRECTORIES[${index}].path 格式无效`);
+    }
+    const workingDirectory = path.resolve(configuredPath);
+    const name =
+      stringValue(candidate.name) ?? path.basename(workingDirectory) ?? key;
+    if (name.length > 200) {
+      throw new Error(
+        `ANTIGRAVITY_WORKING_DIRECTORIES[${index}].name 不能超过 200 个字符`,
+      );
+    }
+    if (keys.has(key)) throw new Error(`工作目录 key 重复：${key}`);
+    if (paths.has(workingDirectory)) {
+      throw new Error(`工作目录路径重复：${workingDirectory}`);
+    }
+    keys.add(key);
+    paths.add(workingDirectory);
+    return { key, name, workingDirectory };
+  });
+}
+
+function parseApprovalMode(
+  value: string | undefined,
+): AntigravityApprovalMode {
+  const mode = value?.trim() || "accept";
+  if (mode === "accept" || mode === "decline") return mode;
+  throw new Error("ANTIGRAVITY_BRIDGE_APPROVAL_MODE 必须是 accept 或 decline");
+}
+
+function parseAgentMode(value: string | undefined): AntigravityAgentMode {
+  const mode = value?.trim() || "auto";
+  if (["default", "accept-edits", "plan", "auto"].includes(mode)) {
+    return mode as AntigravityAgentMode;
+  }
+  throw new Error(
+    "ANTIGRAVITY_BRIDGE_MODE 必须是 default、accept-edits、plan 或 auto",
+  );
+}
+
+function parseDurationMs(value: string | undefined): number | null {
+  if (!value?.trim()) return null;
+  const match = DURATION_PATTERN.exec(value.trim());
+  if (!match) {
+    throw new Error(
+      "ANTIGRAVITY_PRINT_TIMEOUT 必须是 Go 时长格式，例如 5m、90s 或 1h",
+    );
+  }
+  const amount = Number(match[1]);
+  const unit = match[2] as "ms" | "s" | "m" | "h";
+  const multiplier = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[unit];
+  const milliseconds = Math.round(amount * multiplier);
+  if (milliseconds < 30_000 || milliseconds > 3_600_000) {
+    throw new Error("ANTIGRAVITY_PRINT_TIMEOUT 必须在 30 秒到 1 小时之间");
+  }
+  return milliseconds;
+}
+
+function xdgDirectory(
+  value: string | undefined,
+  fallback: string,
+): string {
+  return value && path.isAbsolute(value) ? path.normalize(value) : fallback;
+}
+
+export function defaultRegistryFile(
+  homeDirectory: string,
+  environment: Record<string, string | undefined> = process.env,
+): string {
+  const dataHome = xdgDirectory(
+    environment.XDG_DATA_HOME,
+    path.join(homeDirectory, ".local", "share"),
+  );
+  return path.join(
+    dataHome,
+    "ai-task-board",
+    "antigravity-bridge",
+    "registry.json",
+  );
+}
+
+export function loadConfiguration(
+  environment: Record<string, string | undefined> = process.env,
+): AntigravityBridgeConfiguration {
+  const boardUrl = (
+    environment.AI_TASK_BOARD_URL?.trim() ?? ""
+  ).replace(/\/+$/, "");
+  const connectionToken =
+    environment.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ?? "";
+  if (!boardUrl) throw new Error("AI_TASK_BOARD_URL is required");
+  if (!connectionToken) {
+    throw new Error("AI_TASK_BOARD_CONNECTION_TOKEN is required");
+  }
+  const url = new URL(boardUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("AI_TASK_BOARD_URL 必须使用 http 或 https");
+  }
+
+  const fallbackWorkingDirectory = path.resolve(
+    environment.ANTIGRAVITY_WORKING_DIRECTORY?.trim() || process.cwd(),
+  );
+  const leaseSeconds = parseInteger(
+    environment.AI_TASK_BOARD_LEASE_SECONDS,
+    900,
+    60,
+    3_600,
+  );
+  const configuredTimeout = parseDurationMs(
+    environment.ANTIGRAVITY_PRINT_TIMEOUT,
+  );
+  // agy headless exits on its own timeout, so keep that ceiling comfortably
+  // below the Board lease when the user did not pick an explicit value.
+  const printTimeoutMs =
+    configuredTimeout ?? Math.max(60_000, leaseSeconds * 1_000 - 30_000);
+
+  return {
+    boardUrl,
+    connectionToken,
+    workingDirectories: parseWorkingDirectories(
+      environment.ANTIGRAVITY_WORKING_DIRECTORIES,
+      fallbackWorkingDirectory,
+    ),
+    sessionNamePrefix: environment.ANTIGRAVITY_SESSION_NAME?.trim() || null,
+    capabilities: parseList(
+      environment.ANTIGRAVITY_CAPABILITIES ||
+        "coding,shell,file-edit,multi-thread,antigravity-cli",
+    ),
+    pollIntervalMs: parseInteger(
+      environment.AI_TASK_BOARD_POLL_INTERVAL_MS,
+      5_000,
+      500,
+      60_000,
+    ),
+    leaseSeconds,
+    maxThreads: parseInteger(
+      environment.ANTIGRAVITY_MAX_THREADS,
+      50,
+      1,
+      500,
+    ),
+    maxConcurrentTurns: parseInteger(
+      environment.ANTIGRAVITY_MAX_CONCURRENT_TURNS,
+      2,
+      1,
+      32,
+    ),
+    syncIntervalMs: parseInteger(
+      environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
+      60_000,
+      10_000,
+      600_000,
+    ),
+    commandPollIntervalMs: parseInteger(
+      environment.AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS,
+      5_000,
+      1_000,
+      600_000,
+    ),
+    runtimeLeaseSeconds: 30,
+    approvalMode: parseApprovalMode(
+      environment.ANTIGRAVITY_BRIDGE_APPROVAL_MODE,
+    ),
+    agentMode: parseAgentMode(environment.ANTIGRAVITY_BRIDGE_MODE),
+    sandbox: parseBoolean(environment.ANTIGRAVITY_BRIDGE_SANDBOX),
+    agyBinary: environment.ANTIGRAVITY_BINARY?.trim() || "agy",
+    registryFile: environment.ANTIGRAVITY_REGISTRY_FILE?.trim()
+      ? path.resolve(environment.ANTIGRAVITY_REGISTRY_FILE.trim())
+      : defaultRegistryFile(
+          environment.HOME || process.env.HOME || process.cwd(),
+          environment,
+        ),
+    printTimeoutMs,
+  };
+}
+
+export function directoryForWorkingDirectory(
+  cwd: string,
+  directories: readonly ManagedWorkingDirectory[],
+): ManagedWorkingDirectory | null {
+  return (
+    directories.find((directory) => exactPath(cwd, directory.workingDirectory)) ??
+    null
+  );
+}
+
+export function workingDirectoryForKey(
+  key: string | null,
+  directories: readonly ManagedWorkingDirectory[],
+): string {
+  if (!key) return directories[0]?.workingDirectory ?? process.cwd();
+  const directory = directories.find((candidate) => candidate.key === key);
+  if (!directory) {
+    throw new Error("目标工作目录不在 Antigravity Bridge 的本机白名单中");
+  }
+  return directory.workingDirectory;
+}

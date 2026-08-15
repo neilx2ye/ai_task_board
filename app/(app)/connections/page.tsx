@@ -47,7 +47,7 @@ import {
 import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 
-const SUPPORTED_CONNECTION_PLATFORMS = ["Codex", "Kimi Code"];
+const SUPPORTED_CONNECTION_PLATFORMS = ["Codex", "Kimi Code", "Antigravity"];
 
 function RenameConnectionDialog({
   connection,
@@ -414,7 +414,7 @@ export default function ConnectionsPage() {
         <EmptyState
           icon={<CableIcon className="size-6" />}
           title="还没有 AI 连接"
-          description="创建 Codex 或 Kimi Code 连接，再把令牌配置到对应 Bridge 中即可接入看板。"
+          description="创建 Codex、Kimi Code 或 Antigravity 连接，再把令牌配置到对应 Bridge 中即可接入看板。"
           action={
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />

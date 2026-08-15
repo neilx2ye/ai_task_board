@@ -1,0 +1,298 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  ANTIGRAVITY_FALLBACK_MODEL_CATALOG,
+  initialAgyStreamState,
+  inventoryModelFromListItem,
+  parseModelListText,
+  reduceAgyStreamEvent,
+} from "@/packages/antigravity-bridge/src/agy-client";
+import {
+  directoryForWorkingDirectory,
+  loadConfiguration,
+  parseWorkingDirectories,
+  workingDirectoryForKey,
+} from "@/packages/antigravity-bridge/src/config";
+import { BridgeRegistry } from "@/packages/antigravity-bridge/src/registry";
+import { TurnLimiter } from "@/packages/antigravity-bridge/src/bridge";
+import { compareSemver } from "@/packages/antigravity-bridge/src/utils";
+import {
+  agentDisplayName,
+  isAntigravityPlatform,
+} from "@/lib/agent-platforms";
+import { supportsWebThreadRename } from "@/hooks/use-connections";
+
+describe("Antigravity CLI version gate", () => {
+  it("accepts 1.1.8+ and rejects older CLI versions", () => {
+    expect(compareSemver("1.1.8", 1, 1, 8)).toBe(true);
+    expect(compareSemver("v1.1.13", 1, 1, 8)).toBe(true);
+    expect(compareSemver("1.2.0", 1, 1, 8)).toBe(true);
+    expect(compareSemver("1.1.7", 1, 1, 8)).toBe(false);
+    expect(compareSemver("1.0.10", 1, 1, 8)).toBe(false);
+    expect(compareSemver("dev", 1, 1, 8)).toBe(false);
+  });
+});
+
+describe("Antigravity stream-json parsing", () => {
+  it("reduces documented init, step_update, and result events", () => {
+    const state = initialAgyStreamState(null);
+    const deltas: string[] = [];
+    const events = [
+      {
+        event: "init",
+        init: {
+          conversation_id: "c3b66b04",
+          cwd: "/home/user/project",
+          permission_mode: "request-review",
+          model: "gemini-3.5-flash-medium",
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          conversation_id: "c3b66b04",
+          step_index: 4,
+          state: "DONE",
+          step_type: "tool",
+          tool_name: "run_command",
+          tool_info: {
+            name: "run_command",
+            parameters: { CommandLine: "echo hello" },
+            output: "hello\r\n",
+          },
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 5,
+          state: "DONE",
+          step_type: "agent_response",
+          text_delta: "Git rebase ",
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 5,
+          state: "DONE",
+          step_type: "agent_response",
+          text_delta: "rewrites history.",
+        },
+      },
+      {
+        event: "result",
+        result: {
+          conversation_id: "c3b66b04",
+          status: "SUCCESS",
+          response: "Git rebase rewrites history.\n",
+          usage: { total_tokens: 100 },
+        },
+      },
+    ];
+    for (const event of events) {
+      reduceAgyStreamEvent(state, event, {
+        onTextDelta: (delta) => deltas.push(delta),
+      });
+    }
+    expect(state).toMatchObject({
+      conversationId: "c3b66b04",
+      initModel: "gemini-3.5-flash-medium",
+      response: "Git rebase rewrites history.\n",
+      status: "SUCCESS",
+      toolCallCount: 1,
+      failedToolCallCount: 0,
+      sawResult: true,
+    });
+    expect(deltas).toEqual(["Git rebase ", "rewrites history."]);
+    expect(state.usage).toEqual({ total_tokens: 100 });
+  });
+
+  it("counts failed tool steps from tool_info errors", () => {
+    const state = initialAgyStreamState("conv-1");
+    reduceAgyStreamEvent(state, {
+      event: "step_update",
+      step_update: {
+        step_type: "tool",
+        tool_info: { name: "write_to_file", error: { type: "denied" } },
+      },
+    });
+    expect(state).toMatchObject({
+      toolCallCount: 1,
+      failedToolCallCount: 1,
+    });
+  });
+});
+
+describe("Antigravity model catalog parsing", () => {
+  it("parses slug + display-name rows and skips display-name-only rows", () => {
+    const items = parseModelListText(
+      [
+        "gemini-3.7-flash-high Gemini 3.7 Flash (High)",
+        "Gemini 3.6 Flash (High)",
+        "claude-sonnet-4-6 Claude Sonnet 4.6 (Thinking)",
+      ].join("\n"),
+    );
+    expect(items.map((item) => item.id)).toEqual([
+      "gemini-3.7-flash-high",
+      "claude-sonnet-4-6",
+    ]);
+    expect(inventoryModelFromListItem(items[0], 0)).toMatchObject({
+      id: "gemini-3.7-flash-high",
+      display_name: "Gemini 3.7 Flash (High)",
+      is_default: true,
+      input_modalities: ["text"],
+    });
+  });
+
+  it("keeps the fallback catalog self-contained", () => {
+    expect(ANTIGRAVITY_FALLBACK_MODEL_CATALOG.length).toBeGreaterThanOrEqual(3);
+    expect(ANTIGRAVITY_FALLBACK_MODEL_CATALOG[0].is_default).toBe(true);
+    for (const model of ANTIGRAVITY_FALLBACK_MODEL_CATALOG) {
+      expect(model.supported_reasoning_efforts.map((entry) => entry.reasoning_effort)).toEqual([
+        "low",
+        "medium",
+        "high",
+      ]);
+    }
+  });
+});
+
+describe("Antigravity Bridge configuration", () => {
+  it("parses an exact multi-directory allowlist", () => {
+    const directories = parseWorkingDirectories(
+      JSON.stringify([
+        { key: "app", name: "Main App", path: "/srv/app" },
+        { key: "docs", path: "/srv/docs" },
+      ]),
+      "/ignored",
+    );
+    expect(directories).toEqual([
+      { key: "app", name: "Main App", workingDirectory: "/srv/app" },
+      { key: "docs", name: "docs", workingDirectory: "/srv/docs" },
+    ]);
+    expect(directoryForWorkingDirectory("/srv/app", directories)?.key).toBe("app");
+    expect(directoryForWorkingDirectory("/srv/app/subdir", directories)).toBeNull();
+    expect(workingDirectoryForKey("docs", directories)).toBe("/srv/docs");
+    expect(() => workingDirectoryForKey("unknown", directories)).toThrow(
+      "本机白名单",
+    );
+  });
+
+  it("loads execution and approval policy without accepting invalid values", () => {
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com/",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+      ANTIGRAVITY_WORKING_DIRECTORY: "/srv/app",
+      ANTIGRAVITY_BRIDGE_MODE: "plan",
+      ANTIGRAVITY_BRIDGE_APPROVAL_MODE: "decline",
+      ANTIGRAVITY_BRIDGE_SANDBOX: "true",
+      ANTIGRAVITY_PRINT_TIMEOUT: "10m",
+      ANTIGRAVITY_MAX_THREADS: "12",
+      ANTIGRAVITY_MAX_CONCURRENT_TURNS: "3",
+    });
+    expect(configuration).toMatchObject({
+      boardUrl: "https://board.example.com",
+      agentMode: "plan",
+      approvalMode: "decline",
+      sandbox: true,
+      printTimeoutMs: 600_000,
+      maxThreads: 12,
+      maxConcurrentTurns: 3,
+      agyBinary: "agy",
+    });
+    expect(() =>
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "token",
+        ANTIGRAVITY_BRIDGE_MODE: "yolo",
+      }),
+    ).toThrow("ANTIGRAVITY_BRIDGE_MODE");
+    expect(() =>
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "token",
+        ANTIGRAVITY_PRINT_TIMEOUT: "5 hours",
+      }),
+    ).toThrow("ANTIGRAVITY_PRINT_TIMEOUT");
+  });
+});
+
+describe("Antigravity Bridge registry", () => {
+  it("persists, normalizes, and deletes thread bindings atomically", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "antigravity-registry-"));
+    const file = path.join(directory, "registry.json");
+    const registry = new BridgeRegistry(file);
+    const now = new Date().toISOString();
+    await registry.upsert("binding-1", {
+      conversationId: null,
+      directoryKey: "app",
+      workingDirectory: "/srv/app",
+      name: "修复登录",
+      model: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await registry.upsert("binding-1", {
+      conversationId: "conv-123",
+      directoryKey: "app",
+      workingDirectory: "/srv/app",
+      name: "修复登录",
+      model: "gemini-3.5-flash-medium",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const listed = await registry.list();
+    expect(listed.get("binding-1")).toMatchObject({
+      conversationId: "conv-123",
+      directoryKey: "app",
+      model: "gemini-3.5-flash-medium",
+    });
+    const onDisk = JSON.parse(await readFile(file, "utf8")) as {
+      bindings: Record<string, unknown>;
+    };
+    expect(Object.keys(onDisk.bindings)).toEqual(["binding-1"]);
+
+    expect(await registry.delete("binding-1")).toBe(true);
+    expect((await registry.list()).size).toBe(0);
+    await rm(directory, { recursive: true, force: true });
+  });
+});
+
+describe("Antigravity Bridge turn limiter", () => {
+  it("queues a second turn until the first permit is released", async () => {
+    const limiter = new TurnLimiter(1);
+    const first = await limiter.acquire(new AbortController().signal);
+    let acquired = false;
+    const secondPromise = limiter
+      .acquire(new AbortController().signal)
+      .then((release) => {
+        acquired = true;
+        return release;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(acquired).toBe(false);
+    first();
+    await secondPromise;
+    expect(acquired).toBe(true);
+  });
+});
+
+describe("Antigravity platform helpers", () => {
+  it("recognizes the platform and hides unsupported Web rename", () => {
+    expect(isAntigravityPlatform("Antigravity")).toBe(true);
+    expect(isAntigravityPlatform("antigravity-cli")).toBe(true);
+    expect(isAntigravityPlatform("Kimi Code")).toBe(false);
+    expect(agentDisplayName("Antigravity")).toBe("Antigravity");
+    expect(
+      supportsWebThreadRename({
+        platform: "Antigravity",
+        bridge_version: "1.0.0-antigravity.1",
+      }),
+    ).toBe(false);
+  });
+});

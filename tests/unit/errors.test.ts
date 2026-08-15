@@ -51,6 +51,7 @@ describe("stable API error mapping", () => {
       "HISTORY_SYNC_NOT_ALLOWED",
       "THREAD_MANAGEMENT_NOT_SUPPORTED",
       "THREAD_NOT_IDLE",
+      "PATH_NOT_FOUND",
     ]);
   });
 

@@ -26,7 +26,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && node scripts/embed-kimi-runtime.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && npm run build --workspace @ai-task-board/antigravity-bridge-runtime && node scripts/embed-runtimes.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsx src/cli.ts",
     "prepack": "npm run build"
   },

@@ -17,6 +17,7 @@
     "demo": "tsx scripts/demo.ts",
     "bridge:codex": "tsx scripts/codex-bridge.ts",
     "bridge:kimi": "npm run dev --workspace @ai-task-board/kimi-bridge-runtime",
+    "bridge:antigravity": "npm run dev --workspace @ai-task-board/antigravity-bridge-runtime",
     "bridge:build": "npm run build --workspace ai-task-board-bridge",
     "bridge:pack": "npm pack --workspace ai-task-board-bridge",
     "bridge:kimi:build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime"

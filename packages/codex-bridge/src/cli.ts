@@ -5,12 +5,12 @@ import { readFile } from "node:fs/promises";
 const HELP = `AI Task Board Bridge
 
 Usage:
-  ai-task-board-bridge setup [codex|kimi|both]
-  ai-task-board-bridge run [codex|kimi]
+  ai-task-board-bridge setup [codex|kimi|antigravity|both|all]
+  ai-task-board-bridge run [codex|kimi|antigravity]
   ai-task-board-bridge
 
 Commands:
-  setup  Interactively choose and install Codex Bridge, Kimi Bridge, or both
+  setup  Interactively choose and install Codex, Kimi, Antigravity, or several
   run    Run one Bridge using environment variables (default: codex)
 
 With no command, an interactive terminal opens the unified installer when required
@@ -20,8 +20,11 @@ On Linux, setup installs the current user's systemd service or services.
 Examples:
   ai-task-board-bridge setup
   ai-task-board-bridge setup kimi
+  ai-task-board-bridge setup antigravity
   ai-task-board-bridge setup both
+  ai-task-board-bridge setup all
   ai-task-board-bridge run kimi
+  ai-task-board-bridge run antigravity
 
 Required environment variables:
   AI_TASK_BOARD_URL               Board HTTPS base URL
@@ -60,6 +63,17 @@ Kimi variables:
   KIMI_BRIDGE_APPROVAL_MODE       accept or decline
   KIMI_BRIDGE_MODE                auto, default, plan, or yolo
   KIMI_BINARY                     Kimi Code executable (default: kimi)
+
+Antigravity variables:
+  ANTIGRAVITY_WORKING_DIRECTORY   Working directory (default: cwd)
+  ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
+  ANTIGRAVITY_MAX_THREADS         Maximum Threads to manage (1..500)
+  ANTIGRAVITY_MAX_CONCURRENT_TURNS Device-wide concurrent turns (1..32)
+  ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept or decline
+  ANTIGRAVITY_BRIDGE_MODE         auto, default, accept-edits, or plan
+  ANTIGRAVITY_BRIDGE_SANDBOX      true enables agy terminal sandbox
+  ANTIGRAVITY_PRINT_TIMEOUT       Go duration, e.g. 5m, 90s, or 1h
+  ANTIGRAVITY_BINARY              Antigravity CLI executable (default: agy)
 
 Options:
   -h, --help     Show this help

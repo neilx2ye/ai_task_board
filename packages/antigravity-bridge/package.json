@@ -1,0 +1,46 @@
+{
+  "name": "@ai-task-board/antigravity-bridge-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal Google Antigravity CLI runtime bundled with ai-task-board-bridge",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "keywords": [
+    "ai-task-board",
+    "antigravity",
+    "google",
+    "bridge",
+    "cli"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "dev": "tsx src/cli.ts",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neilx2ye/ai_task_board.git",
+    "directory": "packages/antigravity-bridge"
+  },
+  "homepage": "https://github.com/neilx2ye/ai_task_board#readme",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  }
+}

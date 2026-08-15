@@ -14,14 +14,16 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 - AI Connection 令牌和领取令牌只保存带 Pepper 的哈希；原始值只在创建/领取时返回。
 - REST 和 MCP 共用领域服务、Zod 输入校验与稳定业务错误码。
 - Supabase Auth/RLS 隔离 Workspace，Realtime 驱动页面刷新；网页附件以 multipart 上传到私有 Bucket，并通过 60 秒签名 URL 下载。
+- 文件预览工作台按「项目路径 → 文件树 → 预览面板」浏览服务端可访问的本地目录，惰性加载目录树并预览 Markdown、图片与文本；仅 Workspace Owner 可访问，路径限制在 `FILE_EXPLORER_ROOTS` 配置的根目录内，并自动跳过隐藏文件、敏感密钥与 `node_modules` 等目录。
 - 可选的设备级 Codex Bridge 通过 stdio App Server 自动发现多个顶层 thread，通过认证 SSE 接收任务唤醒，并只把 AI 回复增量同步到各自的会话对话框；Workspace Owner 还可从网页新建、重命名和删除受管 Thread。
 - 独立的 Kimi Bridge 通过 Kimi ACP 发现真实 Kimi Sessions，上报 Kimi 模型与思考强度，并支持网页新建、执行和删除；ACP 不支持可靠改名，因此 Kimi 连接不会展示改名入口。
+- 独立的 Antigravity Bridge 通过 Antigravity CLI 官方 headless `stream-json` 接口驱动本机 `agy`，按 Thread 保持真实 conversation 上下文并回传最终回复；不读取 Google 未公开的会话数据库。
 
 ## 技术组成
 
 - Next.js App Router、React、TypeScript、Tailwind CSS
 - `@supabase/supabase-js` 与 `@supabase/ssr`
-- `ai-task-board-bridge` 统一 npm CLI，内含 Codex App Server 与 Kimi ACP 两套独立运行时
+- `ai-task-board-bridge` 统一 npm CLI，内含 Codex App Server、Kimi ACP 与 Antigravity CLI 三套独立运行时
 - Supabase Hosted PostgreSQL、Auth、Realtime、Storage、RLS
 - Zod、TanStack Query
 - Vitest、Playwright
@@ -107,10 +109,10 @@ Content-Type: application/json
 npx --yes ai-task-board-bridge@1.0.1 setup
 ```
 
-安装器会先询问安装 Codex Bridge、Kimi Bridge，还是两者；也可用 `setup codex`、
-`setup kimi` 或 `setup both` 直接选择。两套运行时仍使用独立的 Board Connection、
-令牌、目录白名单和 systemd 服务。Kimi ACP 运行时已嵌入这个公开包，不需要再发布或
-安装第二个 npm 包。
+安装器会先询问安装 Codex、Kimi、Antigravity，还是组合；也可用 `setup codex`、
+`setup kimi`、`setup antigravity`、`setup both` 或 `setup all` 直接选择。三套运行时
+仍使用独立的 Board Connection、令牌、目录白名单和 systemd 服务。Kimi 与 Antigravity
+运行时已嵌入这个公开包，不需要再发布或安装第二个 npm 包。
 
 Codex 的 Linux 交互流程会询问 Board、Connection Token、工作目录、Codex 配置目录、
 provider 凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**
@@ -154,6 +156,37 @@ npx --yes ai-task-board-bridge@1.0.1 run kimi
 ```
 
 Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
+
+### Antigravity Bridge
+
+先在「AI 连接」中新建平台为 **Antigravity** 的独立连接，再在已登录 Antigravity CLI
+的设备上运行（需要 `agy` 1.1.8+，可执行 `agy update` 升级）：
+
+```bash
+npx --yes ai-task-board-bridge@1.0.1 setup antigravity
+```
+
+前台或自动化部署可使用环境变量：
+
+```bash
+AI_TASK_BOARD_URL='https://task.neilx.online' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
+ANTIGRAVITY_BRIDGE_MODE='auto' \
+ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.0.1 run antigravity
+```
+
+Antigravity Bridge 只使用 Google 官方文档化的 `agy -p --output-format stream-json`
+接口：它按精确 cwd 白名单管理本地 Thread 绑定，首个任务创建真实 conversation，后续
+Turn 通过 `--conversation` 续接同一上下文，并从 `agy models` 动态上报模型与
+low/medium/high 思考强度；Board 令牌不会传入 `agy` 子进程。Web 可新建和删除
+Thread。agy headless 没有公开的改名与历史读取接口，因此网页会隐藏 Antigravity Thread
+改名入口、删除只移除 Bridge 绑定（保留本机会话文件），也不会导入 TUI 中既有会话。
+`ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept` 会传入
+`--dangerously-skip-permissions`，自动批准全部工具调用，属于高风险配置；可用
+`ANTIGRAVITY_BRIDGE_SANDBOX=true` 额外启用 agy 终端沙箱。完整变量、安全策略和
+systemd 说明见 [Antigravity Bridge 包文档](packages/antigravity-bridge/README.md)。
 
 ## 单会话上下文演示
 
@@ -229,7 +262,7 @@ PLAYWRIGHT_BASE_URL=https://preview.example.com npm run test:e2e
 ## 当前限制
 
 - MVP 面向个人或小团队，没有组织计费、复杂角色、自定义工作流或 DAG 可视化编辑器。
-- Next.js 控制面不内置模型或通用 Agent 执行环境；Codex Bridge 与 Kimi Bridge 都是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
+- Next.js 控制面不内置模型或通用 Agent 执行环境；Codex、Kimi 与 Antigravity Bridge 都是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
 - 浏览器 Realtime 用于界面失效和重拉；客户端维护最新 `TaskEvent` ID，断线重订阅后按游标补拉遗漏事件并全量重拉，以 30 秒轮询兜底。Bridge 则使用独立的认证 SSE 唤醒端点，SSE 只发送固定空事件，任务内容仍从 REST 领取。
 - Codex Bridge 只会近实时回传 AI 回复，不同步思考、命令、工具或用量；当前没有可靠的运行中 steering、网页审批或远程进程中断，SSE 不可用时会自适应轮询，最长约 60 秒发现新任务。
 - Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。默认 `danger-full-access` + `accept` 会无沙箱执行并自动同意关联当前活跃 turn 的受支持审批，属于高风险配置；需要限制写入和网络时应显式选择 `safe`，而 `inherit` 的实际边界取决于 thread 与本机 Codex 设置。
@@ -254,6 +287,7 @@ docs/                 REST、MCP 与演示说明
 scripts/demo.ts        单会话上下文可执行演示
 packages/codex-bridge/ 可通过 npx 运行的统一 Bridge npm 包与 Codex 运行时
 packages/kimi-bridge/  嵌入统一 npm 包的私有 Kimi ACP 运行时
+packages/antigravity-bridge/ 嵌入统一 npm 包的私有 Antigravity CLI 运行时
 scripts/codex-bridge.ts 仓库开发环境的 Bridge 兼容入口
 tests/                 Vitest 单元/集成测试与 Playwright E2E
 ```

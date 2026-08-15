@@ -4,7 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
 import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
-import { isKimiPlatform } from "@/lib/agent-platforms";
+import {
+  isAntigravityPlatform,
+  isKimiPlatform,
+} from "@/lib/agent-platforms";
 import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 import type { AIConnectionRow } from "@/lib/types/database";
 
@@ -56,7 +59,8 @@ export function supportsWebThreadRename(
 ): boolean {
   return (
     supportsWebThreadManagement(connection) &&
-    !isKimiPlatform(connection.platform)
+    !isKimiPlatform(connection.platform) &&
+    !isAntigravityPlatform(connection.platform)
   );
 }
 

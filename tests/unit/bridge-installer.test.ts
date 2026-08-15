@@ -12,21 +12,26 @@ import {
 } from "@/packages/codex-bridge/src/installer";
 
 describe("unified Bridge installer", () => {
-  it("offers Codex, Kimi, and both from one setup entry", () => {
+  it("offers Codex, Kimi, Antigravity, and combinations from one setup entry", () => {
     expect(BRIDGE_SETUP_CHOICES.map((choice) => choice.value)).toEqual([
       "codex",
       "kimi",
+      "antigravity",
       "both",
+      "all",
     ]);
     expect(parseBridgeSetupTarget("KIMI-CODE")).toBe("kimi");
-    expect(parseBridgeSetupTarget("all")).toBe("both");
+    expect(parseBridgeSetupTarget("AGY")).toBe("antigravity");
+    expect(parseBridgeSetupTarget("all")).toBe("all");
     expect(parseBridgeSetupTarget("unknown")).toBeNull();
   });
 
   it("allows only one runtime for foreground execution", () => {
     expect(parseBridgeRunTarget("codex")).toBe("codex");
     expect(parseBridgeRunTarget("kimi")).toBe("kimi");
+    expect(parseBridgeRunTarget("antigravity")).toBe("antigravity");
     expect(parseBridgeRunTarget("both")).toBeNull();
+    expect(parseBridgeRunTarget("all")).toBeNull();
   });
 
   it("accepts an interactive numeric selection", async () => {
@@ -41,7 +46,7 @@ describe("unified Bridge installer", () => {
     );
   });
 
-  it("publishes one public package and keeps the Kimi source workspace private", async () => {
+  it("publishes one public package and keeps the runtime source workspaces private", async () => {
     const publicManifest = JSON.parse(
       await readFile("packages/codex-bridge/package.json", "utf8"),
     ) as {
@@ -53,15 +58,25 @@ describe("unified Bridge installer", () => {
     const kimiManifest = JSON.parse(
       await readFile("packages/kimi-bridge/package.json", "utf8"),
     ) as { name: string; private?: boolean };
+    const antigravityManifest = JSON.parse(
+      await readFile("packages/antigravity-bridge/package.json", "utf8"),
+    ) as { name: string; private?: boolean };
 
     expect(publicManifest.name).toBe("ai-task-board-bridge");
     expect(publicManifest.version).toBe("1.0.1");
     expect(publicManifest.dependencies).not.toHaveProperty(
       "@ai-task-board/kimi-bridge-runtime",
     );
-    expect(publicManifest.scripts.build).toContain("embed-kimi-runtime.mjs");
+    expect(publicManifest.dependencies).not.toHaveProperty(
+      "@ai-task-board/antigravity-bridge-runtime",
+    );
+    expect(publicManifest.scripts.build).toContain("embed-runtimes.mjs");
     expect(kimiManifest).toMatchObject({
       name: "@ai-task-board/kimi-bridge-runtime",
+      private: true,
+    });
+    expect(antigravityManifest).toMatchObject({
+      name: "@ai-task-board/antigravity-bridge-runtime",
       private: true,
     });
   });

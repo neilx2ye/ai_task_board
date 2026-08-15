@@ -16,6 +16,7 @@ export const BUSINESS_ERROR_CODES = [
   "HISTORY_SYNC_NOT_ALLOWED",
   "THREAD_MANAGEMENT_NOT_SUPPORTED",
   "THREAD_NOT_IDLE",
+  "PATH_NOT_FOUND",
 ] as const;
 
 export type BusinessErrorCode = (typeof BUSINESS_ERROR_CODES)[number];
@@ -34,6 +35,7 @@ const statusByCode: Record<ApiErrorCode, number> = {
   INVALID_REQUEST: 400,
   PAYLOAD_TOO_LARGE: 413,
   METHOD_NOT_ALLOWED: 405,
+  PATH_NOT_FOUND: 404,
   TASK_NOT_FOUND: 404,
   TASK_NOT_READY: 409,
   TASK_ALREADY_CLAIMED: 409,
@@ -127,6 +129,7 @@ function messageForCode(code: BusinessErrorCode): string {
     THREAD_MANAGEMENT_NOT_SUPPORTED:
       "This Bridge version does not support Web Thread management",
     THREAD_NOT_IDLE: "The Thread still has active or queued work",
+    PATH_NOT_FOUND: "The requested path does not exist",
   };
   return messages[code];
 }
