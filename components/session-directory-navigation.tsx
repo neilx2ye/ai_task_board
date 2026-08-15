@@ -33,6 +33,9 @@ type SessionDirectoryNavigationProps = {
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
+  /** 可选：提供后目录行本身变为可选中（规划页的项目级视图）。 */
+  selectedDirectory?: { connectionId: string; directoryId: string } | null;
+  onToggleDirectory?: (connectionId: string, directoryId: string) => void;
 };
 
 function SessionListRow({
@@ -138,6 +141,8 @@ function DirectorySection({
   onReserve,
   onManage,
   onCreate,
+  selectedDirectory,
+  onToggleDirectory,
 }: {
   group: SessionConnectionGroup;
   directory: SessionDirectoryGroup;
@@ -151,6 +156,8 @@ function DirectorySection({
     group: SessionConnectionGroup,
     directory: SessionDirectoryGroup,
   ) => void;
+  selectedDirectory?: { connectionId: string; directoryId: string } | null;
+  onToggleDirectory?: (connectionId: string, directoryId: string) => void;
 }) {
   const visibleSessions = directory.sessions.filter((session) =>
     visibleIds.has(session.id),
@@ -158,21 +165,50 @@ function DirectorySection({
   const headingId = `directory-${group.connection.id}-${
     directory.directoryKey ?? directory.sessions[0]?.id ?? "unassigned"
   }`;
+  const directorySelected =
+    selectedDirectory?.connectionId === group.connection.id &&
+    selectedDirectory.directoryId === directory.id;
+
+  const directoryName = (
+    <>
+      <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <h4
+        id={headingId}
+        className="min-w-0 flex-1 truncate text-left text-xs font-medium"
+      >
+        {directory.name}
+      </h4>
+    </>
+  );
 
   return (
     <section
       aria-labelledby={headingId}
       className="border-b border-border/70 last:border-b-0"
     >
-      <header className="bg-secondary/25 px-3 py-2 pl-4">
+      <header
+        className={cn(
+          "px-3 py-2 pl-4 transition-colors",
+          directorySelected ? "bg-indigo-50/80" : "bg-secondary/25",
+        )}
+      >
         <div className="flex items-center gap-2">
-          <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <h4
-            id={headingId}
-            className="min-w-0 flex-1 truncate text-xs font-medium"
-          >
-            {directory.name}
-          </h4>
+          {onToggleDirectory ? (
+            <button
+              type="button"
+              aria-pressed={directorySelected}
+              aria-label={`${directorySelected ? "取消选中" : "选中"}项目「${directory.name}」`}
+              title={directorySelected ? "取消选中" : "打开项目级规划"}
+              onClick={() =>
+                onToggleDirectory(group.connection.id, directory.id)
+              }
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              {directoryName}
+            </button>
+          ) : (
+            directoryName
+          )}
           <Badge variant="outline" className="tabular-nums">
             {directory.sessions.length}
           </Badge>
@@ -242,6 +278,8 @@ function ConnectionSection({
   onReserve,
   onManage,
   onCreate,
+  selectedDirectory,
+  onToggleDirectory,
 }: Omit<SessionDirectoryNavigationProps, "groups"> & {
   group: SessionConnectionGroup;
 }) {
@@ -325,6 +363,8 @@ function ConnectionSection({
             onReserve={onReserve}
             onManage={onManage}
             onCreate={onCreate}
+            selectedDirectory={selectedDirectory}
+            onToggleDirectory={onToggleDirectory}
           />
         ))}
         {visibleDirectories.length === 0 ? (

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
+import { DirectoryPlanningView } from "@/components/directory-planning-view";
 import { PlanningNotesEditor } from "@/components/planning-notes-editor";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
@@ -64,6 +65,11 @@ export default function PlanningPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
+  // 或者直接选中一个项目目录，查看项目级的思考与规划。
+  const [selectedDirectory, setSelectedDirectory] = useState<{
+    connectionId: string;
+    directoryId: string;
+  } | null>(null);
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
   const [pickerTarget, setPickerTarget] = useState<ThreadPickerTarget | null>(
     null,
@@ -118,6 +124,16 @@ export default function PlanningPage() {
     () => sessions.find((session) => session.id === selectedSessionId) ?? null,
     [selectedSessionId, sessions],
   );
+  const selectedDirectoryContext = useMemo(() => {
+    if (!selectedDirectory) return null;
+    const group = connectionGroups.find(
+      (candidate) => candidate.connection.id === selectedDirectory.connectionId,
+    );
+    const directory = group?.directories.find(
+      (candidate) => candidate.id === selectedDirectory.directoryId,
+    );
+    return group && directory ? { group, directory } : null;
+  }, [connectionGroups, selectedDirectory]);
   const selectedContext = useMemo(() => {
     if (!selectedSession) return null;
     const group = connectionGroups.find(
@@ -151,8 +167,18 @@ export default function PlanningPage() {
   // Thread 被删除或离开清单时，selectedSession 派生为 null 并回到空状态；
   // 这里不手动清理 id，Thread 因清单抖动短暂消失再回来时面板可以原地恢复。
   const toggleSessionSelected = (sessionId: string) => {
+    setSelectedDirectory(null);
     setSelectedSessionId((previous) =>
       previous === sessionId ? null : sessionId,
+    );
+  };
+  const toggleDirectorySelected = (connectionId: string, directoryId: string) => {
+    setSelectedSessionId(null);
+    setSelectedDirectory((previous) =>
+      previous?.connectionId === connectionId &&
+        previous.directoryId === directoryId
+        ? null
+        : { connectionId, directoryId },
     );
   };
 
@@ -210,6 +236,7 @@ export default function PlanningPage() {
 
     const timeout = window.setTimeout(() => {
       setSessionVisible(createdSession.id, true);
+      setSelectedDirectory(null);
       setSelectedSessionId(createdSession.id);
       setPendingThreadCreation(null);
       setNotice(`Thread「${createdSession.name}」已创建并打开。`);
@@ -277,7 +304,7 @@ export default function PlanningPage() {
                 <div>
                   <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
                   <p className="text-xs text-muted-foreground">
-                    选中 Thread 开始规划它的 Turn 链
+                    选中项目看共享规划，选中 Thread 编排 Turn 链
                   </p>
                 </div>
               )}
@@ -326,6 +353,8 @@ export default function PlanningPage() {
                   setPickerTarget({ connectionId, directoryId })
                 }
                 onCreate={openCreateDialog}
+                selectedDirectory={selectedDirectory}
+                onToggleDirectory={toggleDirectorySelected}
               />
             </div>
           </aside>
@@ -362,12 +391,21 @@ export default function PlanningPage() {
 
                 <TurnPlanPanel session={selectedSession} />
               </div>
+            ) : selectedDirectoryContext ? (
+              <DirectoryPlanningView
+                group={selectedDirectoryContext.group}
+                directory={selectedDirectoryContext.directory}
+                onOpenThread={(sessionId) => {
+                  setSelectedDirectory(null);
+                  setSelectedSessionId(sessionId);
+                }}
+              />
             ) : (
               <div className="flex h-full items-center justify-center p-6">
                 <EmptyState
                   icon={<BotIcon className="size-6" />}
-                  title="没有选中的 Thread"
-                  description="在左侧点击一个 Thread，就可以一边记录对这个项目的思考，一边把任务拆成 Turn 链交给它自动依次执行。"
+                  title="没有选中的项目或 Thread"
+                  description="在左侧点击项目目录，可以记录整个项目的思考与规划；点击一个 Thread，则可以把任务拆成 Turn 链交给它自动依次执行。"
                   className="w-full max-w-md"
                 />
               </div>
@@ -434,6 +472,7 @@ export default function PlanningPage() {
           );
         }}
         onOpen={(sessionId) => {
+          setSelectedDirectory(null);
           setSelectedSessionId(sessionId);
           setPickerTarget(null);
         }}
