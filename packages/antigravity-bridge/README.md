@@ -26,7 +26,7 @@ Run setup as the same OS user that owns the Antigravity login and target
 workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup antigravity
+npx --yes ai-task-board-bridge@1.1.0 setup antigravity
 ```
 
 The installer writes a `0600` environment file, stages the runtime under the
@@ -42,7 +42,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run antigravity
+npx --yes ai-task-board-bridge@1.1.0 run antigravity
 ```
 
 For several projects, set a stable exact-directory allowlist:

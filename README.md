@@ -106,7 +106,7 @@ Content-Type: application/json
 需要让网页主动排队下一轮 Agent 工作时，使用统一的 `ai-task-board-bridge` npm 包：
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup
+npx --yes ai-task-board-bridge@1.1.0 setup
 ```
 
 安装器会先询问安装 Codex、Kimi、Antigravity，还是组合；也可用 `setup codex`、
@@ -141,7 +141,7 @@ Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保�
 先在「AI 连接」中新建平台为 **Kimi Code** 的独立连接，再在已经登录 Kimi Code 的设备上运行：
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup kimi
+npx --yes ai-task-board-bridge@1.1.0 setup kimi
 ```
 
 前台或自动化部署可使用环境变量：
@@ -152,7 +152,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run kimi
+npx --yes ai-task-board-bridge@1.1.0 run kimi
 ```
 
 Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
@@ -163,7 +163,7 @@ Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该�
 的设备上运行（需要 `agy` 1.1.8+，可执行 `agy update` 升级）：
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup antigravity
+npx --yes ai-task-board-bridge@1.1.0 setup antigravity
 ```
 
 前台或自动化部署可使用环境变量：
@@ -174,7 +174,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run antigravity
+npx --yes ai-task-board-bridge@1.1.0 run antigravity
 ```
 
 Antigravity Bridge 只使用 Google 官方文档化的 `agy -p --output-format stream-json`

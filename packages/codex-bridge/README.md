@@ -24,18 +24,18 @@ Node.js 18 or newer is required. Run setup as the same OS user that owns the
 selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup
+npx --yes ai-task-board-bridge@1.1.0 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
 `both`, and `all`. Automation or repeat installs can bypass that first prompt:
 
 ```bash
-npx --yes ai-task-board-bridge@1.0.1 setup codex
-npx --yes ai-task-board-bridge@1.0.1 setup kimi
-npx --yes ai-task-board-bridge@1.0.1 setup antigravity
-npx --yes ai-task-board-bridge@1.0.1 setup both
-npx --yes ai-task-board-bridge@1.0.1 setup all
+npx --yes ai-task-board-bridge@1.1.0 setup codex
+npx --yes ai-task-board-bridge@1.1.0 setup kimi
+npx --yes ai-task-board-bridge@1.1.0 setup antigravity
+npx --yes ai-task-board-bridge@1.1.0 setup both
+npx --yes ai-task-board-bridge@1.1.0 setup all
 ```
 
 Installing a combination runs the selected setup flows in sequence. Create a
@@ -81,7 +81,7 @@ install a service:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.0.1 run codex
+npx --yes ai-task-board-bridge@1.1.0 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -99,7 +99,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.0.1
+npx --yes ai-task-board-bridge@1.1.0
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -107,7 +107,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.0.1
+npx --yes ai-task-board-bridge@1.1.0
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -277,7 +277,7 @@ Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@1.0.1 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.1.0 --help` for the complete
 environment-variable list.
 
 ## Kimi Bridge
@@ -296,7 +296,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run kimi
+npx --yes ai-task-board-bridge@1.1.0 run kimi
 ```
 
 `KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -326,7 +326,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run antigravity
+npx --yes ai-task-board-bridge@1.1.0 run antigravity
 ```
 
 `ANTIGRAVITY_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
