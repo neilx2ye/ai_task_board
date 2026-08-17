@@ -161,7 +161,7 @@ describe("Antigravity Bridge session sync device identity", () => {
   });
 
   it("sends flat device_id and device_label fields with the 1.3.0 capability version", async () => {
-    const fetchMock = vi.fn(
+    const fetchMock: ReturnType<typeof vi.fn> = vi.fn(
       async () =>
         new Response(JSON.stringify({ sessions: [] }), {
           status: 200,
@@ -179,7 +179,9 @@ describe("Antigravity Bridge session sync device identity", () => {
       [],
       undefined,
     );
-    const init = fetchMock.mock.calls[0]?.[1];
+    const init = fetchMock.mock.calls[0]?.[1] as
+      | { body?: string }
+      | undefined;
     const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
     expect(body.bridge_version).toBe("1.3.0-antigravity.1");
     expect(ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION).toBe("1.3.0-antigravity.1");
