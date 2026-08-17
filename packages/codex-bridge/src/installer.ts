@@ -8,6 +8,7 @@ export type BridgeSetupTarget =
   | "both"
   | "all";
 export type BridgeRunTarget = Exclude<BridgeSetupTarget, "both" | "all">;
+export type BridgeSetupExecution = "interactive" | "noninteractive";
 
 export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
   value: BridgeSetupTarget;
@@ -50,7 +51,7 @@ export async function promptForBridgeSetupTarget(
 ): Promise<BridgeSetupTarget> {
   if (!input.isTTY || !output.isTTY) {
     throw new Error(
-      "setup 需要交互式终端；自动化请选择 setup codex、setup kimi、setup antigravity 或 setup all",
+      "setup 需要交互式终端；非交互安装请使用 setup codex、setup kimi 或 setup antigravity 并提供环境变量",
     );
   }
 
@@ -79,63 +80,101 @@ export async function promptForBridgeSetupTarget(
   }
 }
 
-async function setupCodex(packageVersion: string): Promise<void> {
-  const { runInteractiveSetup } = await import("./setup.js");
+async function setupCodex(
+  packageVersion: string,
+  execution: BridgeSetupExecution,
+): Promise<void> {
+  const { runInteractiveSetup, runNonInteractiveSetup } = await import(
+    "./setup.js"
+  );
+  if (execution === "noninteractive") {
+    await runNonInteractiveSetup({ packageVersion });
+    return;
+  }
   await runInteractiveSetup({ packageVersion });
 }
 
-async function setupKimi(packageVersion: string): Promise<void> {
+async function setupKimi(
+  packageVersion: string,
+  execution: BridgeSetupExecution,
+): Promise<void> {
   const runtimeModule = "./kimi-runtime/index.js";
-  const { runKimiInteractiveSetup } = (await import(runtimeModule)) as {
-    runKimiInteractiveSetup: (options: {
-      packageVersion: string;
-    }) => Promise<void>;
-  };
+  const { runKimiInteractiveSetup, runKimiNonInteractiveSetup } =
+    (await import(runtimeModule)) as {
+      runKimiInteractiveSetup: (options: {
+        packageVersion: string;
+      }) => Promise<void>;
+      runKimiNonInteractiveSetup: (options: {
+        packageVersion: string;
+      }) => Promise<void>;
+    };
+  if (execution === "noninteractive") {
+    await runKimiNonInteractiveSetup({ packageVersion });
+    return;
+  }
   await runKimiInteractiveSetup({ packageVersion });
 }
 
-async function setupAntigravity(packageVersion: string): Promise<void> {
+async function setupAntigravity(
+  packageVersion: string,
+  execution: BridgeSetupExecution,
+): Promise<void> {
   const runtimeModule = "./antigravity-runtime/index.js";
-  const { runAntigravityInteractiveSetup } = (await import(runtimeModule)) as {
-    runAntigravityInteractiveSetup: (options: {
-      packageVersion: string;
-    }) => Promise<void>;
-  };
+  const { runAntigravityInteractiveSetup, runAntigravityNonInteractiveSetup } =
+    (await import(runtimeModule)) as {
+      runAntigravityInteractiveSetup: (options: {
+        packageVersion: string;
+      }) => Promise<void>;
+      runAntigravityNonInteractiveSetup: (options: {
+        packageVersion: string;
+      }) => Promise<void>;
+    };
+  if (execution === "noninteractive") {
+    await runAntigravityNonInteractiveSetup({ packageVersion });
+    return;
+  }
   await runAntigravityInteractiveSetup({ packageVersion });
 }
 
 export async function runBridgeSetup(
   target: BridgeSetupTarget,
   packageVersion: string,
+  execution: BridgeSetupExecution = "interactive",
 ): Promise<void> {
   if (target === "codex") {
-    await setupCodex(packageVersion);
+    await setupCodex(packageVersion, execution);
     return;
   }
   if (target === "kimi") {
-    await setupKimi(packageVersion);
+    await setupKimi(packageVersion, execution);
     return;
   }
   if (target === "antigravity") {
-    await setupAntigravity(packageVersion);
+    await setupAntigravity(packageVersion, execution);
     return;
+  }
+
+  if (execution === "noninteractive") {
+    throw new Error(
+      "非交互安装 both/all 无法区分各平台的 Connection Token；请分别运行 setup codex、setup kimi 或 setup antigravity",
+    );
   }
 
   if (target === "both") {
     process.stdout.write(
       "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n",
     );
-    await setupCodex(packageVersion);
-    await setupKimi(packageVersion);
+    await setupCodex(packageVersion, execution);
+    await setupKimi(packageVersion, execution);
     return;
   }
 
   process.stdout.write(
     "\n将依次安装三个独立服务。Codex、Kimi 与 Antigravity 需要各自在看板中创建的 Connection Token。\n",
   );
-  await setupCodex(packageVersion);
-  await setupKimi(packageVersion);
-  await setupAntigravity(packageVersion);
+  await setupCodex(packageVersion, execution);
+  await setupKimi(packageVersion, execution);
+  await setupAntigravity(packageVersion, execution);
 }
 
 export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {

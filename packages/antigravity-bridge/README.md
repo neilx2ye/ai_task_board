@@ -26,13 +26,24 @@ Run setup as the same OS user that owns the Antigravity login and target
 workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.2.0 setup antigravity
+npx --yes ai-task-board-bridge@1.3.0 setup antigravity
 ```
 
 The installer writes a `0600` environment file, stages the runtime under the
 user's XDG data directory, and starts
 `ai-task-board-antigravity-bridge.service` in that user's systemd manager. It
 never puts the Board token on the command line.
+
+The same service can be installed from an SSH command or CI script without a
+terminal. `ANTIGRAVITY_WORKING_DIRECTORY` is required because the Board Web
+console does not expose directory management for Antigravity connections yet:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
+npx --yes ai-task-board-bridge@1.3.0 setup antigravity
+```
 
 ## Foreground mode
 
@@ -42,7 +53,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.2.0 run antigravity
+npx --yes ai-task-board-bridge@1.3.0 run antigravity
 ```
 
 For several projects, set a stable exact-directory allowlist:

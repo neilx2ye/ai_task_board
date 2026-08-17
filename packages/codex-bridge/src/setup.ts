@@ -26,6 +26,7 @@ export const LEGACY_BRIDGE_SYSTEMD_SERVICE =
 type ThreadScope = "cwd" | "all";
 type PermissionMode = "safe" | "danger-full-access" | "inherit";
 type ApprovalMode = "decline" | "accept" | "accept-session";
+type WorkingDirectoryManagement = "web" | "local";
 
 export interface SetupPaths {
   configDirectory: string;
@@ -378,7 +379,7 @@ async function atomicWrite(
   }
 }
 
-async function installRuntime(
+export async function installRuntime(
   sourcePackageDirectory: string,
   paths: SetupPaths,
 ): Promise<void> {
@@ -626,6 +627,20 @@ function validChoice<T extends string>(
     : fallback;
 }
 
+function validIntegerInRange(
+  value: string | undefined,
+  fallback: string,
+  minimum: number,
+  maximum: number,
+): string {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`请输入 ${minimum} 到 ${maximum} 的整数`);
+  }
+  return String(parsed);
+}
+
 function firstConfiguredWorkingDirectory(raw: string): string | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -677,6 +692,389 @@ async function ownerUid(candidate: string): Promise<number | null> {
 
 export interface InteractiveSetupOptions {
   packageVersion: string;
+}
+
+interface CodexEnvironmentInput {
+  existing: Record<string, string>;
+  providerEnvironment: Record<string, string>;
+  boardUrl: string;
+  connectionToken: string;
+  directoryManagement: WorkingDirectoryManagement;
+  workingDirectory: string;
+  preserveMultipleDirectories: boolean;
+  rawMultipleDirectories: string | undefined;
+  threadScope: ThreadScope;
+  maxThreads: string;
+  permissionMode: PermissionMode;
+  approvalMode: ApprovalMode;
+  webConfiguration: boolean;
+  allowRemoteWorkingDirectories: boolean;
+  codexBinary: string;
+  codexHome: string;
+  homeDirectory: string;
+  pathValue: string;
+}
+
+export function buildCodexInstallEnvironment(
+  input: CodexEnvironmentInput,
+): Record<string, string | undefined> {
+  const installed: Record<string, string | undefined> = {
+    ...input.existing,
+    ...input.providerEnvironment,
+    AI_TASK_BOARD_URL: input.boardUrl,
+    AI_TASK_BOARD_CONNECTION_TOKEN: input.connectionToken,
+    CODEX_THREAD_SCOPE: input.threadScope,
+    CODEX_MAX_THREADS: input.maxThreads,
+    CODEX_BRIDGE_PERMISSION_MODE: input.permissionMode,
+    CODEX_BRIDGE_APPROVAL_MODE: input.approvalMode,
+    CODEX_BRIDGE_WEB_CONFIG: input.webConfiguration ? "true" : "false",
+    CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES:
+      input.allowRemoteWorkingDirectories ? "true" : "false",
+    CODEX_BINARY: input.codexBinary,
+    CODEX_HOME: input.codexHome,
+    HOME: input.homeDirectory,
+    PATH: input.pathValue,
+  };
+  if (input.directoryManagement === "web") {
+    delete installed.CODEX_WORKING_DIRECTORY;
+    delete installed.CODEX_WORKING_DIRECTORIES;
+  } else {
+    installed.CODEX_WORKING_DIRECTORY = input.workingDirectory;
+    if (input.preserveMultipleDirectories && input.rawMultipleDirectories) {
+      installed.CODEX_WORKING_DIRECTORIES = input.rawMultipleDirectories;
+    } else {
+      delete installed.CODEX_WORKING_DIRECTORIES;
+    }
+  }
+  return installed;
+}
+
+interface CodexInstallArtifacts {
+  paths: SetupPaths;
+  environment: Record<string, string | undefined>;
+  unitOptions: SystemdUnitOptions;
+  identity: { username: string; uid: number };
+}
+
+async function installCodexBridgeService(
+  artifacts: CodexInstallArtifacts,
+  output: (text: string) => void,
+): Promise<void> {
+  const sourcePackageDirectory = fileURLToPath(new URL("../", import.meta.url));
+  await installRuntime(sourcePackageDirectory, artifacts.paths);
+  await mkdir(artifacts.paths.configDirectory, {
+    recursive: true,
+    mode: 0o700,
+  });
+  await chmod(artifacts.paths.configDirectory, 0o700);
+  await atomicWrite(
+    artifacts.paths.environmentFile,
+    serializeEnvironmentFile(artifacts.environment),
+    0o600,
+  );
+  await atomicWrite(
+    artifacts.paths.unitFile,
+    renderSystemdUserUnit(artifacts.unitOptions),
+    0o644,
+  );
+
+  await runCommand("systemctl", ["--user", "daemon-reload"]);
+  await runCommand("systemctl", ["--user", "enable", artifacts.paths.unitFile]);
+
+  const legacyUnitPath = path.join(
+    path.dirname(artifacts.paths.unitFile),
+    LEGACY_BRIDGE_SYSTEMD_SERVICE,
+  );
+  let legacyWasActive = false;
+  let legacyWasEnabled = false;
+  try {
+    await access(legacyUnitPath, fsConstants.F_OK);
+    legacyWasActive =
+      (await captureCommand("systemctl", [
+        "--user",
+        "is-active",
+        LEGACY_BRIDGE_SYSTEMD_SERVICE,
+      ])) === "active";
+    legacyWasEnabled =
+      (await captureCommand("systemctl", [
+        "--user",
+        "is-enabled",
+        LEGACY_BRIDGE_SYSTEMD_SERVICE,
+      ])) === "enabled";
+    output(
+      `检测到旧服务 ${LEGACY_BRIDGE_SYSTEMD_SERVICE}，正在停用以避免重复运行。\n`,
+    );
+    await runCommand("systemctl", [
+      "--user",
+      "disable",
+      "--now",
+      LEGACY_BRIDGE_SYSTEMD_SERVICE,
+    ]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  try {
+    await runCommand("systemctl", [
+      "--user",
+      "restart",
+      BRIDGE_SYSTEMD_SERVICE,
+    ]);
+  } catch (error) {
+    await runCommand("systemctl", [
+      "--user",
+      "disable",
+      "--now",
+      BRIDGE_SYSTEMD_SERVICE,
+    ]).catch(() => undefined);
+    if (legacyWasActive) {
+      output("新服务启动失败，正在恢复旧服务。\n");
+      await runCommand("systemctl", [
+        "--user",
+        "enable",
+        "--now",
+        LEGACY_BRIDGE_SYSTEMD_SERVICE,
+      ]).catch(() => undefined);
+    } else if (legacyWasEnabled) {
+      await runCommand("systemctl", [
+        "--user",
+        "enable",
+        LEGACY_BRIDGE_SYSTEMD_SERVICE,
+      ]).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  output("\n安装完成。\n");
+  output(
+    `服务 ${BRIDGE_SYSTEMD_SERVICE} 正以 ${artifacts.identity.username} (UID ${artifacts.identity.uid}) 运行。\n`,
+  );
+  output(`查看状态：systemctl --user status ${BRIDGE_SYSTEMD_SERVICE}\n`);
+  output(`查看日志：journalctl --user -u ${BRIDGE_SYSTEMD_SERVICE} -f\n`);
+  output(
+    "安装器未设置模型覆盖；默认模型由这个用户的 Codex 配置和目标 Thread 决定。\n",
+  );
+
+  const linger = await captureCommand("loginctl", [
+    "show-user",
+    String(artifacts.identity.uid),
+    "-p",
+    "Linger",
+    "--value",
+  ]);
+  if (linger !== "yes") {
+    output(
+      `提示：若需退出登录后仍运行，请由管理员执行 sudo loginctl enable-linger ${artifacts.identity.username}\n`,
+    );
+  }
+}
+
+export async function runNonInteractiveSetup(
+  options: InteractiveSetupOptions,
+): Promise<void> {
+  if (process.platform !== "linux") {
+    throw new Error(
+      "systemd 安装目前只支持 Linux；其他系统请使用其他进程管理器运行 Bridge",
+    );
+  }
+  if (
+    (await captureCommand("systemctl", ["--user", "show-environment"])) === null
+  ) {
+    throw new Error(
+      "无法连接当前用户的 systemd user manager；请在目标用户的登录会话中运行 setup",
+    );
+  }
+
+  const identity = userInfo();
+  const effectiveUid = process.geteuid?.() ?? identity.uid;
+  const homeDirectory = path.resolve(identity.homedir);
+  if (effectiveUid === 0) {
+    process.stderr.write(
+      "警告：当前有效用户是 root，将安装 root 的用户服务并使用 root 的 Codex 配置。\n",
+    );
+  }
+  const environment = process.env;
+  const paths = resolveSetupPaths(
+    homeDirectory,
+    options.packageVersion,
+    environment,
+  );
+  const existing = await readExistingEnvironment(paths.environmentFile);
+
+  const boardUrlValue = configuredValue(
+    existing,
+    environment,
+    "AI_TASK_BOARD_URL",
+  );
+  if (!boardUrlValue) {
+    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
+  }
+  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const connectionToken = configuredValue(
+    existing,
+    environment,
+    "AI_TASK_BOARD_CONNECTION_TOKEN",
+  );
+  if (!connectionToken) {
+    throw new Error(
+      "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；非交互安装需要 Connection Token",
+    );
+  }
+
+  const rawMultipleDirectories = configuredValue(
+    existing,
+    environment,
+    "CODEX_WORKING_DIRECTORIES",
+  );
+  let directoryManagement: WorkingDirectoryManagement = "web";
+  let preserveMultipleDirectories = false;
+  let workingDirectory = homeDirectory;
+  if (rawMultipleDirectories) {
+    const firstDirectory = firstConfiguredWorkingDirectory(
+      rawMultipleDirectories,
+    );
+    if (!firstDirectory) {
+      throw new Error("CODEX_WORKING_DIRECTORIES 无法解析");
+    }
+    directoryManagement = "local";
+    preserveMultipleDirectories = true;
+    workingDirectory = firstDirectory;
+  } else {
+    const configuredDirectory = configuredValue(
+      existing,
+      environment,
+      "CODEX_WORKING_DIRECTORY",
+    );
+    if (configuredDirectory) {
+      directoryManagement = "local";
+      workingDirectory = expandPath(
+        configuredDirectory,
+        homeDirectory,
+        process.cwd(),
+      );
+    }
+  }
+  if (
+    directoryManagement === "local" &&
+    !(await pathIsDirectory(workingDirectory))
+  ) {
+    throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
+  }
+
+  const codexHome = expandPath(
+    configuredValue(existing, environment, "CODEX_HOME") ??
+      path.join(homeDirectory, ".codex"),
+    homeDirectory,
+    process.cwd(),
+  );
+  const codexHomeUid = await ownerUid(codexHome);
+  if (codexHomeUid !== null && codexHomeUid !== effectiveUid) {
+    throw new Error(
+      `Codex 配置目录属于 UID ${codexHomeUid}，不是当前 UID ${effectiveUid}`,
+    );
+  }
+
+  const pathValue = environment.PATH || "/usr/local/bin:/usr/bin:/bin";
+  const codexBinaryInput =
+    configuredValue(existing, environment, "CODEX_BINARY") ?? "codex";
+  const codexBinary = await resolveExecutable(codexBinaryInput, {
+    cwd: process.cwd(),
+    homeDirectory,
+    pathValue,
+  });
+  if (!codexBinary) {
+    throw new Error(
+      `找不到可执行的 Codex CLI：${codexBinaryInput}。请先以 ${identity.username} 安装 Codex。`,
+    );
+  }
+
+  const providerEnvironment: Record<string, string> = {};
+  try {
+    const providerNames = discoverCodexProviderEnvironmentVariables(
+      await readFile(path.join(codexHome, "config.toml"), "utf8"),
+    );
+    for (const name of providerNames) {
+      const value = environment[name] ?? existing[name];
+      if (value !== undefined) providerEnvironment[name] = value;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `提示：无法检查 ${path.join(codexHome, "config.toml")} 中的 provider 环境变量。\n`,
+      );
+    }
+  }
+
+  const threadScope = validChoice(
+    configuredValue(existing, environment, "CODEX_THREAD_SCOPE"),
+    ["cwd", "all"],
+    "cwd",
+  );
+  const maxThreads = validIntegerInRange(
+    configuredValue(existing, environment, "CODEX_MAX_THREADS") ?? "50",
+    "50",
+    1,
+    500,
+  );
+  const permissionMode = validChoice(
+    configuredValue(existing, environment, "CODEX_BRIDGE_PERMISSION_MODE"),
+    ["safe", "danger-full-access", "inherit"],
+    "safe",
+  );
+  const approvalMode = validChoice(
+    configuredValue(existing, environment, "CODEX_BRIDGE_APPROVAL_MODE"),
+    ["decline", "accept", "accept-session"],
+    "decline",
+  );
+  const webConfiguration =
+    directoryManagement === "web" ||
+    configuredValue(existing, environment, "CODEX_BRIDGE_WEB_CONFIG") ===
+      "true";
+  const allowRemoteWorkingDirectories =
+    directoryManagement === "web" ||
+    configuredValue(
+      existing,
+      environment,
+      "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES",
+    ) === "true";
+
+  const installedEnvironment = buildCodexInstallEnvironment({
+    existing,
+    providerEnvironment,
+    boardUrl,
+    connectionToken,
+    directoryManagement,
+    workingDirectory,
+    preserveMultipleDirectories,
+    rawMultipleDirectories,
+    threadScope,
+    maxThreads,
+    permissionMode,
+    approvalMode,
+    webConfiguration,
+    allowRemoteWorkingDirectories,
+    codexBinary,
+    codexHome,
+    homeDirectory,
+    pathValue,
+  });
+
+  await installCodexBridgeService(
+    {
+      paths,
+      environment: installedEnvironment,
+      unitOptions: {
+        nodeBinary: process.execPath,
+        runtimeCli: paths.runtimeCli,
+        workingDirectory,
+        homeDirectory,
+        codexHome,
+        environmentFile: paths.environmentFile,
+      },
+      identity: { username: identity.username, uid: effectiveUid },
+    },
+    (text) => process.stdout.write(text),
+  );
 }
 
 export async function runInteractiveSetup(
@@ -751,9 +1149,39 @@ export async function runInteractiveSetup(
       environment,
       "CODEX_WORKING_DIRECTORIES",
     );
+    const hasExistingLocalDirectories = Boolean(
+      rawMultipleDirectories &&
+        firstConfiguredWorkingDirectory(rawMultipleDirectories),
+    );
+    const directoryManagement = await prompt.choice<WorkingDirectoryManagement>(
+      "工作目录管理",
+      [
+        {
+          value: "web",
+          label:
+            "Web 端管理（推荐）— 安装时不配置目录，之后在网页「AI 连接 → Bridge 设置 / 新建项目」中添加",
+        },
+        {
+          value: "local",
+          label: "本机固定目录 — 安装时配置一个固定工作目录白名单",
+        },
+      ],
+      hasExistingLocalDirectories ? "local" : "web",
+    );
+
     let preserveMultipleDirectories = false;
     let workingDirectory: string;
-    if (rawMultipleDirectories) {
+    if (directoryManagement === "web") {
+      // The unit needs an existing WorkingDirectory, but the Bridge no longer
+      // treats it as a managed project directory. Web-side project management
+      // replaces the local allowlist after installation.
+      workingDirectory = homeDirectory;
+      if (hasExistingLocalDirectories) {
+        prompt.write(
+          "\n现有本机目录白名单将不再使用，改由 Web 端管理工作目录。\n",
+        );
+      }
+    } else if (rawMultipleDirectories) {
       const firstDirectory = firstConfiguredWorkingDirectory(
         rawMultipleDirectories,
       );
@@ -775,7 +1203,7 @@ export async function runInteractiveSetup(
     } else {
       workingDirectory = process.cwd();
     }
-    if (!preserveMultipleDirectories) {
+    if (directoryManagement === "local" && !preserveMultipleDirectories) {
       workingDirectory = await prompt.text("Bridge 工作目录", {
         defaultValue:
           configuredValue(existing, environment, "CODEX_WORKING_DIRECTORY") ??
@@ -784,7 +1212,10 @@ export async function runInteractiveSetup(
         validate: (value) => expandPath(value, homeDirectory, process.cwd()),
       });
     }
-    if (!(await pathIsDirectory(workingDirectory))) {
+    if (
+      directoryManagement === "local" &&
+      !(await pathIsDirectory(workingDirectory))
+    ) {
       throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
     }
 
@@ -931,17 +1362,36 @@ export async function runInteractiveSetup(
         "decline",
       ),
     );
-    const webConfiguration = await prompt.confirm(
-      "允许 Board 调整受本机边界限制的运行配置",
-      configuredValue(existing, environment, "CODEX_BRIDGE_WEB_CONFIG") ===
-        "true",
-    );
+    let webConfiguration: boolean;
+    if (directoryManagement === "web") {
+      // Web-side directory management requires the Web configuration gate, so
+      // both are enabled together when the user chooses Web management.
+      webConfiguration = true;
+      prompt.write(
+        "\n工作目录将由网页管理；已同时启用 Web 配置与远程目录授权。\n",
+      );
+    } else {
+      webConfiguration = await prompt.confirm(
+        "允许 Board 调整受本机边界限制的运行配置",
+        configuredValue(existing, environment, "CODEX_BRIDGE_WEB_CONFIG") ===
+          "true",
+      );
+    }
 
     prompt.write("\n即将写入：\n");
     prompt.write(`  环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`  用户服务：${paths.unitFile}\n`);
     prompt.write(`  Bridge 运行副本：${paths.runtimeDirectory}\n`);
     prompt.write(`  Codex 配置：${codexHome}\n`);
+    if (directoryManagement === "web") {
+      prompt.write("  工作目录：由 Web 端管理（未配置本机固定目录）\n");
+    } else {
+      prompt.write(
+        `  工作目录：${workingDirectory}${
+          preserveMultipleDirectories ? " 及现有多目录白名单" : ""
+        }\n`,
+      );
+    }
     if (Object.keys(providerEnvironment).length > 0) {
       prompt.write(
         `  Provider 环境变量：${Object.keys(providerEnvironment).join(", ")}（值已隐藏）\n`,
@@ -953,143 +1403,49 @@ export async function runInteractiveSetup(
       return;
     }
 
-    const sourcePackageDirectory = fileURLToPath(new URL("../", import.meta.url));
-    await installRuntime(sourcePackageDirectory, paths);
-    await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
-    await chmod(paths.configDirectory, 0o700);
-
-    const installedEnvironment: Record<string, string | undefined> = {
-      ...existing,
-      ...providerEnvironment,
-      AI_TASK_BOARD_URL: boardUrl,
-      AI_TASK_BOARD_CONNECTION_TOKEN: connectionToken,
-      CODEX_WORKING_DIRECTORY: workingDirectory,
-      CODEX_THREAD_SCOPE: threadScope,
-      CODEX_MAX_THREADS: maxThreads,
-      CODEX_BRIDGE_PERMISSION_MODE: permissionMode,
-      CODEX_BRIDGE_APPROVAL_MODE: approvalMode,
-      CODEX_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
-      CODEX_BINARY: codexBinary,
-      CODEX_HOME: codexHome,
-      HOME: homeDirectory,
-      PATH: pathValue,
-    };
-    if (preserveMultipleDirectories && rawMultipleDirectories) {
-      installedEnvironment.CODEX_WORKING_DIRECTORIES = rawMultipleDirectories;
-    } else {
-      delete installedEnvironment.CODEX_WORKING_DIRECTORIES;
-    }
-    await atomicWrite(
-      paths.environmentFile,
-      serializeEnvironmentFile(installedEnvironment),
-      0o600,
+    const allowRemoteWorkingDirectories =
+      directoryManagement === "web" ||
+      configuredValue(
+        existing,
+        environment,
+        "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES",
+      ) === "true";
+    const installedEnvironment = buildCodexInstallEnvironment({
+      existing,
+      providerEnvironment,
+      boardUrl,
+      connectionToken,
+      directoryManagement,
+      workingDirectory,
+      preserveMultipleDirectories,
+      rawMultipleDirectories,
+      threadScope,
+      maxThreads,
+      permissionMode,
+      approvalMode,
+      webConfiguration,
+      allowRemoteWorkingDirectories,
+      codexBinary,
+      codexHome,
+      homeDirectory,
+      pathValue,
+    });
+    await installCodexBridgeService(
+      {
+        paths,
+        environment: installedEnvironment,
+        unitOptions: {
+          nodeBinary: process.execPath,
+          runtimeCli: paths.runtimeCli,
+          workingDirectory,
+          homeDirectory,
+          codexHome,
+          environmentFile: paths.environmentFile,
+        },
+        identity: { username: identity.username, uid: effectiveUid },
+      },
+      (text) => prompt.write(text),
     );
-    await atomicWrite(
-      paths.unitFile,
-      renderSystemdUserUnit({
-        nodeBinary: process.execPath,
-        runtimeCli: paths.runtimeCli,
-        workingDirectory,
-        homeDirectory,
-        codexHome,
-        environmentFile: paths.environmentFile,
-      }),
-      0o644,
-    );
-
-    await runCommand("systemctl", ["--user", "daemon-reload"]);
-    await runCommand("systemctl", ["--user", "enable", paths.unitFile]);
-
-    const legacyUnitPath = path.join(
-      path.dirname(paths.unitFile),
-      LEGACY_BRIDGE_SYSTEMD_SERVICE,
-    );
-    let legacyWasActive = false;
-    let legacyWasEnabled = false;
-    try {
-      await access(legacyUnitPath, fsConstants.F_OK);
-      legacyWasActive =
-        (await captureCommand("systemctl", [
-          "--user",
-          "is-active",
-          LEGACY_BRIDGE_SYSTEMD_SERVICE,
-        ])) === "active";
-      legacyWasEnabled =
-        (await captureCommand("systemctl", [
-          "--user",
-          "is-enabled",
-          LEGACY_BRIDGE_SYSTEMD_SERVICE,
-        ])) === "enabled";
-      prompt.write(
-        `检测到旧服务 ${LEGACY_BRIDGE_SYSTEMD_SERVICE}，正在停用以避免重复运行。\n`,
-      );
-      await runCommand("systemctl", [
-        "--user",
-        "disable",
-        "--now",
-        LEGACY_BRIDGE_SYSTEMD_SERVICE,
-      ]);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-
-    try {
-      await runCommand("systemctl", [
-        "--user",
-        "restart",
-        BRIDGE_SYSTEMD_SERVICE,
-      ]);
-    } catch (error) {
-      await runCommand("systemctl", [
-        "--user",
-        "disable",
-        "--now",
-        BRIDGE_SYSTEMD_SERVICE,
-      ]).catch(() => undefined);
-      if (legacyWasActive) {
-        prompt.write("新服务启动失败，正在恢复旧服务。\n");
-        await runCommand("systemctl", [
-          "--user",
-          "enable",
-          "--now",
-          LEGACY_BRIDGE_SYSTEMD_SERVICE,
-        ]).catch(() => undefined);
-      } else if (legacyWasEnabled) {
-        await runCommand("systemctl", [
-          "--user",
-          "enable",
-          LEGACY_BRIDGE_SYSTEMD_SERVICE,
-        ]).catch(() => undefined);
-      }
-      throw error;
-    }
-
-    prompt.write("\n安装完成。\n");
-    prompt.write(
-      `服务 ${BRIDGE_SYSTEMD_SERVICE} 正以 ${identity.username} (UID ${effectiveUid}) 运行。\n`,
-    );
-    prompt.write(
-      `查看状态：systemctl --user status ${BRIDGE_SYSTEMD_SERVICE}\n`,
-    );
-    prompt.write(
-      `查看日志：journalctl --user -u ${BRIDGE_SYSTEMD_SERVICE} -f\n`,
-    );
-    prompt.write(
-      "安装器未设置模型覆盖；默认模型由这个用户的 Codex 配置和目标 Thread 决定。\n",
-    );
-
-    const linger = await captureCommand("loginctl", [
-      "show-user",
-      String(effectiveUid),
-      "-p",
-      "Linger",
-      "--value",
-    ]);
-    if (linger !== "yes") {
-      prompt.write(
-        `提示：若需退出登录后仍运行，请由管理员执行 sudo loginctl enable-linger ${identity.username}\n`,
-      );
-    }
   } finally {
     prompt.close();
   }

@@ -22,13 +22,24 @@ reply to the matching Board conversation.
 Run setup as the same OS user that owns the Kimi login and target workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.2.0 setup kimi
+npx --yes ai-task-board-bridge@1.3.0 setup kimi
 ```
 
 The installer writes a `0600` environment file, stages the CLI and its ACP SDK
 dependency under the user's XDG data directory, and starts
 `ai-task-board-kimi-bridge.service` in that user's systemd manager. It never
 puts the Board token on the command line.
+
+The same service can be installed from an SSH command or CI script without a
+terminal. `KIMI_WORKING_DIRECTORY` is required because the Board Web console
+does not expose directory management for Kimi connections yet:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
+npx --yes ai-task-board-bridge@1.3.0 setup kimi
+```
 
 ## Foreground mode
 
@@ -38,7 +49,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.2.0 run kimi
+npx --yes ai-task-board-bridge@1.3.0 run kimi
 ```
 
 For several projects, set a stable exact-directory allowlist:

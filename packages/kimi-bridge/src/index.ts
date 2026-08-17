@@ -38,4 +38,7 @@ export {
   type ResolvedKimiRemoteConfiguration,
 } from "./bridge.js";
 export { runBridgeCli as runKimiBridgeCli } from "./bridge.js";
-export { runInteractiveSetup as runKimiInteractiveSetup } from "./setup.js";
+export {
+  runInteractiveSetup as runKimiInteractiveSetup,
+  runKimiNonInteractiveSetup,
+} from "./setup.js";

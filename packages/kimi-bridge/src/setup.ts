@@ -237,7 +237,7 @@ async function packageDirectory(packageName: string): Promise<string> {
   throw new Error(`找不到依赖包目录：${packageName}`);
 }
 
-async function installRuntime(
+export async function installRuntime(
   sourceDistDirectory: string,
   destination: string,
   packageVersion: string,
@@ -511,6 +511,55 @@ function configuredValue(
   return environment[name]?.trim() || existing[name]?.trim() || undefined;
 }
 
+function validChoice<T extends string>(
+  value: string | undefined,
+  choices: readonly T[],
+  fallback: T,
+): T {
+  return value && (choices as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+interface KimiInstallArtifacts {
+  paths: KimiSetupPaths;
+  environment: Record<string, string | undefined>;
+  unitOptions: KimiSystemdUnitOptions;
+  packageVersion: string;
+}
+
+async function installKimiBridgeService(
+  artifacts: KimiInstallArtifacts,
+  output: (text: string) => void,
+): Promise<void> {
+  const sourceDistDirectory = path.dirname(fileURLToPath(import.meta.url));
+  await installRuntime(
+    sourceDistDirectory,
+    artifacts.paths.runtimeDirectory,
+    artifacts.packageVersion,
+  );
+  await atomicWrite(
+    artifacts.paths.environmentFile,
+    serializeEnvironmentFile(artifacts.environment),
+    0o600,
+  );
+  await atomicWrite(
+    artifacts.paths.unitFile,
+    renderSystemdUserUnit(artifacts.unitOptions),
+    0o644,
+  );
+  await runCommand("systemctl", ["--user", "daemon-reload"]);
+  await runCommand("systemctl", [
+    "--user",
+    "enable",
+    "--now",
+    KIMI_BRIDGE_SYSTEMD_SERVICE,
+  ]);
+  output(
+    `\nKimi Bridge 已启动。查看状态：systemctl --user status ${KIMI_BRIDGE_SYSTEMD_SERVICE}\n`,
+  );
+}
+
 export async function runInteractiveSetup(options: {
   packageVersion: string;
 }): Promise<void> {
@@ -622,15 +671,134 @@ export async function runInteractiveSetup(options: {
       return;
     }
 
-    const sourceDistDirectory = path.dirname(fileURLToPath(import.meta.url));
-    await installRuntime(
-      sourceDistDirectory,
-      paths.runtimeDirectory,
-      options.packageVersion,
+    await installKimiBridgeService(
+      {
+        paths,
+        environment: {
+          AI_TASK_BOARD_CONNECTION_TOKEN: token,
+          AI_TASK_BOARD_URL: boardUrl,
+          KIMI_BINARY: kimiBinary,
+          KIMI_BRIDGE_APPROVAL_MODE: approvalMode,
+          KIMI_BRIDGE_INCLUDE_SESSION_TITLES: String(includeTitles),
+          KIMI_BRIDGE_MODE: agentMode,
+          KIMI_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
+          KIMI_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
+          KIMI_MAX_THREADS: maxThreads,
+          KIMI_WORKING_DIRECTORY: workingDirectory,
+          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        },
+        unitOptions: {
+          nodeBinary: process.execPath,
+          runtimeCli: paths.runtimeCli,
+          workingDirectory,
+          homeDirectory,
+          environmentFile: paths.environmentFile,
+        },
+        packageVersion: options.packageVersion,
+      },
+      (text) => prompt.write(text),
     );
-    await atomicWrite(
-      paths.environmentFile,
-      serializeEnvironmentFile({
+  } finally {
+    prompt.close();
+  }
+}
+
+export async function runKimiNonInteractiveSetup(options: {
+  packageVersion: string;
+}): Promise<void> {
+  if (process.platform !== "linux") {
+    throw new Error(
+      "systemd 安装目前只支持 Linux；其他系统请使用其他进程管理器运行 Bridge",
+    );
+  }
+  if (
+    (await captureCommand("systemctl", ["--user", "show-environment"])) === null
+  ) {
+    throw new Error("无法连接当前用户的 systemd user manager");
+  }
+
+  const identity = userInfo();
+  const homeDirectory = path.resolve(identity.homedir);
+  const paths = resolveSetupPaths(
+    homeDirectory,
+    options.packageVersion,
+    process.env,
+  );
+  const existing = await existingEnvironment(paths.environmentFile);
+
+  const boardUrlValue = configuredValue(
+    existing,
+    process.env,
+    "AI_TASK_BOARD_URL",
+  );
+  if (!boardUrlValue) {
+    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
+  }
+  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const token = configuredValue(
+    existing,
+    process.env,
+    "AI_TASK_BOARD_CONNECTION_TOKEN",
+  );
+  if (!token) {
+    throw new Error(
+      "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；非交互安装需要 Kimi Code Connection Token",
+    );
+  }
+
+  const workingDirectoryValue = configuredValue(
+    existing,
+    process.env,
+    "KIMI_WORKING_DIRECTORY",
+  );
+  if (!workingDirectoryValue) {
+    throw new Error("缺少 KIMI_WORKING_DIRECTORY；非交互安装需要工作目录");
+  }
+  const workingDirectory = path.resolve(workingDirectoryValue);
+  if (!(await stat(workingDirectory).catch(() => null))?.isDirectory()) {
+    throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
+  }
+
+  const requestedBinary =
+    configuredValue(existing, process.env, "KIMI_BINARY") ?? "kimi";
+  const kimiBinary = await resolveExecutable(requestedBinary);
+  if (!kimiBinary) {
+    throw new Error(`找不到 Kimi Code 可执行文件：${requestedBinary}`);
+  }
+  const kimiVersion = await captureCommand(kimiBinary, ["--version"]);
+  if (!kimiVersion) throw new Error("Kimi Code --version 执行失败");
+
+  const maxThreads = positiveInteger(
+    configuredValue(existing, process.env, "KIMI_MAX_THREADS") ?? "50",
+    500,
+  );
+  const maxConcurrentTurns = positiveInteger(
+    configuredValue(existing, process.env, "KIMI_MAX_CONCURRENT_TURNS") ?? "2",
+    32,
+  );
+  const agentMode = validChoice<KimiAgentMode>(
+    configuredValue(existing, process.env, "KIMI_BRIDGE_MODE"),
+    ["auto", "default", "plan", "yolo"],
+    "auto",
+  );
+  const approvalMode = validChoice<KimiApprovalMode>(
+    configuredValue(existing, process.env, "KIMI_BRIDGE_APPROVAL_MODE"),
+    ["decline", "accept"],
+    "decline",
+  );
+  const includeTitles =
+    configuredValue(
+      existing,
+      process.env,
+      "KIMI_BRIDGE_INCLUDE_SESSION_TITLES",
+    ) === "true";
+  const webConfiguration =
+    configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") === "true";
+
+  await installKimiBridgeService(
+    {
+      paths,
+      environment: {
         AI_TASK_BOARD_CONNECTION_TOKEN: token,
         AI_TASK_BOARD_URL: boardUrl,
         KIMI_BINARY: kimiBinary,
@@ -642,31 +810,16 @@ export async function runInteractiveSetup(options: {
         KIMI_MAX_THREADS: maxThreads,
         KIMI_WORKING_DIRECTORY: workingDirectory,
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      }),
-      0o600,
-    );
-    await atomicWrite(
-      paths.unitFile,
-      renderSystemdUserUnit({
+      },
+      unitOptions: {
         nodeBinary: process.execPath,
         runtimeCli: paths.runtimeCli,
         workingDirectory,
         homeDirectory,
         environmentFile: paths.environmentFile,
-      }),
-      0o644,
-    );
-    await runCommand("systemctl", ["--user", "daemon-reload"]);
-    await runCommand("systemctl", [
-      "--user",
-      "enable",
-      "--now",
-      KIMI_BRIDGE_SYSTEMD_SERVICE,
-    ]);
-    prompt.write(
-      `\nKimi Bridge 已启动。查看状态：systemctl --user status ${KIMI_BRIDGE_SYSTEMD_SERVICE}\n`,
-    );
-  } finally {
-    prompt.close();
-  }
+      },
+      packageVersion: options.packageVersion,
+    },
+    (text) => process.stdout.write(text),
+  );
 }

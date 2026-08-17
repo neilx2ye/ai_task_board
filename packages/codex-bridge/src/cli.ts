@@ -11,11 +11,15 @@ Usage:
 
 Commands:
   setup  Interactively choose and install Codex, Kimi, Antigravity, or several
-  run    Run one Bridge using environment variables (default: codex)
+         With no TTY, setup installs the systemd service from environment
+         variables instead of prompting (Codex, Kimi, or Antigravity).
+  run    Run one Bridge in the foreground using environment variables
+         (default: codex)
 
 With no command, an interactive terminal opens the unified installer when required
 configuration is missing. Existing Codex environment launches remain compatible.
-On Linux, setup installs the current user's systemd service or services.
+On Linux, setup always installs and starts the current user's systemd service or
+services; it does not leave a Bridge running inside the npx process.
 
 Examples:
   ai-task-board-bridge setup
@@ -25,6 +29,13 @@ Examples:
   ai-task-board-bridge setup all
   ai-task-board-bridge run kimi
   ai-task-board-bridge run antigravity
+
+Non-interactive Codex setup (service is installed and started by systemd):
+  AI_TASK_BOARD_URL='https://board.example.com' \
+  AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+  ai-task-board-bridge setup codex
+Working directories are left to the Board's Web console by default; pass
+CODEX_WORKING_DIRECTORY or CODEX_WORKING_DIRECTORIES to fix a local allowlist.
 
 Required environment variables:
   AI_TASK_BOARD_URL               Board HTTPS base URL
@@ -113,7 +124,11 @@ async function run(): Promise<void> {
       return;
     }
     const target = requestedTarget ?? (await promptForBridgeSetupTarget());
-    await runBridgeSetup(target, await packageVersion());
+    const execution =
+      process.stdin.isTTY && process.stdout.isTTY
+        ? "interactive"
+        : "noninteractive";
+    await runBridgeSetup(target, await packageVersion(), execution);
     return;
   }
   if (args[0] === "run") {

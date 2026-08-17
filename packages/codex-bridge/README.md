@@ -18,24 +18,24 @@ reads Google's private conversation databases.
 The Bridge uses the Board REST API and authenticated SSE directly. The Board
 MCP server is optional and is not required for Bridge operation.
 
-## Unified interactive Linux setup
+## Unified Linux setup
 
 Node.js 18 or newer is required. Run setup as the same OS user that owns the
 selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.2.0 setup
+npx --yes ai-task-board-bridge@1.3.0 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
 `both`, and `all`. Automation or repeat installs can bypass that first prompt:
 
 ```bash
-npx --yes ai-task-board-bridge@1.2.0 setup codex
-npx --yes ai-task-board-bridge@1.2.0 setup kimi
-npx --yes ai-task-board-bridge@1.2.0 setup antigravity
-npx --yes ai-task-board-bridge@1.2.0 setup both
-npx --yes ai-task-board-bridge@1.2.0 setup all
+npx --yes ai-task-board-bridge@1.3.0 setup codex
+npx --yes ai-task-board-bridge@1.3.0 setup kimi
+npx --yes ai-task-board-bridge@1.3.0 setup antigravity
+npx --yes ai-task-board-bridge@1.3.0 setup both
+npx --yes ai-task-board-bridge@1.3.0 setup all
 ```
 
 Installing a combination runs the selected setup flows in sequence. Create a
@@ -44,15 +44,47 @@ for one runtime must not be reused for another. The public tarball embeds the
 private Kimi and Antigravity runtimes, so no second npm package needs to be
 published or installed.
 
+`setup` always finishes by installing and starting a systemd user service; it
+never leaves a Bridge running inside the `npx` process. When stdin/stdout is
+not a TTY (for example an SSH command or CI script), `setup codex`,
+`setup kimi`, and `setup antigravity` install the same services from
+environment variables without prompting. The `both`/`all` targets remain
+interactive because each runtime needs its own Connection Token.
+
 ### Codex setup
 
-The Codex setup wizard asks for the Board URL, hidden Connection Token, working
-directory, Codex home and executable, custom-provider credential environment
-variables, thread limits, permission/approval modes, and the Web configuration
-gate. It then installs and starts
-`ai-task-board-bridge.service` in the effective user's systemd user
-manager. Running with no command also enters setup in a TTY when either required
-Board setting is missing.
+The Codex setup wizard asks for the Board URL and hidden Connection Token.
+Working directories are optional: new installs default to Web-side management,
+so project directories are added later in the Board's "AI 连接 → Bridge
+设置 / 新建项目" instead of being typed during setup. Choosing the local mode
+instead fixes a device allowlist at install time. The wizard also collects the
+Codex home and executable, custom-provider credential environment variables,
+thread limits, and permission/approval modes. It then installs and starts
+`ai-task-board-bridge.service` in the effective user's systemd user manager.
+Running with no command also enters setup in a TTY when either required Board
+setting is missing.
+
+Choosing Web-side directory management enables both
+`CODEX_BRIDGE_WEB_CONFIG=true` and
+`CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` in the installed
+environment file. The generated unit still needs an existing
+`WorkingDirectory=` for the App Server startup fallback, so setup uses the
+user's home directory for that unit field only; it is not registered as a
+managed project directory and no `CODEX_WORKING_DIRECTORY` or
+`CODEX_WORKING_DIRECTORIES` is written.
+
+Non-interactive Codex service install uses the same safe defaults as the
+wizard:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+npx --yes ai-task-board-bridge@1.3.0 setup codex
+```
+
+Without `CODEX_WORKING_DIRECTORY` or `CODEX_WORKING_DIRECTORIES` the
+non-interactive install also defaults to Web-side directory management. Pass
+either variable to fix a local allowlist instead.
 
 The generated unit has no `User=` directive: a systemd user manager already
 runs as its owning UID. Setup explicitly binds that user's `HOME` and
@@ -72,16 +104,17 @@ updates the configuration and restarts the service. Upgrades disable the legacy
 `ai-task-board-codex-bridge.service` before starting
 `ai-task-board-bridge.service`, with rollback if the new service fails to start.
 
-## Foreground and automation mode
+## Foreground run mode
 
-The original environment-variable interface remains available and does not
-install a service:
+The original environment-variable interface remains available for other
+process managers and temporary runs. Unlike `setup`, it does not install a
+service, so a terminated `npx` process takes the Bridge down with it:
 
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.2.0 run codex
+npx --yes ai-task-board-bridge@1.3.0 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -99,7 +132,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.2.0
+npx --yes ai-task-board-bridge@1.3.0
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -107,7 +140,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.2.0
+npx --yes ai-task-board-bridge@1.3.0
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -291,7 +324,7 @@ Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@1.2.0 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.3.0 --help` for the complete
 environment-variable list.
 
 ## Kimi Bridge
@@ -310,7 +343,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.2.0 run kimi
+npx --yes ai-task-board-bridge@1.3.0 run kimi
 ```
 
 `KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -340,7 +373,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.2.0 run antigravity
+npx --yes ai-task-board-bridge@1.3.0 run antigravity
 ```
 
 `ANTIGRAVITY_WORKING_DIRECTORIES` accepts 1 to 100 unique exact

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   BRIDGE_SYSTEMD_SERVICE,
+  buildCodexInstallEnvironment,
   discoverCodexProviderEnvironmentVariables,
   LEGACY_BRIDGE_SYSTEMD_SERVICE,
   parseEnvironmentFile,
@@ -114,6 +115,88 @@ env_http_headers = { "X-Tenant" = "DEEPSEEK_TENANT" }
     expect(unit).toContain(
       'ExecStart="/opt/node versions/current/bin/node" "/home/alice/data%%20/bridge/dist/cli.js" "run"',
     );
+    expect(unit).not.toContain("npx");
+  });
+
+  it("builds a Web-managed install without any local working directory", () => {
+    const environment = buildCodexInstallEnvironment({
+      existing: {
+        CODEX_WORKING_DIRECTORY: "/srv/legacy",
+        CUSTOM_RETAINED: "keep",
+      },
+      providerEnvironment: { DEEPSEEK_API_KEY: "secret" },
+      boardUrl: "https://board.example.com",
+      connectionToken: "atb_token",
+      directoryManagement: "web",
+      workingDirectory: "/home/alice",
+      preserveMultipleDirectories: false,
+      rawMultipleDirectories: undefined,
+      threadScope: "cwd",
+      maxThreads: "50",
+      permissionMode: "safe",
+      approvalMode: "decline",
+      webConfiguration: true,
+      allowRemoteWorkingDirectories: true,
+      codexBinary: "/usr/bin/codex",
+      codexHome: "/home/alice/.codex",
+      homeDirectory: "/home/alice",
+      pathValue: "/usr/bin:/bin",
+    });
+
+    expect(environment).not.toHaveProperty("CODEX_WORKING_DIRECTORY");
+    expect(environment).not.toHaveProperty("CODEX_WORKING_DIRECTORIES");
+    expect(environment.CODEX_BRIDGE_WEB_CONFIG).toBe("true");
+    expect(environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES).toBe(
+      "true",
+    );
+    expect(environment.CUSTOM_RETAINED).toBe("keep");
+    expect(environment.DEEPSEEK_API_KEY).toBe("secret");
+  });
+
+  it("builds a local-directory install and keeps the multi-directory allowlist", () => {
+    const rawDirectories =
+      '[{"key":"main","path":"/srv/main"},{"key":"docs","path":"/srv/docs"}]';
+    const environment = buildCodexInstallEnvironment({
+      existing: {},
+      providerEnvironment: {},
+      boardUrl: "https://board.example.com",
+      connectionToken: "atb_token",
+      directoryManagement: "local",
+      workingDirectory: "/srv/main",
+      preserveMultipleDirectories: true,
+      rawMultipleDirectories: rawDirectories,
+      threadScope: "cwd",
+      maxThreads: "100",
+      permissionMode: "safe",
+      approvalMode: "decline",
+      webConfiguration: false,
+      allowRemoteWorkingDirectories: false,
+      codexBinary: "/usr/bin/codex",
+      codexHome: "/home/alice/.codex",
+      homeDirectory: "/home/alice",
+      pathValue: "/usr/bin:/bin",
+    });
+
+    expect(environment.CODEX_WORKING_DIRECTORY).toBe("/srv/main");
+    expect(environment.CODEX_WORKING_DIRECTORIES).toBe(rawDirectories);
+    expect(environment.CODEX_BRIDGE_WEB_CONFIG).toBe("false");
+    expect(environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES).toBe(
+      "false",
+    );
+  });
+
+  it("renders a unit whose WorkingDirectory can be the user home for Web management", () => {
+    const unit = renderSystemdUserUnit({
+      nodeBinary: "/usr/bin/node",
+      runtimeCli: "/home/alice/.local/share/bridge/dist/cli.js",
+      workingDirectory: "/home/alice",
+      homeDirectory: "/home/alice",
+      codexHome: "/home/alice/.codex",
+      environmentFile: "/home/alice/.config/ai-task-board/codex-bridge.env",
+    });
+
+    expect(unit).toContain("WorkingDirectory=/home/alice");
+    expect(unit).toContain('Environment="CODEX_HOME=/home/alice/.codex"');
     expect(unit).not.toContain("npx");
   });
 

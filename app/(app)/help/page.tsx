@@ -190,9 +190,11 @@ export default function HelpPage() {
             <strong className="text-foreground">只显示一次</strong>
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
-          <Step index={3} title="确定工作目录和权限边界">
-            准备项目在新设备上的绝对路径。三个 Bridge 都只管理各自白名单
-            （*_WORKING_DIRECTORY(S)）内的目录；Codex Bridge 默认的
+          <Step index={3} title="准备工作目录和权限边界">
+            Codex Bridge 的工作目录可以在安装完成后到「AI 连接 → Bridge
+            设置 / 新建项目」用网页添加，安装时无需预先准备；需要本机固定白名单时再填写
+            绝对路径。Kimi / Antigravity 仍需要在设备上配置各自白名单
+            （*_WORKING_DIRECTORY(S)）。Codex Bridge 默认的
             <code className="mx-1 rounded bg-muted px-1 text-xs">
               CODEX_THREAD_SCOPE=cwd
             </code>
@@ -211,7 +213,9 @@ export default function HelpPage() {
             >
               下方交互式安装命令
             </a>
-            ，按提示选择要安装的 Bridge 并填写看板地址、一次性连接令牌和工作目录。
+            ，按提示选择要安装的 Bridge 并填写看板地址和一次性连接令牌；Codex 的工作目录
+            可以稍后在网页添加。SSH 命令或 CI 脚本（无交互终端）也可以直接提供环境变量
+            运行 <code>setup</code>，同样会安装 systemd 服务。
             命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
             同一台设备和 Connection 只运行一个 Bridge。
           </Step>
@@ -247,11 +251,19 @@ export default function HelpPage() {
         <p className="text-sm leading-relaxed text-muted-foreground">
           Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi、Antigravity，
           还是组合，再以执行命令的当前用户创建对应的 systemd user service。选择
-          Codex 后会继续收集 Codex 配置：
+          Codex 后会继续收集 Codex 配置。工作目录不再强制填写，默认由 Web 端管理
+          （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.1.0 setup`}
+          {`npx --yes ai-task-board-bridge@1.4.0 setup`}
         </CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          SSH 命令或 CI 脚本没有交互终端时，<code>setup codex</code> 会读取环境变量
+          直接安装并启动同一个 systemd 服务，不会在前台 npx 里运行：
+        </p>
+        <CopyableCodeBlock copyLabel="复制非交互式安装命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+npx --yes ai-task-board-bridge@1.4.0 setup codex`}</CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           如需前台运行或自动化部署，也可以直接通过环境变量配置：
         </p>
@@ -266,7 +278,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-bridge@1.1.0 run codex`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.4.0 run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -334,17 +346,19 @@ npx --yes ai-task-board-bridge@1.1.0 run codex`}</CopyableCodeBlock>
           运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.1.0 setup kimi`}
+          {`npx --yes ai-task-board-bridge@1.4.0 setup kimi`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Kimi Code 连接：
+          无交互终端时，提供以下变量运行 <code>setup kimi</code> 同样会安装并启动
+          systemd 服务（<code>KIMI_WORKING_DIRECTORY</code> 为必填）；也可以显式使用
+          <code>run kimi</code> 在前台运行。令牌必须来自独立的 Kimi Code 连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.1.0 run kimi`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.4.0 run kimi`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             Bridge 会动态上报 Kimi ACP 返回的模型和 low/high/max 等思考强度；新建
@@ -393,17 +407,20 @@ npx --yes ai-task-board-bridge@1.1.0 run kimi`}</CopyableCodeBlock>
           已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.1.0 setup antigravity`}
+          {`npx --yes ai-task-board-bridge@1.4.0 setup antigravity`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Antigravity 连接：
+          无交互终端时，提供以下变量运行 <code>setup antigravity</code> 同样会安装并
+          启动 systemd 服务（<code>ANTIGRAVITY_WORKING_DIRECTORY</code> 为必填）；
+          也可以显式使用 <code>run antigravity</code> 在前台运行。令牌必须来自独立的
+          Antigravity 连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \\
 ANTIGRAVITY_BRIDGE_MODE='auto' \\
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \\
-npx --yes ai-task-board-bridge@1.1.0 run antigravity`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.4.0 run antigravity`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             需要 Antigravity CLI 1.1.8 或更新版本（<code>agy update</code> 升级）。

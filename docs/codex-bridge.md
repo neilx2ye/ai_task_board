@@ -49,9 +49,18 @@ npx --yes ai-task-board-bridge@1.2.0 setup codex
 
 不带参数运行且当前终端是 TTY、同时缺少 Board URL 或 Connection Token 时，也会自动
 进入相同的 setup。安装器依次确认当前有效 UID、Board 地址、隐藏输入的 Connection
-Token、工作目录、Codex 配置目录与可执行文件、Thread 范围和数量、权限/审批模式以及
-provider 凭据环境变量、是否允许 Web 配置，最后才写文件和启动服务。新安装默认选择 `cwd`、`safe`、
-`decline`；高风险选项仍可在交互中明确选择。
+Token、工作目录管理方式、Codex 配置目录与可执行文件、Thread 范围和数量、权限/审批
+模式以及 provider 凭据环境变量，最后才写文件和启动服务。新安装默认选择 Web 端管理
+工作目录：安装时不强制填写本机目录，安装后到网页「AI 连接 → Bridge 设置 / 新建项目」
+添加项目，安装器同时写入 `CODEX_BRIDGE_WEB_CONFIG=true` 与
+`CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`；仍可在交互中改选本机固定目录。
+其余新安装默认选择 `cwd`、`safe`、`decline`；高风险选项仍可在交互中明确选择。
+
+`setup codex` 在非 TTY 环境（SSH 命令、CI 脚本）下不再报错回退：它使用环境变量直接
+安装并启动同一个 systemd 用户服务。必填 `AI_TASK_BOARD_URL` 与
+`AI_TASK_BOARD_CONNECTION_TOKEN`；未提供目录变量时同样默认 Web 端管理，提供
+`CODEX_WORKING_DIRECTORY` / `CODEX_WORKING_DIRECTORIES` 则固定本机白名单。
+`setup both` / `setup all` 仍需要交互式分别输入各平台 Token。
 
 安装目标按当前有效用户计算，而不是按 npm 全局目录的所有者计算。不要使用 `sudo npx`
 来代替目标用户运行；否则有效用户是 root，安装器会警告，并且继续后得到的是 root 的
@@ -68,13 +77,15 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 
 ### 前台与自动化兼容模式
 
-下面的设备级配置不固定 thread：
+下面的设备级配置不固定 thread。它只是前台/其他进程管理器兼容模式；需要常驻服务时
+应使用上面的 `setup`（交互式或非交互式），这样 Bridge 由 systemd 管理，不会随
+`npx` 进程结束而下线：
 
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.2.0 run codex
+npx --yes ai-task-board-bridge@1.4.0 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用

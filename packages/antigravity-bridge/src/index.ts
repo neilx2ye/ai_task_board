@@ -46,4 +46,7 @@ export {
   type ResolvedAntigravityRemoteConfiguration,
 } from "./bridge.js";
 export { runBridgeCli as runAntigravityBridgeCli } from "./bridge.js";
-export { runInteractiveSetup as runAntigravityInteractiveSetup } from "./setup.js";
+export {
+  runInteractiveSetup as runAntigravityInteractiveSetup,
+  runAntigravityNonInteractiveSetup,
+} from "./setup.js";

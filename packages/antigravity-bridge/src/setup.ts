@@ -234,7 +234,7 @@ async function atomicWrite(
   }
 }
 
-async function installRuntime(
+export async function installRuntime(
   sourceDistDirectory: string,
   destination: string,
   packageVersion: string,
@@ -486,6 +486,55 @@ function configuredValue(
   return environment[name]?.trim() || existing[name]?.trim() || undefined;
 }
 
+function validChoice<T extends string>(
+  value: string | undefined,
+  choices: readonly T[],
+  fallback: T,
+): T {
+  return value && (choices as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+interface AntigravityInstallArtifacts {
+  paths: AntigravitySetupPaths;
+  environment: Record<string, string | undefined>;
+  unitOptions: AntigravitySystemdUnitOptions;
+  packageVersion: string;
+}
+
+async function installAntigravityBridgeService(
+  artifacts: AntigravityInstallArtifacts,
+  output: (text: string) => void,
+): Promise<void> {
+  const sourceDistDirectory = path.dirname(fileURLToPath(import.meta.url));
+  await installRuntime(
+    sourceDistDirectory,
+    artifacts.paths.runtimeDirectory,
+    artifacts.packageVersion,
+  );
+  await atomicWrite(
+    artifacts.paths.environmentFile,
+    serializeEnvironmentFile(artifacts.environment),
+    0o600,
+  );
+  await atomicWrite(
+    artifacts.paths.unitFile,
+    renderSystemdUserUnit(artifacts.unitOptions),
+    0o644,
+  );
+  await runCommand("systemctl", ["--user", "daemon-reload"]);
+  await runCommand("systemctl", [
+    "--user",
+    "enable",
+    "--now",
+    ANTIGRAVITY_BRIDGE_SYSTEMD_SERVICE,
+  ]);
+  output(
+    `\nAntigravity Bridge 已启动。查看状态：systemctl --user status ${ANTIGRAVITY_BRIDGE_SYSTEMD_SERVICE}\n`,
+  );
+}
+
 export async function runInteractiveSetup(options: {
   packageVersion: string;
 }): Promise<void> {
@@ -633,15 +682,156 @@ export async function runInteractiveSetup(options: {
       return;
     }
 
-    const sourceDistDirectory = path.dirname(fileURLToPath(import.meta.url));
-    await installRuntime(
-      sourceDistDirectory,
-      paths.runtimeDirectory,
-      options.packageVersion,
+    await installAntigravityBridgeService(
+      {
+        paths,
+        environment: {
+          AI_TASK_BOARD_CONNECTION_TOKEN: token,
+          AI_TASK_BOARD_URL: boardUrl,
+          ANTIGRAVITY_BINARY: agyBinary,
+          ANTIGRAVITY_BRIDGE_APPROVAL_MODE: approvalMode,
+          ANTIGRAVITY_BRIDGE_MODE: agentMode,
+          ANTIGRAVITY_BRIDGE_SANDBOX: String(sandbox),
+          ANTIGRAVITY_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
+          ANTIGRAVITY_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
+          ANTIGRAVITY_MAX_THREADS: maxThreads,
+          ANTIGRAVITY_WORKING_DIRECTORY: workingDirectory,
+          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        },
+        unitOptions: {
+          nodeBinary: process.execPath,
+          runtimeCli: paths.runtimeCli,
+          workingDirectory,
+          homeDirectory,
+          environmentFile: paths.environmentFile,
+        },
+        packageVersion: options.packageVersion,
+      },
+      (text) => prompt.write(text),
     );
-    await atomicWrite(
-      paths.environmentFile,
-      serializeEnvironmentFile({
+  } finally {
+    prompt.close();
+  }
+}
+
+export async function runAntigravityNonInteractiveSetup(options: {
+  packageVersion: string;
+}): Promise<void> {
+  if (process.platform !== "linux") {
+    throw new Error(
+      "systemd 安装目前只支持 Linux；其他系统请使用其他进程管理器运行 Bridge",
+    );
+  }
+  const systemctlReady = await new Promise<boolean>((resolve) => {
+    const probe = spawn("systemctl", ["--user", "show-environment"], {
+      stdio: "ignore",
+    });
+    probe.once("error", () => resolve(false));
+    probe.once("exit", (code) => resolve(code === 0));
+  });
+  if (!systemctlReady) {
+    throw new Error("无法连接当前用户的 systemd user manager");
+  }
+
+  const identity = userInfo();
+  const homeDirectory = path.resolve(identity.homedir);
+  const paths = resolveSetupPaths(
+    homeDirectory,
+    options.packageVersion,
+    process.env,
+  );
+  const existing = await existingEnvironment(paths.environmentFile);
+
+  const boardUrlValue = configuredValue(
+    existing,
+    process.env,
+    "AI_TASK_BOARD_URL",
+  );
+  if (!boardUrlValue) {
+    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
+  }
+  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const token = configuredValue(
+    existing,
+    process.env,
+    "AI_TASK_BOARD_CONNECTION_TOKEN",
+  );
+  if (!token) {
+    throw new Error(
+      "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；非交互安装需要 Antigravity Connection Token",
+    );
+  }
+
+  const workingDirectoryValue = configuredValue(
+    existing,
+    process.env,
+    "ANTIGRAVITY_WORKING_DIRECTORY",
+  );
+  if (!workingDirectoryValue) {
+    throw new Error(
+      "缺少 ANTIGRAVITY_WORKING_DIRECTORY；非交互安装需要工作目录",
+    );
+  }
+  const workingDirectory = path.resolve(workingDirectoryValue);
+  if (!(await stat(workingDirectory).catch(() => null))?.isDirectory()) {
+    throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
+  }
+
+  const requestedBinary =
+    configuredValue(existing, process.env, "ANTIGRAVITY_BINARY") ?? "agy";
+  const agyBinary = await resolveExecutable(requestedBinary);
+  if (!agyBinary) {
+    throw new Error(`找不到 Antigravity CLI 可执行文件：${requestedBinary}`);
+  }
+  const probeClient = new AgyClient({
+    agyBinary,
+    agentMode: "auto",
+    approvalMode: "decline",
+    sandbox: false,
+    printTimeoutMs: 300_000,
+  });
+  let version: string;
+  try {
+    version = await probeClient.version();
+  } catch (error) {
+    throw new Error(`无法运行 Antigravity CLI --version：${errorMessage(error)}`);
+  }
+  if (!compareSemver(version, 1, 1, 8)) {
+    throw new Error(
+      `Antigravity CLI ${version} 过旧，需要 >= ${ANTIGRAVITY_MINIMUM_VERSION}。请运行 agy update 升级后重试。`,
+    );
+  }
+
+  const maxThreads = positiveInteger(
+    configuredValue(existing, process.env, "ANTIGRAVITY_MAX_THREADS") ?? "50",
+    500,
+  );
+  const maxConcurrentTurns = positiveInteger(
+    configuredValue(existing, process.env, "ANTIGRAVITY_MAX_CONCURRENT_TURNS") ??
+      "2",
+    32,
+  );
+  const agentMode = validChoice<AntigravityAgentMode>(
+    configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_MODE"),
+    ["auto", "default", "accept-edits", "plan"],
+    "auto",
+  );
+  const approvalMode = validChoice<AntigravityApprovalMode>(
+    configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_APPROVAL_MODE"),
+    ["decline", "accept"],
+    "decline",
+  );
+  const sandbox =
+    configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_SANDBOX") ===
+    "true";
+  const webConfiguration =
+    configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_WEB_CONFIG") ===
+    "true";
+
+  await installAntigravityBridgeService(
+    {
+      paths,
+      environment: {
         AI_TASK_BOARD_CONNECTION_TOKEN: token,
         AI_TASK_BOARD_URL: boardUrl,
         ANTIGRAVITY_BINARY: agyBinary,
@@ -653,31 +843,16 @@ export async function runInteractiveSetup(options: {
         ANTIGRAVITY_MAX_THREADS: maxThreads,
         ANTIGRAVITY_WORKING_DIRECTORY: workingDirectory,
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      }),
-      0o600,
-    );
-    await atomicWrite(
-      paths.unitFile,
-      renderSystemdUserUnit({
+      },
+      unitOptions: {
         nodeBinary: process.execPath,
         runtimeCli: paths.runtimeCli,
         workingDirectory,
         homeDirectory,
         environmentFile: paths.environmentFile,
-      }),
-      0o644,
-    );
-    await runCommand("systemctl", ["--user", "daemon-reload"]);
-    await runCommand("systemctl", [
-      "--user",
-      "enable",
-      "--now",
-      ANTIGRAVITY_BRIDGE_SYSTEMD_SERVICE,
-    ]);
-    prompt.write(
-      `\nAntigravity Bridge 已启动。查看状态：systemctl --user status ${ANTIGRAVITY_BRIDGE_SYSTEMD_SERVICE}\n`,
-    );
-  } finally {
-    prompt.close();
-  }
+      },
+      packageVersion: options.packageVersion,
+    },
+    (text) => process.stdout.write(text),
+  );
 }

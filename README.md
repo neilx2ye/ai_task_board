@@ -116,14 +116,19 @@ npx --yes ai-task-board-bridge@1.3.0 setup
 仍使用独立的 Board Connection、令牌、目录白名单和 systemd 服务。Kimi 与 Antigravity
 运行时已嵌入这个公开包，不需要再发布或安装第二个 npm 包。
 
-Codex 的 Linux 交互流程会询问 Board、Connection Token、工作目录、Codex 配置目录、
-provider 凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**
-自己的 systemd user service。它显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认
-读取这个用户的 Codex 登录、`config.toml`、provider 和模型配置；新安装的交互默认值为
-`safe` + `decline`。
+Codex 的 Linux 交互流程会询问 Board、Connection Token、Codex 配置目录、provider
+凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**自己的
+systemd user service。工作目录不再强制配置：新安装默认由 Web 端管理，安装后到
+「AI 连接 → Bridge 设置 / 新建项目」添加，同时自动启用 `CODEX_BRIDGE_WEB_CONFIG`
+与 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES`；也可以改选本机固定目录。安装器
+显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的 Codex 登录、
+`config.toml`、provider 和模型配置；新安装的其他交互默认值为 `safe` + `decline`。
 无参数且缺少必填环境变量时，交互终端也会自动进入 setup。
 
-原有环境变量前台/自动化启动方式仍然兼容。该模式未显式配置时继续使用
+非 TTY 环境（SSH 命令、CI 脚本）下 `setup codex` 会读取环境变量直接安装并启动同一
+systemd 用户服务，而不是回退到前台 npx；必填 Board URL 与 Connection Token，未提供
+目录变量时同样默认 Web 端管理。原有环境变量前台/自动化启动方式仍然兼容，但该模式
+不会常驻，`npx` 进程结束后 Bridge 随之下线。前台模式未显式配置时继续使用
 `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、无沙箱）和
 `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）。只应在工作区、Codex
 配置和 Connection 使用者都可信时采用此组合；需要限制写入与网络时，请显式设置
