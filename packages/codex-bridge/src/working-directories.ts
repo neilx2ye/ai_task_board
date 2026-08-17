@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 const DIRECTORY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -130,11 +130,24 @@ export function parseRemoteWorkingDirectories(
     }
     const unknownField = Object.keys(item).find(
       (field) =>
-        !["directory_key", "name", "working_directory"].includes(field),
+        ![
+          "directory_key",
+          "name",
+          "working_directory",
+          "create_if_missing",
+        ].includes(field),
     );
     if (unknownField) {
       throw new Error(
         `看板配置 working_directories[${index}] 包含未知字段 ${unknownField}`,
+      );
+    }
+    if (
+      item.create_if_missing !== undefined &&
+      typeof item.create_if_missing !== "boolean"
+    ) {
+      throw new Error(
+        `看板配置 working_directories[${index}].create_if_missing 必须是布尔值`,
       );
     }
 
@@ -173,6 +186,16 @@ export function parseRemoteWorkingDirectories(
     } catch {
       // The uniform error below deliberately avoids leaking platform-specific
       // stat details back through the remote configuration status.
+    }
+    if (!isDirectory && item.create_if_missing === true) {
+      // Web project creation authorized this device to materialize the
+      // directory; without the flag the check stays fail-closed.
+      try {
+        mkdirSync(workingDirectory, { recursive: true });
+        isDirectory = statSync(workingDirectory).isDirectory();
+      } catch {
+        // Reported through the same uniform error as a plain stat failure.
+      }
     }
     if (!isDirectory) {
       throw new Error(

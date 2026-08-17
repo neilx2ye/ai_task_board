@@ -256,6 +256,7 @@ describe("Antigravity Bridge remote configuration", () => {
       maxConcurrentTurns: 8,
       syncHistory: false,
       historyTurnLimit: 100,
+      workingDirectories: base.localWorkingDirectories,
     });
     expect(resolved.warnings.join("")).toContain("max_threads=50");
     expect(resolved.warnings.join("")).toContain("历史同步");

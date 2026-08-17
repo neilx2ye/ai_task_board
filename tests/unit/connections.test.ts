@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeConnections,
+  supportsManagedDirectoryCreation,
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
   supportsWebThreadRename,
@@ -96,5 +97,21 @@ describe("activeConnections", () => {
         connection({ platform: "Codex", bridge_version: "0.9.0" }),
       ),
     ).toBe(true);
+  });
+
+  it.each([
+    ["1.3.0", true],
+    ["1.3.0-kimi.1", true],
+    ["2.0.0", true],
+    ["1.2.0", false],
+    ["0.9.0", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的设备端建目录能力", (bridgeVersion, expected) => {
+    expect(
+      supportsManagedDirectoryCreation(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
   });
 });

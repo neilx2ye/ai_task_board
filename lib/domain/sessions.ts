@@ -57,6 +57,7 @@ export async function syncSessions(
   if (!error) {
     await persistModelCatalog(admin, auth, input);
     await persistConnectionQuota(admin, auth, input);
+    await persistDeviceIdentity(admin, auth, input);
     return data;
   }
   if (!isMissingDirectorySyncFunction(error)) throw mapDatabaseError(error);
@@ -85,7 +86,29 @@ export async function syncSessions(
   });
   await persistModelCatalog(admin, auth, input);
   await persistConnectionQuota(admin, auth, input);
+  await persistDeviceIdentity(admin, auth, input);
   return result;
+}
+
+async function persistDeviceIdentity(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: AIAuthContext,
+  input: SyncSessionsInput,
+): Promise<void> {
+  // 成对持久化：只上报一个字段时视为未上报，避免违反成对约束。
+  if (input.device_id === undefined || input.device_label === undefined) {
+    return;
+  }
+  const { error } = await admin
+    .from("ai_connection_bridge_settings")
+    .update({
+      device_id: input.device_id,
+      device_label: input.device_label,
+    })
+    .eq("workspace_id", auth.workspaceId)
+    .eq("connection_id", auth.connectionId);
+  if (!error || isMissingDeviceSchema(error)) return;
+  throw mapDatabaseError(error);
 }
 
 async function persistModelCatalog(
@@ -173,6 +196,25 @@ function isMissingQuotaSchema(error: {
     .filter(Boolean)
     .join(" ")
     .includes("quota");
+}
+
+function isMissingDeviceSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return source.includes("device_id") || source.includes("device_label");
 }
 
 export async function heartbeatSession(

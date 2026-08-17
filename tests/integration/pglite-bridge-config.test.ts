@@ -26,7 +26,18 @@ const configMigrations = [
   "20260811130000_session_process_detail_sync.sql",
   "20260811140000_bridge_working_directories.sql",
   "20260811150000_web_managed_working_directories.sql",
+  "20260811160000_normalize_legacy_unassigned_tasks.sql",
   "20260812100000_bridge_full_access_default.sql",
+  "20260812130000_session_turn_images.sql",
+  "20260813110000_thread_model_settings.sql",
+  "20260813134500_existing_thread_settings.sql",
+  "20260813143000_turn_model_settings.sql",
+  "20260813170000_dynamic_model_catalog.sql",
+  "20260815120000_planning_workspace.sql",
+  "20260815150000_turn_goal_mode.sql",
+  "20260816120000_web_create_working_directories.sql",
+  "20260817120000_connection_quota.sql",
+  "20260818000000_bridge_device_identity.sql",
 ];
 
 describe("Bridge remote configuration migration", () => {
@@ -876,6 +887,62 @@ describe("Bridge remote configuration migration", () => {
       workingDirectories: null,
     });
     expect(replay).toEqual(first);
+  });
+
+  it("accepts and persists the per-entry create_if_missing authorization flag", async () => {
+    const updated = await updateConfiguration({
+      expectedVersion: 3,
+      idempotencyKey: "bridge-config/directories/create-if-missing",
+      requestHash: "bridge-config-directories-create-if-missing".padEnd(
+        64,
+        "0",
+      ),
+      workingDirectories: [
+        {
+          directory_key: "main",
+          name: "Main project",
+          working_directory: "/srv/main",
+        },
+        {
+          directory_key: "web-app",
+          name: "Web app",
+          working_directory: "/srv/web-app",
+          create_if_missing: true,
+        },
+      ],
+    });
+    expect(updated.configuration).toMatchObject({
+      version: 4,
+      desired: {
+        working_directories: [
+          expect.objectContaining({ directory_key: "main" }),
+          expect.objectContaining({
+            directory_key: "web-app",
+            create_if_missing: true,
+          }),
+        ],
+      },
+    });
+
+    await expect(
+      updateConfiguration({
+        expectedVersion: 4,
+        idempotencyKey: "bridge-config/directories/create-if-missing-invalid",
+        requestHash:
+          "bridge-config-directories-create-if-missing-invalid".padEnd(
+            64,
+            "0",
+          ),
+        workingDirectories: [
+          {
+            directory_key: "main",
+            name: "Main project",
+            working_directory: "/srv/main",
+            create_if_missing: "yes",
+          },
+        ],
+      }),
+    ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
   });
 
   it("denies revoked/cross-workspace updates and exposes RPCs only to service_role", async () => {

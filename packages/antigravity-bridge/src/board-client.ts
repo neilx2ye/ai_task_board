@@ -5,6 +5,10 @@ import type {
   AntigravityBridgeConfiguration,
   ManagedWorkingDirectory,
 } from "./config.js";
+import {
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
 import type { SyncedQuota } from "./quota.js";
 import {
   delay,
@@ -14,7 +18,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.2.0-antigravity.1";
+export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.3.0-antigravity.1";
 
 export type BoardSession = {
   id: string;
@@ -143,10 +147,15 @@ function parseRemoteConfigurationResponse(
 }
 
 export class BoardClient {
+  private readonly deviceIdentity: DeviceIdentity;
+
   constructor(
     private readonly configuration: AntigravityBridgeConfiguration,
     private readonly isStopping: () => boolean,
-  ) {}
+    deviceIdentity?: DeviceIdentity,
+  ) {
+    this.deviceIdentity = deviceIdentity ?? loadDeviceIdentity();
+  }
 
   async request<T>(
     pathname: string,
@@ -246,6 +255,8 @@ export class BoardClient {
         idempotencyKey: idempotencyKey("sync-sessions"),
         body: {
           bridge_version: ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION,
+          device_id: this.deviceIdentity.deviceId,
+          device_label: this.deviceIdentity.deviceLabel,
           ...(quota === undefined ? {} : { quota }),
           model_catalog: modelCatalog,
           directories: directories.map((directory) => ({

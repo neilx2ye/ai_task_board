@@ -129,7 +129,7 @@ npx --yes ai-task-board-bridge@1.2.0 run codex
 | `CODEX_BRIDGE_WEB_CONFIG` | 否 | `false` | `true` 才允许 Web Console 动态启停、切换标题、调整受约束数量，并直接设置设备级并发上限 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES` | 否 | `false` | `true` 才允许 Web Console 开启标题上传；本机已设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` 时也视为已授权 |
 | `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | `false` | `true` 才允许 Web Console 开启旧历史同步；授权后仍需网页显式开启 |
-| `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | `false` | `true` 才允许 Web Console 用项目 key、名称和绝对路径替换运行时目录清单；Bridge 会验证每个路径存在且为目录 |
+| `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | `false` | `true` 才允许 Web Console 用项目 key、名称和绝对路径替换运行时目录清单；Bridge 会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
 | `CODEX_BRIDGE_MAX_HISTORY_TURNS` | 否 | `50` | 每个 thread 可同步的最近完成 turn 本机上限，范围 `1..200` |
 | `CODEX_MODEL` | 否 | 空 | thread 未报告模型时使用的 Board 展示标签，不覆盖实际模型 |
 | `CODEX_CAPABILITIES` | 否 | `coding,shell,file-edit,multi-thread,app-server` | 用于 Board 任务能力匹配的列表 |
@@ -148,7 +148,7 @@ npx --yes ai-task-board-bridge@1.2.0 run codex
 
 ## Web Console 动态配置
 
-设备显式设置 `CODEX_BRIDGE_WEB_CONFIG=true` 后，Workspace Owner 可以在“AI 连接 → Bridge 设置”调整 Bridge 启停、是否上传 thread 标题、是否同步历史、最大 thread 数、最大并行 turn 数和最近历史 turn 数。最大并行 turn 数在 `1..32` 内由网页直接设置为整台设备的运行上限，不再与本机上限做二次比较。Bridge 0.8 还可管理 1 到 100 个项目工作目录；该能力必须由设备额外设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用。Bridge 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
+设备显式设置 `CODEX_BRIDGE_WEB_CONFIG=true` 后，Workspace Owner 可以在“AI 连接 → Bridge 设置”调整 Bridge 启停、是否上传 thread 标题、是否同步历史、最大 thread 数、最大并行 turn 数和最近历史 turn 数。最大并行 turn 数在 `1..32` 内由网页直接设置为整台设备的运行上限，不再与本机上限做二次比较。Bridge 0.8 还可管理 1 到 100 个项目工作目录；该能力必须由设备额外设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用。Bridge 1.3.0 起，授权后 Web「新建项目」下发的条目可携带 `create_if_missing` 授权设备创建缺失路径，且 Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的 device id 与 hostname 标签），看板据此把同一台设备上的多个 Bridge 归为一组。Bridge 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
 
 网页配置默认不能扩大本机目录边界：未开启远程目录授权时，Bridge 会忽略网页目录并继续使用启动时的 `CODEX_WORKING_DIRECTORY` / `CODEX_WORKING_DIRECTORIES`。设备明确授权后，网页可以提交稳定 key、显示名称和本机绝对路径；Bridge 会再次校验格式、重复项、绝对路径及目录存在性，再安全停止已被排除的 worker、更新实际清单并回报结果。这个 opt-in 允许 Workspace Owner 扩大同一 Bridge 进程的 Codex 工作范围，应只授予受信 Owner。`cwd/all` 范围、固定 thread、Codex 路径、Connection Token、权限模式与审批模式仍只由设备环境决定；Thread 数仍会夹紧到本机上限，最大并行 turn 数则由网页在 `1..32` 内统一设置，标题与历史仍各自需要本机授权。网页停用 Bridge 时，进程仍保持在线以接收后续配置，但会先安全停止 worker、释放任务，再提交空的权威 thread 清单并取消后台历史扫描。
 

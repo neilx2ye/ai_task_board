@@ -23,8 +23,10 @@ import {
 import {
   directoryForWorkingDirectory,
   loadConfiguration,
+  parseRemoteWorkingDirectories,
   workingDirectoryForKey,
   type AntigravityBridgeConfiguration,
+  type ManagedWorkingDirectory,
 } from "./config.js";
 import { fetchAntigravityQuota, type SyncedQuota } from "./quota.js";
 import { BridgeRegistry } from "./registry.js";
@@ -149,6 +151,7 @@ export type ResolvedAntigravityRemoteConfiguration = {
     maxConcurrentTurns: number;
     syncHistory: boolean;
     historyTurnLimit: number;
+    workingDirectories: ManagedWorkingDirectory[];
   };
   warnings: string[];
 };
@@ -172,13 +175,22 @@ export function resolveRemoteConfiguration(
       "Antigravity Bridge 不支持历史同步，忽略看板的历史同步请求",
     );
   }
+  let workingDirectories = configuration.localWorkingDirectories.map(
+    (directory) => ({ ...directory }),
+  );
   if (
     desired.working_directories !== null &&
     desired.working_directories !== undefined
   ) {
-    warnings.push(
-      "Antigravity Bridge 不支持 Web 工作目录管理，继续使用本机启动目录",
-    );
+    if (configuration.allowRemoteWorkingDirectories) {
+      workingDirectories = parseRemoteWorkingDirectories(
+        desired.working_directories,
+      );
+    } else {
+      warnings.push(
+        "看板请求配置工作目录，但设备未启用 ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION；继续使用本机启动目录",
+      );
+    }
   }
   return {
     effective: {
@@ -207,6 +219,7 @@ export function resolveRemoteConfiguration(
         "history_turn_limit",
         warnings,
       ),
+      workingDirectories,
     },
     warnings,
   };
@@ -691,7 +704,7 @@ export class AntigravityBridge {
 
   private configurationStatus(releaseRuntime = false): Record<string, unknown> {
     this.reportSequence += 1;
-    const firstDirectory = this.configuration.workingDirectories[0];
+    const firstDirectory = this.configuration.localWorkingDirectories[0];
     return {
       runtime_instance_id: this.runtimeInstanceId,
       report_sequence: this.reportSequence,
@@ -727,7 +740,8 @@ export class AntigravityBridge {
           this.configuration.approvalMode === "accept" ? "accept" : "decline",
         allow_history_sync: false,
         max_history_turns: MAX_HISTORY_TURNS,
-        allow_working_directory_configuration: false,
+        allow_working_directory_configuration:
+          this.configuration.allowRemoteWorkingDirectories,
       },
       error: this.configurationError,
     };
@@ -853,6 +867,9 @@ export class AntigravityBridge {
         maxThreads: this.configuration.maxThreads,
         maxConcurrentTurns: this.configuration.maxConcurrentTurns,
         historyTurnLimit: this.configuration.historyTurnLimit,
+        workingDirectories: this.configuration.workingDirectories.map(
+          (directory) => ({ ...directory }),
+        ),
       };
       let resolved: ResolvedAntigravityRemoteConfiguration;
       try {
@@ -875,6 +892,10 @@ export class AntigravityBridge {
         resolved.effective.maxConcurrentTurns;
       this.configuration.historyTurnLimit =
         resolved.effective.historyTurnLimit;
+      this.configuration.workingDirectories =
+        resolved.effective.workingDirectories.map((directory) => ({
+          ...directory,
+        }));
       this.limiter.resize(resolved.effective.maxConcurrentTurns);
       this.configurationError = resolved.warnings.length
         ? resolved.warnings.join("；")
@@ -896,6 +917,7 @@ export class AntigravityBridge {
         this.configuration.maxConcurrentTurns =
           previous.maxConcurrentTurns;
         this.configuration.historyTurnLimit = previous.historyTurnLimit;
+        this.configuration.workingDirectories = previous.workingDirectories;
         this.limiter.resize(previous.maxConcurrentTurns);
         this.configurationError = [
           this.configurationError,
@@ -912,7 +934,7 @@ export class AntigravityBridge {
       process.stdout.write(
         `已应用 Web Bridge 配置 version=${remote.version}：${
           this.configuration.enabled ? "已启用" : "已停用"
-        }，最多 ${this.configuration.maxThreads} 个 Thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
+        }，${this.configuration.workingDirectories.length} 个工作目录，最多 ${this.configuration.maxThreads} 个 Thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
       );
 
       response = await this.exchangeRuntimeLease();

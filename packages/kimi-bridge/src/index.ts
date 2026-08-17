@@ -17,6 +17,7 @@ export {
 export {
   directoryForWorkingDirectory,
   loadConfiguration,
+  parseRemoteWorkingDirectories,
   parseWorkingDirectories,
   workingDirectoryForKey,
   type KimiAgentMode,
@@ -24,6 +25,11 @@ export {
   type KimiBridgeConfiguration,
   type ManagedWorkingDirectory,
 } from "./config.js";
+export {
+  deviceIdentityFile,
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
 export {
   KimiBridge,
   prepareKimiSession,

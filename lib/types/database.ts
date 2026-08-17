@@ -155,6 +155,8 @@ export type AIConnectionBridgeSettingsRow = {
   model_catalog_updated_at: string | null;
   quota: Json | null;
   quota_updated_at: string | null;
+  device_id: string | null;
+  device_label: string | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -203,6 +205,8 @@ export type AIConnectionBridgeSettingsInsert = {
   model_catalog_updated_at?: string | null;
   quota?: Json | null;
   quota_updated_at?: string | null;
+  device_id?: string | null;
+  device_label?: string | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -835,6 +839,8 @@ export type BridgeWorkingDirectory = {
   directory_key: string;
   name: string;
   working_directory: string;
+  /** 授权设备在路径不存在时创建该目录；缺省保持 fail-closed。 */
+  create_if_missing?: boolean;
 };
 
 export type BridgeDesiredConfiguration = {
@@ -886,6 +892,19 @@ export type BridgeConfiguration = {
 
 export type BridgeConfigurationResponse = {
   configuration: BridgeConfiguration;
+};
+
+export type ProjectDispatchStatus = "submitted" | "skipped" | "failed";
+
+export type ProjectDispatchResult = {
+  connection_id: string;
+  connection_name: string;
+  status: ProjectDispatchStatus;
+  reason?: string;
+};
+
+export type CreateProjectResponse = {
+  results: ProjectDispatchResult[];
 };
 
 type IdempotencyArgs = {

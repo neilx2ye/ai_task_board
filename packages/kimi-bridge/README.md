@@ -61,14 +61,31 @@ settings from the Board UI:
 - change the thread cap and device-wide concurrent-turn cap;
 - toggle session-title upload, when the device authorizes it with
   `KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true` or
-  `KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true`.
+  `KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true`;
+- replace the effective working-directory list, when the device authorizes it
+  with `KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`.
 
 `KIMI_MAX_THREADS` remains the immutable local ceiling: Web can lower the
 runtime cap but never exceed it. `KIMI_MAX_CONCURRENT_TURNS` is the startup
 value; with Web configuration enabled the Board owns the live 1..32 limit.
-Kimi does not implement thread-history import or Web-managed working
-directories, so those Codex-specific controls are hidden and the local
-`KIMI_WORKING_DIRECTORIES` allowlist always wins.
+Kimi does not implement thread-history import, so that Codex-specific control
+is hidden.
+
+With `KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true` a Board-provided
+list must contain 1 to 100 unique entries with absolute paths that already
+exist and are directories; an entry may carry `create_if_missing: true` to
+authorize the device to create the path with `mkdir -p` first. The applied
+list replaces the effective allowlist at runtime: the next inventory sync
+re-attributes Sessions to the new directories, Sessions outside it are
+retired, and Web Thread creation resolves `directory_key` against it. A null
+or locally denied remote list restores the immutable
+`KIMI_WORKING_DIRECTORIES` startup list.
+
+Every session-inventory sync also reports `device_id` (a UUID generated on
+first start and persisted with `0600` permissions to
+`$XDG_CONFIG_HOME/ai-task-board/device-id`, shared with the other AI Task
+Board bridges on the same host) and `device_label` (the OS hostname), so the
+Board can group runtimes by device.
 
 ## Execution and safety
 

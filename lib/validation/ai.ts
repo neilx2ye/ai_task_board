@@ -132,6 +132,8 @@ export const syncSessionsSchema = z
     bridge_version: nonEmptyText.max(100),
     quota: syncedQuotaSchema.optional(),
     model_catalog: z.array(syncedModelCatalogEntrySchema).max(500).optional(),
+    device_id: nonEmptyText.max(100).optional(),
+    device_label: nonEmptyText.max(255).optional(),
     directories: z
       .array(syncedBridgeDirectorySchema)
       .min(1)

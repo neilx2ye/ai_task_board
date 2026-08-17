@@ -17,6 +17,9 @@ export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
   model_catalog_updated_at?: string | null;
   quota?: Json | null;
   quota_updated_at?: string | null;
+  /** Bridge 自上报的稳定设备标识；旧 Bridge 未上报时为 null。 */
+  device_id?: string | null;
+  device_label?: string | null;
 };
 
 export type ConnectionWithToken = {
@@ -70,6 +73,20 @@ export function supportsWorkingDirectoryInventory(
   connection: Pick<AIConnectionRow, "bridge_version">,
 ): boolean {
   return supportsBridgeMinorVersion(connection, 7);
+}
+
+/**
+ * 设备端创建项目目录（create_if_missing）与设备标识上报从 Bridge 1.3.0 开始；
+ * 同时 Kimi / Antigravity 运行时的 Web 目录管理也在该版本加入。
+ */
+export function supportsManagedDirectoryCreation(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 3);
 }
 
 export function useConnections(enabled = true) {

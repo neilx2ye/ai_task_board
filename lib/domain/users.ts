@@ -128,19 +128,56 @@ function isMissingQuotaSchema(error: {
     .includes("quota");
 }
 
+function isMissingDeviceSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return source.includes("device_id") || source.includes("device_label");
+}
+
 async function loadConnectionModelSettings(
   admin: AdminClient,
   workspaceId: string,
   connectionIds: readonly string[],
 ) {
   return collectChunkedRows(connectionIds, async (ids) => {
-    const { data, error } = await admin
+    let { data, error } = await admin
       .from("ai_connection_bridge_settings")
       .select(
-        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at",
+        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label",
       )
       .eq("workspace_id", workspaceId)
       .in("connection_id", [...ids]);
+    if (error && isMissingDeviceSchema(error)) {
+      // 滚动部署：设备标识迁移可能落后于 Web 发布，先退回无设备列的查询。
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? fallback.data.map((row) => ({
+            ...row,
+            device_id: null,
+            device_label: null,
+          }))
+        : null;
+      error = fallback.error;
+    }
     if (error && !isMissingModelCatalogSchema(error)) {
       if (isMissingQuotaSchema(error)) {
         const legacy = await admin
@@ -153,6 +190,8 @@ async function loadConnectionModelSettings(
           ...row,
           quota: null,
           quota_updated_at: null,
+          device_id: null,
+          device_label: null,
         }));
       }
       throw mapDatabaseError(error);
@@ -638,6 +677,8 @@ export async function listConnections(context: UserWorkspaceContext) {
           modelSettings?.model_catalog_updated_at ?? null,
         quota: modelSettings?.quota ?? null,
         quota_updated_at: modelSettings?.quota_updated_at ?? null,
+        device_id: modelSettings?.device_id ?? null,
+        device_label: modelSettings?.device_label ?? null,
       };
     }),
   };

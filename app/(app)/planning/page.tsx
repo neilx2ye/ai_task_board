@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
+import { useHiddenProjects } from "@/hooks/use-hidden-projects";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 import { useSessions } from "@/hooks/use-sessions";
 import {
@@ -32,6 +33,7 @@ import {
 import { useWorkspace } from "@/hooks/use-workspace";
 import { agentDisplayName } from "@/lib/agent-platforms";
 import {
+  excludeHiddenProjects,
   filterConnectionGroupsByProject,
   groupSessionsByConnection,
   listSessionProjects,
@@ -77,6 +79,8 @@ export default function PlanningPage() {
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
   // 项目 Tab 过滤：与会话页共享并用 localStorage 记忆，null 表示「全部」。
   const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
+  // 「管理项目」里隐藏的项目：从 Tab 链与「全部」视图剔除（浏览器本地）。
+  const { hiddenProjectIds, setProjectHidden } = useHiddenProjects();
   const [pickerTarget, setPickerTarget] = useState<ThreadPickerTarget | null>(
     null,
   );
@@ -126,13 +130,31 @@ export default function PlanningPage() {
     () => connectionGroups.flatMap((group) => group.sessions),
     [connectionGroups],
   );
-  const projects = useMemo(
+  const allProjects = useMemo(
     () => listSessionProjects(connectionGroups),
     [connectionGroups],
   );
+  const projects = useMemo(
+    () =>
+      allProjects.filter((project) => !hiddenProjectIds.has(project.id)),
+    [allProjects, hiddenProjectIds],
+  );
+  const visibleProjectGroups = useMemo(
+    () => excludeHiddenProjects(connectionGroups, hiddenProjectIds),
+    [connectionGroups, hiddenProjectIds],
+  );
   const visibleGroups = useMemo(
-    () => filterConnectionGroupsByProject(connectionGroups, selectedProjectId),
-    [connectionGroups, selectedProjectId],
+    () =>
+      filterConnectionGroupsByProject(visibleProjectGroups, selectedProjectId),
+    [visibleProjectGroups, selectedProjectId],
+  );
+  const allVisibleSessionCount = useMemo(
+    () =>
+      visibleProjectGroups.reduce(
+        (count, group) => count + group.sessions.length,
+        0,
+      ),
+    [visibleProjectGroups],
   );
   const visibleSessions = useMemo(
     () => visibleGroups.flatMap((group) => group.sessions),
@@ -326,9 +348,15 @@ export default function PlanningPage() {
         <>
           <ProjectTabBar
             projects={projects}
+            allProjects={allProjects}
+            hiddenProjectIds={hiddenProjectIds}
+            onToggleHiddenProject={setProjectHidden}
             selectedProjectId={selectedProjectId}
             onSelect={setSelectedProjectId}
-            totalSessionCount={sessions.length}
+            totalSessionCount={allVisibleSessionCount}
+            connections={connectionsQuery.data ?? []}
+            canManage={Boolean(isOwner)}
+            onNotice={setNotice}
           />
           <div
             className={cn(

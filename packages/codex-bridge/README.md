@@ -157,8 +157,11 @@ The device environment remains the immutable security boundary:
 - Web working-directory configuration is denied unless the device explicitly
   sets `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`. A remote list must
   contain 1 to 100 unique entries with absolute paths that already exist and are
-  directories. Missing, null, or locally denied remote values retain the
-  immutable `CODEX_WORKING_DIRECTORIES` / `CODEX_WORKING_DIRECTORY` startup list.
+  directories. An entry may carry `create_if_missing: true`, which authorizes
+  the device to create the path with `mkdir -p` before validating it; without
+  the flag the check stays fail-closed. Missing, null, or locally denied
+  remote values retain the immutable `CODEX_WORKING_DIRECTORIES` /
+  `CODEX_WORKING_DIRECTORY` startup list.
 - The Board cannot change the URL/token, Codex executable, thread scope/fixed
   thread, permission mode, approval mode, or the immutable local fallback list.
 
@@ -177,6 +180,17 @@ still valid. Lease renewal runs independently from inventory/config application,
 at least every 10 seconds, and a local safety deadline stops workers before a
 lease can expire during a prolonged Board outage. The deprecated-Board 404
 fallback cannot provide this single-runtime fence.
+
+## Device identity
+
+Every session-inventory sync (`POST /api/ai/sessions/sync`) carries two flat
+fields: `device_id` and `device_label` (the OS hostname). The device ID is a
+UUID generated on first Bridge start and persisted to
+`$XDG_CONFIG_HOME/ai-task-board/device-id` (default
+`~/.config/ai-task-board/device-id`) with `0600` permissions. All AI Task
+Board bridges on the same host share that file, so the Board can group the
+Codex, Kimi, and Antigravity runtimes of one device. If the file cannot be
+written, the Bridge logs a warning and runs with an ephemeral ID.
 
 ## Web Thread management
 

@@ -15,6 +15,11 @@ export {
   WakeLatch,
 } from "./wake-client.js";
 export {
+  deviceIdentityFile,
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
+export {
   BRIDGE_SETUP_CHOICES,
   parseBridgeRunTarget,
   parseBridgeSetupTarget,

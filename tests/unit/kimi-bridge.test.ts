@@ -169,6 +169,7 @@ describe("Kimi Bridge remote configuration", () => {
       maxConcurrentTurns: 4,
       syncHistory: false,
       historyTurnLimit: 500,
+      workingDirectories: base.localWorkingDirectories,
     });
     expect(resolved.warnings.join("")).toContain("max_threads=20");
     expect(resolved.warnings.join("")).toContain("历史同步");

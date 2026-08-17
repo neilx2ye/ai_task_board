@@ -64,14 +64,31 @@ Bridge settings from the Board UI:
   turns, and Web Thread creation is rejected);
 - change the thread cap and device-wide concurrent-turn cap;
 - toggle thread-title upload. Antigravity uploads titles by default, so Web
-  can only reduce that exposure.
+  can only reduce that exposure;
+- replace the effective working-directory list, when the device authorizes it
+  with `ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`.
 
 `ANTIGRAVITY_MAX_THREADS` remains the immutable local ceiling: Web can lower
 the runtime cap but never exceed it. `ANTIGRAVITY_MAX_CONCURRENT_TURNS` is the
 startup value; with Web configuration enabled the Board owns the live 1..32
-limit. Antigravity does not implement thread-history import or Web-managed
-working directories, so those Codex-specific controls are hidden and the local
-`ANTIGRAVITY_WORKING_DIRECTORIES` allowlist always wins.
+limit. Antigravity does not implement thread-history import, so that
+Codex-specific control is hidden.
+
+With `ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true` a
+Board-provided list must contain 1 to 100 unique entries with absolute paths
+that already exist and are directories; an entry may carry
+`create_if_missing: true` to authorize the device to create the path with
+`mkdir -p` first. The applied list replaces the effective allowlist at
+runtime: the next inventory sync re-attributes Threads to the new
+directories, Threads outside it are retired, and Web Thread creation resolves
+`directory_key` against it. A null or locally denied remote list restores the
+immutable `ANTIGRAVITY_WORKING_DIRECTORIES` startup list.
+
+Every session-inventory sync also reports `device_id` (a UUID generated on
+first start and persisted with `0600` permissions to
+`$XDG_CONFIG_HOME/ai-task-board/device-id`, shared with the other AI Task
+Board bridges on the same host) and `device_label` (the OS hostname), so the
+Board can group runtimes by device.
 
 ## Execution and safety
 

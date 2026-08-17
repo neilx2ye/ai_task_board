@@ -24,6 +24,7 @@ export {
   defaultRegistryFile,
   directoryForWorkingDirectory,
   loadConfiguration,
+  parseRemoteWorkingDirectories,
   parseWorkingDirectories,
   workingDirectoryForKey,
   type AntigravityAgentMode,
@@ -31,6 +32,11 @@ export {
   type AntigravityBridgeConfiguration,
   type ManagedWorkingDirectory,
 } from "./config.js";
+export {
+  deviceIdentityFile,
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
 export { BridgeRegistry, type RegistryBinding } from "./registry.js";
 export {
   AntigravityBridge,

@@ -30,6 +30,10 @@ import {
   nextClaimAction,
 } from "./claim-retry.js";
 import {
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
+import {
   adaptiveIdlePollDelay,
   runSessionWakeListener,
   WakeLatch,
@@ -55,7 +59,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.2.0";
+const BRIDGE_VERSION = "1.3.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -1156,10 +1160,15 @@ function inventoryThread(
 }
 
 class BoardClient {
+  private readonly deviceIdentity: DeviceIdentity;
+
   constructor(
     private readonly configuration: BridgeConfiguration,
     private readonly isStopping: () => boolean,
-  ) {}
+    deviceIdentity?: DeviceIdentity,
+  ) {
+    this.deviceIdentity = deviceIdentity ?? loadDeviceIdentity();
+  }
 
   async request<T>(
     pathname: string,
@@ -1269,6 +1278,8 @@ class BoardClient {
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      device_id: this.deviceIdentity.deviceId,
+      device_label: this.deviceIdentity.deviceLabel,
       ...(quota === undefined ? {} : { quota }),
       ...(modelCatalog === undefined
         ? {}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  excludeHiddenProjects,
   filterConnectionGroupsByProject,
   groupSessionsByConnection,
   listSessionProjects,
@@ -258,6 +259,21 @@ describe("Session project tabs", () => {
 
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.connection.id).toBe(secondConnection.id);
+    expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
+  });
+
+  it("excludes hidden projects and drops fully hidden connections", () => {
+    const groups = twoConnectionGroups();
+
+    expect(excludeHiddenProjects(groups, new Set())).toHaveLength(2);
+
+    const filtered = excludeHiddenProjects(
+      groups,
+      new Set(["path:/workspace/alpha", "unassigned"]),
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.connection.id).toBe(secondConnection.id);
+    expect(filtered[0]?.directories.map((item) => item.name)).toEqual(["beta"]);
     expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
   });
 });

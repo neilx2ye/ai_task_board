@@ -14,6 +14,7 @@ export const bridgeWorkingDirectorySchema = z
     directory_key: bridgeDirectoryKeySchema,
     name: nonEmptyText.max(200),
     working_directory: nonEmptyText.max(4096),
+    create_if_missing: z.boolean().optional(),
   })
   .strict();
 

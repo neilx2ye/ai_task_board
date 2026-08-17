@@ -267,3 +267,33 @@ export function filterConnectionGroupsByProject(
     ];
   });
 }
+
+/** 「全部」视图：剔除被用户隐藏的项目目录；不含任何可见目录的 Bridge 整个隐藏。 */
+export function excludeHiddenProjects(
+  groups: readonly SessionConnectionGroup[],
+  hiddenProjectIds: ReadonlySet<string>,
+): SessionConnectionGroup[] {
+  if (hiddenProjectIds.size === 0) return [...groups];
+
+  return groups.flatMap((group) => {
+    const directories = group.directories.filter(
+      (directory) => !hiddenProjectIds.has(sessionProjectIdForDirectory(directory)),
+    );
+    if (directories.length === 0) return [];
+
+    const visibleSessionIds = new Set(
+      directories.flatMap((directory) =>
+        directory.sessions.map((session) => session.id),
+      ),
+    );
+    return [
+      {
+        ...group,
+        directories,
+        sessions: group.sessions.filter((session) =>
+          visibleSessionIds.has(session.id),
+        ),
+      },
+    ];
+  });
+}
