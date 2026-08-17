@@ -20,6 +20,8 @@ export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
   /** Bridge 自上报的稳定设备标识；旧 Bridge 未上报时为 null。 */
   device_id?: string | null;
   device_label?: string | null;
+  /** Owner 设置的自更新目标版本；null 表示无待升级。 */
+  desired_bridge_version?: string | null;
 };
 
 export type ConnectionWithToken = {
@@ -33,7 +35,7 @@ export type ConnectionInput = {
   platform: string;
 };
 
-const CONNECTIONS_KEY = ["connections"] as const;
+export const CONNECTIONS_KEY = ["connections"] as const;
 
 /** 防御性过滤：列表只保留未被撤销的连接（revoked_at 为 null）。 */
 export function activeConnections(
@@ -87,6 +89,20 @@ export function supportsManagedDirectoryCreation(
   const major = Number(match[1]);
   const minor = Number(match[2]);
   return major > 1 || (major === 1 && minor >= 3);
+}
+
+/**
+ * Web 触发的 Bridge 自更新从 1.4.0 开始携带更新器；
+ * 更早的版本只能在设备上手动升级一次。
+ */
+export function supportsRemoteBridgeUpdate(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 4);
 }
 
 export function useConnections(enabled = true) {

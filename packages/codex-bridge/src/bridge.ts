@@ -47,6 +47,7 @@ import {
   remoteWorkingDirectories,
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
+import { maybeApplyDesiredBridgeUpdate } from "./update-manager.js";
 
 export {
   isExactWorkingDirectory,
@@ -59,7 +60,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.3.0";
+const BRIDGE_VERSION = "1.4.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -237,6 +238,7 @@ export type BridgeConfiguration = {
   localMaxThreads: number;
   localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
+  allowRemoteUpdate: boolean;
   codexBinary: string;
 };
 
@@ -245,6 +247,8 @@ type RemoteConfigurationResponse = {
     connection_id: string;
     version: number;
     desired: RemoteBridgeConfigurationDesired;
+    /** Board-requested npm package version; null when absent or not a string. */
+    desired_bridge_version: string | null;
     applied?: unknown;
     updated_at: string;
   };
@@ -774,6 +778,9 @@ export function loadConfiguration(
     webConfigurationEnabled: parseBoolean(
       environment.CODEX_BRIDGE_WEB_CONFIG,
     ),
+    allowRemoteUpdate: parseBoolean(
+      environment.AI_TASK_BOARD_ALLOW_REMOTE_UPDATE,
+    ),
     codexBinary: environment.CODEX_BINARY?.trim() || "codex",
   };
 }
@@ -1087,6 +1094,7 @@ function parseRemoteConfigurationResponse(
             ? null
             : (desired.working_directories as RemoteWorkingDirectory[] | null),
       },
+      desired_bridge_version: stringValue(configuration.desired_bridge_version),
       applied: configuration.applied,
       updated_at: stringValue(configuration.updated_at) ?? "",
     },
@@ -2831,6 +2839,7 @@ class DeviceBridge {
   private stopPromise: Promise<void> | null = null;
   private appliedConfigurationVersion: number | null = null;
   private configurationError: string | null = null;
+  private updateError: string | null = null;
   private effectiveConfigurationKnown = true;
   private readonly runtimeInstanceId = randomUUID();
   private reportSequence = 0;
@@ -3179,10 +3188,15 @@ class DeviceBridge {
           )
         : null,
       constraints: bridgeConfigurationConstraints(this.configuration),
-      error: this.configurationError
-        ? redactHarnessText(this.configurationError, 2_000)
-        : null,
+      error: this.statusError(),
     };
+  }
+
+  private statusError(): string | null {
+    const combined = [this.configurationError, this.updateError]
+      .filter(Boolean)
+      .join("；");
+    return combined ? redactHarnessText(combined, 2_000) : null;
   }
 
   private async exchangeRemoteConfiguration(
@@ -3216,6 +3230,18 @@ class DeviceBridge {
         requestStartedAt +
         this.configuration.configurationLeaseSeconds * 1_000 -
         this.configurationLeaseSafetyMarginMs();
+    }
+    if (!releaseRuntime && !this.stopping) {
+      // A successful exchange may carry the Board's desired Bridge version.
+      // A failed update never throws; the error is reported in the next
+      // exchange's error field, and a successful one exits the process so
+      // systemd restarts it on the new version.
+      const updateError = await maybeApplyDesiredBridgeUpdate({
+        desiredVersion: response.configuration.desired_bridge_version,
+        currentVersion: BRIDGE_VERSION,
+        allowRemoteUpdate: this.configuration.allowRemoteUpdate,
+      });
+      if (updateError) this.updateError = updateError;
     }
     return response;
   }

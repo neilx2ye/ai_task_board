@@ -18,7 +18,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.3.0-kimi.1";
+export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.4.0-kimi.1";
 
 export type BoardSession = {
   id: string;
@@ -81,6 +81,8 @@ export type RemoteConfigurationResponse = {
     connection_id: string;
     version: number;
     desired: RemoteDesiredConfiguration;
+    /** Board-requested npm package version; null when absent or not a string. */
+    desired_bridge_version?: string | null;
     applied?: unknown;
     updated_at: string;
   };
@@ -140,6 +142,7 @@ function parseRemoteConfigurationResponse(
             ? null
             : desired.working_directories,
       },
+      desired_bridge_version: stringValue(configuration.desired_bridge_version),
       applied: configuration.applied,
       updated_at: stringValue(configuration.updated_at) ?? "",
     },

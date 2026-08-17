@@ -111,6 +111,11 @@ beforeEach(() => {
     databaseMocks.settingsQuery,
   );
   databaseMocks.settingsQuery.eq.mockReturnValue(databaseMocks.settingsQuery);
+  // attachDesiredBridgeVersion 的旁挂读取：默认无待升级目标。
+  databaseMocks.settingsQuery.maybeSingle.mockResolvedValue({
+    data: { desired_bridge_version: null },
+    error: null,
+  });
   databaseMocks.from.mockImplementation((table: string) =>
     table === "ai_connections"
       ? databaseMocks.connectionQuery
@@ -131,9 +136,10 @@ describe("Bridge configuration migration compatibility", () => {
       )
       .mockResolvedValueOnce(response);
 
-    await expect(exchangeBridgeConfiguration(auth, input)).resolves.toBe(
-      response,
-    );
+    // 注入 desired_bridge_version 后返回新对象，不再与 RPC 响应同引用。
+    await expect(exchangeBridgeConfiguration(auth, input)).resolves.toEqual({
+      configuration: { version: 5, desired_bridge_version: null },
+    });
 
     expect(rpcMocks.callDomainRpc).toHaveBeenCalledTimes(2);
     expect(rpcMocks.callDomainRpc.mock.calls[0]?.[1]).toMatchObject({

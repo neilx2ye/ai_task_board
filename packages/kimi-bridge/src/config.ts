@@ -28,6 +28,7 @@ export type KimiBridgeConfiguration = {
   allowRemoteThreadTitles: boolean;
   allowRemoteWorkingDirectories: boolean;
   webConfigurationEnabled: boolean;
+  allowRemoteUpdate: boolean;
   /** Runtime switch; when false, workers heartbeat but claim no Web turns. */
   enabled: boolean;
   sessionNamePrefix: string | null;
@@ -300,6 +301,9 @@ export function loadConfiguration(
     ),
     webConfigurationEnabled: parseBoolean(
       environment.KIMI_BRIDGE_WEB_CONFIG,
+    ),
+    allowRemoteUpdate: parseBoolean(
+      environment.AI_TASK_BOARD_ALLOW_REMOTE_UPDATE,
     ),
     enabled: true,
     sessionNamePrefix: environment.KIMI_SESSION_NAME?.trim() || null,

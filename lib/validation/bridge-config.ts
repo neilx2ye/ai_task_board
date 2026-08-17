@@ -69,6 +69,13 @@ export const updateBridgeConfigurationSchema =
     })
     .strict();
 
+/** Web 触发的 Bridge 自更新目标版本；null 表示取消待升级。 */
+export const updateBridgeVersionSchema = z
+  .object({
+    target_version: nonEmptyText.max(50).nullable(),
+  })
+  .strict();
+
 export const bridgeConfigurationConstraintsSchema = z
   .object({
     remote_configuration_enabled: z.boolean(),
@@ -177,6 +184,9 @@ export const exchangeBridgeConfigurationSchema = z
 
 export type UpdateBridgeConfigurationInput = z.infer<
   typeof updateBridgeConfigurationSchema
+>;
+export type UpdateBridgeVersionInput = z.infer<
+  typeof updateBridgeVersionSchema
 >;
 export type ExchangeBridgeConfigurationInput = z.infer<
   typeof exchangeBridgeConfigurationSchema

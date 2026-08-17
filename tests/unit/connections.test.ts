@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeConnections,
   supportsManagedDirectoryCreation,
+  supportsRemoteBridgeUpdate,
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
   supportsWebThreadRename,
@@ -110,6 +111,23 @@ describe("activeConnections", () => {
   ])("识别 Bridge %s 的设备端建目录能力", (bridgeVersion, expected) => {
     expect(
       supportsManagedDirectoryCreation(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["1.4.0", true],
+    ["1.4.0-kimi.1", true],
+    ["1.4.0-antigravity.1", true],
+    ["2.0.0", true],
+    ["1.3.0", false],
+    ["0.9.0", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的远程自更新能力", (bridgeVersion, expected) => {
+    expect(
+      supportsRemoteBridgeUpdate(
         connection({ bridge_version: bridgeVersion as string | null }),
       ),
     ).toBe(expected);

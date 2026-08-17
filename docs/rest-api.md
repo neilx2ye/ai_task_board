@@ -58,6 +58,14 @@ Workspace Owner 可通过 `GET` / `PATCH /api/user/connections/:connectionId/bri
 `history_turn_limit`；版本落后时返回
 `409 VERSION_CONFLICT`，客户端应刷新后让用户重新确认。
 
+Web 触发的 Bridge 自更新（1.4.0+）使用两个额外的用户态端点：
+`GET /api/user/bridge-release` 返回 npm 上 `ai-task-board-bridge` 的最新发布版本
+（服务端缓存 5 分钟，查询失败时 `latest_version` 为 `null`）；
+`POST /api/user/connections/:connectionId/bridge-update` 携带
+`Idempotency-Key` 与 `{ "target_version": "x.y.z" }` 设置期望版本
+（`null` 取消）。目标版本必须是严格大于当前上报版本的合法 semver 且真实存在于
+npm，否则返回 `400 INVALID_REQUEST`；Bridge 需设备 opt-in 才会执行更新。
+
 Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成一个
 `runtime_instance_id`，并为每次报告单调增加 `report_sequence`；
 `lease_seconds` 建立运行实例租约，防止同一个 Connection 的两个 Bridge 同时

@@ -22,7 +22,7 @@ reply to the matching Board conversation.
 Run setup as the same OS user that owns the Kimi login and target workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.3.0 setup kimi
+npx --yes ai-task-board-bridge@1.4.0 setup kimi
 ```
 
 The installer writes a `0600` environment file, stages the CLI and its ACP SDK
@@ -38,7 +38,7 @@ does not expose directory management for Kimi connections yet:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.3.0 setup kimi
+npx --yes ai-task-board-bridge@1.4.0 setup kimi
 ```
 
 ## Foreground mode
@@ -49,7 +49,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.3.0 run kimi
+npx --yes ai-task-board-bridge@1.4.0 run kimi
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -97,6 +97,50 @@ first start and persisted with `0600` permissions to
 `$XDG_CONFIG_HOME/ai-task-board/device-id`, shared with the other AI Task
 Board bridges on the same host) and `device_label` (the OS hostname), so the
 Board can group runtimes by device.
+
+## Web-triggered Bridge upgrades
+
+The Board can ask a device to move its Bridge to a newer npm release: each
+configuration exchange response may carry `desired_bridge_version`, and a
+Bridge that sees a newer, valid semver target upgrades itself. The Board only
+transports the version string; the code is always downloaded from the npm
+registry with `npm pack`, which verifies the registry integrity metadata
+before anything is installed.
+
+Remote upgrades are disabled by default and require two local gates:
+
+- `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true` in the Bridge environment (for a
+  systemd install, add it to the `0600` environment file and restart the
+  service), and
+- the Bridge process must run under systemd (`INVOCATION_ID` is set). A
+  foreground Bridge logs a one-time stderr hint per target version and keeps
+  running the old code; upgrade it manually by rerunning
+  `npx --yes ai-task-board-bridge@1.4.0 setup kimi`.
+
+With both gates satisfied, the Bridge downloads
+`ai-task-board-bridge@<version>`, installs the embedded Kimi runtime into
+`versions/<version>/` next to the current one, smoke-tests
+`node versions/<version>/dist/cli.js --version`, rewrites the systemd unit
+`ExecStart` to the new runtime (preserving the existing `HOME`,
+`WorkingDirectory`, and `EnvironmentFile` settings), runs
+`systemctl --user daemon-reload`, and exits with code 75 so
+`Restart=on-failure` starts the new version about five seconds later.
+
+A failed attempt cleans up staging, keeps the old version running, and reports
+the error in the next configuration exchange's `error` field, which the Board
+surfaces in the Bridge settings dialog. The same target version is not retried
+until the Board changes it or the Bridge process restarts, so a broken release
+cannot cause a retry storm.
+
+Old version directories are kept for manual rollback. To roll back, point the
+unit's `ExecStart` back at the previous runtime and restart the service:
+
+```bash
+$EDITOR ~/.config/systemd/user/ai-task-board-kimi-bridge.service
+# ExecStart="…/node" "…/.local/share/ai-task-board/kimi-bridge/versions/<previous>/dist/cli.js" "run"
+systemctl --user daemon-reload
+systemctl --user restart ai-task-board-kimi-bridge.service
+```
 
 ## Execution and safety
 

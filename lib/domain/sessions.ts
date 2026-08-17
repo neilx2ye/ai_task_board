@@ -1,6 +1,7 @@
 import "server-only";
 
 import { hashRequest } from "@/lib/auth/ai-token";
+import { compareBridgeVersions } from "@/lib/bridge-version";
 import { mapDatabaseError } from "@/lib/domain/errors";
 import { callDomainRpc } from "@/lib/domain/rpc";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -58,6 +59,7 @@ export async function syncSessions(
     await persistModelCatalog(admin, auth, input);
     await persistConnectionQuota(admin, auth, input);
     await persistDeviceIdentity(admin, auth, input);
+    await clearSatisfiedBridgeUpdate(admin, auth, input.bridge_version);
     return data;
   }
   if (!isMissingDirectorySyncFunction(error)) throw mapDatabaseError(error);
@@ -87,7 +89,45 @@ export async function syncSessions(
   await persistModelCatalog(admin, auth, input);
   await persistConnectionQuota(admin, auth, input);
   await persistDeviceIdentity(admin, auth, input);
+  await clearSatisfiedBridgeUpdate(admin, auth, input.bridge_version);
   return result;
+}
+
+/**
+ * Bridge 自更新完成后，下一次同步会上报满足目标的新版本号，
+ * 此时清除期望版本标记；条件更新避免清掉并发的新目标。
+ */
+async function clearSatisfiedBridgeUpdate(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: AIAuthContext,
+  reportedVersion: string,
+): Promise<void> {
+  const { data, error } = await admin
+    .from("ai_connection_bridge_settings")
+    .select("desired_bridge_version")
+    .eq("workspace_id", auth.workspaceId)
+    .eq("connection_id", auth.connectionId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingDeviceSchema(error)) return;
+    throw mapDatabaseError(error);
+  }
+  const desired = (
+    data as { desired_bridge_version?: string | null } | null
+  )?.desired_bridge_version;
+  if (!desired) return;
+  const comparison = compareBridgeVersions(reportedVersion, desired);
+  if (comparison === null || comparison < 0) return;
+
+  const { error: clearError } = await admin
+    .from("ai_connection_bridge_settings")
+    .update({ desired_bridge_version: null })
+    .eq("workspace_id", auth.workspaceId)
+    .eq("connection_id", auth.connectionId)
+    .eq("desired_bridge_version", desired);
+  if (clearError && !isMissingDeviceSchema(clearError)) {
+    throw mapDatabaseError(clearError);
+  }
 }
 
 async function persistDeviceIdentity(
@@ -214,7 +254,11 @@ function isMissingDeviceSchema(error: {
   const source = [error.message, error.details, error.hint]
     .filter(Boolean)
     .join(" ");
-  return source.includes("device_id") || source.includes("device_label");
+  return (
+    source.includes("device_id") ||
+    source.includes("device_label") ||
+    source.includes("desired_bridge_version")
+  );
 }
 
 export async function heartbeatSession(

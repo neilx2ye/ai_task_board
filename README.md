@@ -11,6 +11,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 - 项目 Tab 链：会话与规划两页顶部按「项目 → Bridges → Threads → Turns」过滤，同一工作目录跨 Bridge 自动合并为一个项目；Owner 可直接在 Web 新建项目——选定设备后该目录会下发到设备上所有支持托管目录的 Bridge（不存在时由设备自动创建），也可在「管理项目」里隐藏/恢复项目（浏览器本地）。
 - 会话目录展示当前任务状态与排队数量，对话面板集中呈现 AI 回复和执行记录。
 - 每个 Bridge 会把本机 Codex / Kimi Code / Antigravity 的套餐额度或模型配额快照回传看板，AI 连接页的对应卡片直接展示剩余百分比、窗口与重置时间。
+- AI 连接页展示每个 Bridge 的当前版本与 npm 最新版；Owner 可单个或批量下发目标版本，设备显式 opt-in（`AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true`）且运行在 systemd 下的 Bridge 1.4.0+ 会在下次配置交换后自动从 npm 下载、校验完整性并重启到该版本，下载前也可随时在网页取消。
 - 父子 Task 统一建模；AI 只能读取分配给自身且依赖已完成的叶子任务，父任务自动聚合状态和进度。
 - PostgreSQL RPC 原子处理领取、租约续期、拆分、完成并领取下一项，以及用户问答恢复。
 - AI Connection 令牌和领取令牌只保存带 Pepper 的哈希；原始值只在创建/领取时返回。
@@ -108,7 +109,7 @@ Content-Type: application/json
 需要让网页主动排队下一轮 Agent 工作时，使用统一的 `ai-task-board-bridge` npm 包：
 
 ```bash
-npx --yes ai-task-board-bridge@1.3.0 setup
+npx --yes ai-task-board-bridge@1.4.0 setup
 ```
 
 安装器会先询问安装 Codex、Kimi、Antigravity，还是组合；也可用 `setup codex`、
@@ -148,7 +149,7 @@ Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保�
 先在「AI 连接」中新建平台为 **Kimi Code** 的独立连接，再在已经登录 Kimi Code 的设备上运行：
 
 ```bash
-npx --yes ai-task-board-bridge@1.3.0 setup kimi
+npx --yes ai-task-board-bridge@1.4.0 setup kimi
 ```
 
 前台或自动化部署可使用环境变量：
@@ -159,7 +160,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.3.0 run kimi
+npx --yes ai-task-board-bridge@1.4.0 run kimi
 ```
 
 Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
@@ -170,7 +171,7 @@ Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该�
 的设备上运行（需要 `agy` 1.1.8+，可执行 `agy update` 升级）：
 
 ```bash
-npx --yes ai-task-board-bridge@1.3.0 setup antigravity
+npx --yes ai-task-board-bridge@1.4.0 setup antigravity
 ```
 
 前台或自动化部署可使用环境变量：
@@ -181,7 +182,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.3.0 run antigravity
+npx --yes ai-task-board-bridge@1.4.0 run antigravity
 ```
 
 Antigravity Bridge 只使用 Google 官方文档化的 `agy -p --output-format stream-json`

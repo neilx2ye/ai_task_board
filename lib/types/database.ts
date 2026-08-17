@@ -157,6 +157,7 @@ export type AIConnectionBridgeSettingsRow = {
   quota_updated_at: string | null;
   device_id: string | null;
   device_label: string | null;
+  desired_bridge_version: string | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -207,6 +208,7 @@ export type AIConnectionBridgeSettingsInsert = {
   quota_updated_at?: string | null;
   device_id?: string | null;
   device_label?: string | null;
+  desired_bridge_version?: string | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -887,6 +889,8 @@ export type BridgeConfiguration = {
   desired: BridgeDesiredConfiguration;
   applied: BridgeAppliedConfiguration | null;
   runtime: BridgeRuntimeStatus;
+  /** Owner 在网页设置的自更新目标版本；null/缺失表示无待升级。 */
+  desired_bridge_version?: string | null;
   updated_at: string;
 };
 

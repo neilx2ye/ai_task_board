@@ -10,6 +10,7 @@ import {
 } from "./agy-client.js";
 import {
   actionableBoardError,
+  ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION,
   BoardClient,
   commandError,
   commandString,
@@ -30,6 +31,7 @@ import {
 } from "./config.js";
 import { fetchAntigravityQuota, type SyncedQuota } from "./quota.js";
 import { BridgeRegistry } from "./registry.js";
+import { maybeApplyDesiredBridgeUpdate } from "./update-manager.js";
 import {
   appendBoundedText,
   delay,
@@ -559,6 +561,7 @@ export class AntigravityBridge {
   private reportSequence = 0;
   private appliedConfigurationVersion: number | null = null;
   private configurationError: string | null = null;
+  private updateError: string | null = null;
   private runtimeLeaseClaimed = false;
   private leaseSafetyDeadline = 0;
   private leaseRenewalPromise: Promise<void> | null = null;
@@ -743,7 +746,9 @@ export class AntigravityBridge {
         allow_working_directory_configuration:
           this.configuration.allowRemoteWorkingDirectories,
       },
-      error: this.configurationError,
+      error: [this.configurationError, this.updateError]
+        .filter(Boolean)
+        .join("；") || null,
     };
   }
 
@@ -764,6 +769,19 @@ export class AntigravityBridge {
     this.runtimeLeaseClaimed = true;
     this.leaseSafetyDeadline =
       startedAt + this.configuration.runtimeLeaseSeconds * 1_000 - 5_000;
+    if (!this.stopping) {
+      // A successful exchange may carry the Board's desired Bridge version.
+      // A failed update never throws; the error is reported in the next
+      // exchange's error field, and a successful one exits the process so
+      // systemd restarts it on the new version.
+      const updateError = await maybeApplyDesiredBridgeUpdate({
+        desiredVersion:
+          response.configuration.desired_bridge_version ?? null,
+        currentVersion: ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION,
+        allowRemoteUpdate: this.configuration.allowRemoteUpdate,
+      });
+      if (updateError) this.updateError = updateError;
+    }
     return response;
   }
 

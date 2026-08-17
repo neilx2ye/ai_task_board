@@ -5,8 +5,10 @@ vi.mock("server-only", () => ({}));
 const databaseMocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   from: vi.fn(),
+  select: vi.fn(),
   update: vi.fn(),
   eq: vi.fn(),
+  maybeSingle: vi.fn(),
 }));
 const rpcMocks = vi.hoisted(() => ({
   callDomainRpc: vi.fn(),
@@ -58,12 +60,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   const updateQuery = {
     error: null,
+    select: databaseMocks.select,
     update: databaseMocks.update,
     eq: databaseMocks.eq,
+    maybeSingle: databaseMocks.maybeSingle,
   };
   databaseMocks.from.mockReturnValue(updateQuery);
+  databaseMocks.select.mockReturnValue(updateQuery);
   databaseMocks.update.mockReturnValue(updateQuery);
   databaseMocks.eq.mockReturnValue(updateQuery);
+  // 默认无待升级目标：clearSatisfiedBridgeUpdate 读到 null 后直接返回。
+  databaseMocks.maybeSingle.mockResolvedValue({
+    data: { desired_bridge_version: null },
+    error: null,
+  });
   vi.stubEnv("AI_TOKEN_PEPPER", "test-only-pepper-with-at-least-32-characters");
 });
 
@@ -185,5 +195,61 @@ describe("Session inventory migration compatibility", () => {
       { code: "INTERNAL_ERROR", status: 500 },
     );
     expect(rpcMocks.callDomainRpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("Bridge update target clearing", () => {
+  beforeEach(() => {
+    databaseMocks.rpc.mockResolvedValue({
+      data: { sessions: [] },
+      error: null,
+    });
+  });
+
+  it("clears the desired version once the reported version reaches it", async () => {
+    databaseMocks.maybeSingle.mockResolvedValue({
+      data: { desired_bridge_version: "1.4.0" },
+      error: null,
+    });
+
+    await syncSessions(auth, { ...input, bridge_version: "1.4.0" }, "update/1");
+
+    expect(databaseMocks.update).toHaveBeenCalledWith({
+      desired_bridge_version: null,
+    });
+    expect(databaseMocks.eq).toHaveBeenCalledWith(
+      "desired_bridge_version",
+      "1.4.0",
+    );
+  });
+
+  it("clears the desired version when the reported version is newer", async () => {
+    databaseMocks.maybeSingle.mockResolvedValue({
+      data: { desired_bridge_version: "1.4.0" },
+      error: null,
+    });
+
+    await syncSessions(auth, { ...input, bridge_version: "1.5.2" }, "update/2");
+
+    expect(databaseMocks.update).toHaveBeenCalledWith({
+      desired_bridge_version: null,
+    });
+  });
+
+  it("keeps the desired version while the reported version is still older", async () => {
+    databaseMocks.maybeSingle.mockResolvedValue({
+      data: { desired_bridge_version: "1.4.0" },
+      error: null,
+    });
+
+    await syncSessions(auth, { ...input, bridge_version: "1.3.0" }, "update/3");
+
+    expect(databaseMocks.update).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no update target is set", async () => {
+    await syncSessions(auth, { ...input, bridge_version: "1.4.0" }, "update/4");
+
+    expect(databaseMocks.update).not.toHaveBeenCalled();
   });
 });

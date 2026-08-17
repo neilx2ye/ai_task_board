@@ -38,6 +38,7 @@ const configMigrations = [
   "20260816120000_web_create_working_directories.sql",
   "20260817120000_connection_quota.sql",
   "20260818000000_bridge_device_identity.sql",
+  "20260819000000_bridge_desired_version.sql",
 ];
 
 describe("Bridge remote configuration migration", () => {

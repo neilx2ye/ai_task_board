@@ -33,6 +33,12 @@ sudo systemctl enable --now ai-task-board.service
 sudo systemctl enable --now caddy.service
 ```
 
+The file preview page (`/files`) reads server-local directories allowed by
+`FILE_EXPLORER_ROOTS` (comma-separated). The systemd unit mounts
+`/home/ubuntu` read-only for this purpose; if you change the configured
+roots, add a matching `BindReadOnlyPaths=` entry to
+`deploy/ai-task-board.service` and restart the service.
+
 ## Operations
 
 ```bash

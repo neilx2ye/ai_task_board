@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import {
+  ArrowUpCircleIcon,
   CableIcon,
   PencilIcon,
   PlusIcon,
@@ -35,8 +36,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { compareBridgeVersions } from "@/lib/bridge-version";
+import {
+  setBridgeUpdateTarget,
+  useBridgeRelease,
+  useSetBridgeUpdateTarget,
+} from "@/hooks/use-bridge-release";
 import {
   activeConnections,
+  supportsRemoteBridgeUpdate,
   useConnections,
   useCreateConnection,
   useRenameConnection,
@@ -223,19 +231,25 @@ function CreateConnectionDialog({
 
 function ConnectionCard({
   connection,
+  latestBridgeVersion,
   onToken,
 }: {
   connection: PublicConnection;
+  latestBridgeVersion: string | null;
   onToken: (result: ConnectionWithToken) => void;
 }) {
   const rotateConnection = useRotateConnection(connection.id);
   const revokeConnection = useRevokeConnection(connection.id);
+  const setUpdateTarget = useSetBridgeUpdateTarget(connection.id);
   const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [bridgeConfigOpen, setBridgeConfigOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pending = rotateConnection.isPending || revokeConnection.isPending;
+  const pending =
+    rotateConnection.isPending ||
+    revokeConnection.isPending ||
+    setUpdateTarget.isPending;
   const hasBridgeSettings = supportsBridgeSettings(connection);
 
   const run = async (action: () => Promise<unknown>) => {
@@ -246,6 +260,16 @@ function ConnectionCard({
       setError(err instanceof Error ? err.message : "操作失败，请稍后重试");
     }
   };
+
+  const desiredVersion = connection.desired_bridge_version ?? null;
+  const updatePending =
+    desiredVersion !== null &&
+    compareBridgeVersions(desiredVersion, connection.bridge_version) === 1;
+  const newerRelease =
+    latestBridgeVersion !== null &&
+    compareBridgeVersions(latestBridgeVersion, connection.bridge_version) === 1
+      ? latestBridgeVersion
+      : null;
 
   return (
     <Card>
@@ -281,6 +305,56 @@ function ConnectionCard({
             )}
           </div>
         </dl>
+
+        {connection.bridge_version ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Bridge {connection.bridge_version}</span>
+            {updatePending ? (
+              <>
+                <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
+                  升级中 → {desiredVersion}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  disabled={pending}
+                  onClick={() =>
+                    run(() => setUpdateTarget.mutateAsync(null))
+                  }
+                >
+                  取消升级
+                </Button>
+              </>
+            ) : newerRelease ? (
+              supportsRemoteBridgeUpdate(connection) ? (
+                <>
+                  <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
+                    可升级 {newerRelease}
+                  </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 gap-1 px-2 text-xs"
+                    disabled={pending}
+                    title="设备会在下次配置交换后从 npm 下载并自动重启"
+                    onClick={() =>
+                      run(() => setUpdateTarget.mutateAsync(newerRelease))
+                    }
+                  >
+                    <ArrowUpCircleIcon className="size-3.5" />
+                    升级
+                  </Button>
+                </>
+              ) : (
+                <span title="Web 触发的自更新从 Bridge 1.4.0 开始提供">
+                  新版 {newerRelease} 可用；需先在设备上手动升级一次至
+                  ≥1.4.0，之后即可在网页升级
+                </span>
+              )
+            ) : null}
+          </div>
+        ) : null}
 
         <ConnectionQuota connection={connection} />
 
@@ -384,12 +458,53 @@ function ConnectionCard({
 
 export default function ConnectionsPage() {
   const connectionsQuery = useConnections();
+  const releaseQuery = useBridgeRelease();
   const [createOpen, setCreateOpen] = useState(false);
   const [tokenResult, setTokenResult] = useState<ConnectionWithToken | null>(
     null,
   );
+  const [upgradeAllPending, setUpgradeAllPending] = useState(false);
+  const [upgradeNotice, setUpgradeNotice] = useState<string | null>(null);
   // 防御性过滤：即使缓存中残留已撤销连接也不渲染。
   const connections = activeConnections(connectionsQuery.data ?? []);
+  const latestBridgeVersion = releaseQuery.data?.latest_version ?? null;
+  // 可批量升级：已支持远程更新（≥1.4.0）、无待升级目标、且落后于 npm 最新版。
+  const upgradableConnections =
+    latestBridgeVersion === null
+      ? []
+      : connections.filter(
+          (connection) =>
+            connection.desired_bridge_version == null &&
+            supportsRemoteBridgeUpdate(connection) &&
+            compareBridgeVersions(
+              latestBridgeVersion,
+              connection.bridge_version,
+            ) === 1,
+        );
+
+  const upgradeAll = async () => {
+    if (latestBridgeVersion === null || upgradableConnections.length === 0) {
+      return;
+    }
+    setUpgradeAllPending(true);
+    setUpgradeNotice(null);
+    let failed = 0;
+    for (const connection of upgradableConnections) {
+      try {
+        await setBridgeUpdateTarget(connection.id, latestBridgeVersion);
+      } catch {
+        failed += 1;
+      }
+    }
+    setUpgradeAllPending(false);
+    const succeeded = upgradableConnections.length - failed;
+    setUpgradeNotice(
+      failed === 0
+        ? `已为 ${succeeded} 个 Bridge 设置升级到 ${latestBridgeVersion}，设备会在下次配置交换后从 npm 下载并自动重启。`
+        : `${succeeded} 个已设置升级，${failed} 个失败；请稍后在对应连接卡片上重试。`,
+    );
+    await connectionsQuery.refetch();
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -400,11 +515,35 @@ export default function ConnectionsPage() {
             为每个 AI 客户端创建接入连接，客户端凭令牌调用 REST API 或 MCP。
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <PlusIcon />
-          新建连接
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {upgradableConnections.length > 0 ? (
+            <Button
+              variant="outline"
+              disabled={upgradeAllPending}
+              title="为这些 Bridge 写入目标版本，设备会在下次配置交换后自动更新"
+              onClick={() => void upgradeAll()}
+            >
+              <ArrowUpCircleIcon />
+              {upgradeAllPending
+                ? "设置中…"
+                : `全部升级到 ${latestBridgeVersion}`}
+            </Button>
+          ) : null}
+          <Button onClick={() => setCreateOpen(true)}>
+            <PlusIcon />
+            新建连接
+          </Button>
+        </div>
       </div>
+
+      {upgradeNotice ? (
+        <p
+          role="status"
+          className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800"
+        >
+          {upgradeNotice}
+        </p>
+      ) : null}
 
       {connectionsQuery.error ? (
         <ErrorState
@@ -431,6 +570,7 @@ export default function ConnectionsPage() {
             <ConnectionCard
               key={connection.id}
               connection={connection}
+              latestBridgeVersion={latestBridgeVersion}
               onToken={setTokenResult}
             />
           ))}

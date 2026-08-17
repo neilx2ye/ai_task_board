@@ -1,6 +1,6 @@
 {
   "name": "@ai-task-board/antigravity-bridge-runtime",
-  "version": "0.1.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Internal Google Antigravity CLI runtime bundled with ai-task-board-bridge",
   "type": "module",

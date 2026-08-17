@@ -144,7 +144,11 @@ function isMissingDeviceSchema(error: {
   const source = [error.message, error.details, error.hint]
     .filter(Boolean)
     .join(" ");
-  return source.includes("device_id") || source.includes("device_label");
+  return (
+    source.includes("device_id") ||
+    source.includes("device_label") ||
+    source.includes("desired_bridge_version")
+  );
 }
 
 async function loadConnectionModelSettings(
@@ -156,12 +160,12 @@ async function loadConnectionModelSettings(
     let { data, error } = await admin
       .from("ai_connection_bridge_settings")
       .select(
-        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label",
+        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
       )
       .eq("workspace_id", workspaceId)
       .in("connection_id", [...ids]);
     if (error && isMissingDeviceSchema(error)) {
-      // 滚动部署：设备标识迁移可能落后于 Web 发布，先退回无设备列的查询。
+      // 滚动部署：设备标识/期望版本迁移可能落后于 Web 发布，先退回旧查询。
       const fallback = await admin
         .from("ai_connection_bridge_settings")
         .select(
@@ -174,6 +178,7 @@ async function loadConnectionModelSettings(
             ...row,
             device_id: null,
             device_label: null,
+            desired_bridge_version: null,
           }))
         : null;
       error = fallback.error;
@@ -192,6 +197,7 @@ async function loadConnectionModelSettings(
           quota_updated_at: null,
           device_id: null,
           device_label: null,
+          desired_bridge_version: null,
         }));
       }
       throw mapDatabaseError(error);
@@ -679,6 +685,7 @@ export async function listConnections(context: UserWorkspaceContext) {
         quota_updated_at: modelSettings?.quota_updated_at ?? null,
         device_id: modelSettings?.device_id ?? null,
         device_label: modelSettings?.device_label ?? null,
+        desired_bridge_version: modelSettings?.desired_bridge_version ?? null,
       };
     }),
   };

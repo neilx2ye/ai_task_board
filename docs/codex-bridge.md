@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.2.0 setup codex
+npx --yes ai-task-board-bridge@1.4.0 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi Bridge 的唯一公开安装包。不带 `codex` 目标时，
@@ -108,7 +108,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.2.0 run codex
+npx --yes ai-task-board-bridge@1.4.0 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -120,7 +120,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.2.0 run codex
+npx --yes ai-task-board-bridge@1.4.0 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -141,6 +141,7 @@ npx --yes ai-task-board-bridge@1.2.0 run codex
 | `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES` | 否 | `false` | `true` 才允许 Web Console 开启标题上传；本机已设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` 时也视为已授权 |
 | `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | `false` | `true` 才允许 Web Console 开启旧历史同步；授权后仍需网页显式开启 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | `false` | `true` 才允许 Web Console 用项目 key、名称和绝对路径替换运行时目录清单；Bridge 会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
+| `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE` | 否 | `false` | `true` 才允许 Bridge 1.4.0+ 响应 Web 下发的目标版本：从 npm 下载该版本、完整性校验、重写 systemd 单元并自动重启；仅 systemd 托管下生效，前台运行只在 stderr 提示手动升级 |
 | `CODEX_BRIDGE_MAX_HISTORY_TURNS` | 否 | `50` | 每个 thread 可同步的最近完成 turn 本机上限，范围 `1..200` |
 | `CODEX_MODEL` | 否 | 空 | thread 未报告模型时使用的 Board 展示标签，不覆盖实际模型 |
 | `CODEX_CAPABILITIES` | 否 | `coding,shell,file-edit,multi-thread,app-server` | 用于 Board 任务能力匹配的列表 |
@@ -162,6 +163,10 @@ npx --yes ai-task-board-bridge@1.2.0 run codex
 设备显式设置 `CODEX_BRIDGE_WEB_CONFIG=true` 后，Workspace Owner 可以在“AI 连接 → Bridge 设置”调整 Bridge 启停、是否上传 thread 标题、是否同步历史、最大 thread 数、最大并行 turn 数和最近历史 turn 数。最大并行 turn 数在 `1..32` 内由网页直接设置为整台设备的运行上限，不再与本机上限做二次比较。Bridge 0.8 还可管理 1 到 100 个项目工作目录；该能力必须由设备额外设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用。Bridge 1.3.0 起，授权后 Web「新建项目」下发的条目可携带 `create_if_missing` 授权设备创建缺失路径，且 Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的 device id 与 hostname 标签），看板据此把同一台设备上的多个 Bridge 归为一组。Bridge 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
 
 网页配置默认不能扩大本机目录边界：未开启远程目录授权时，Bridge 会忽略网页目录并继续使用启动时的 `CODEX_WORKING_DIRECTORY` / `CODEX_WORKING_DIRECTORIES`。设备明确授权后，网页可以提交稳定 key、显示名称和本机绝对路径；Bridge 会再次校验格式、重复项、绝对路径及目录存在性，再安全停止已被排除的 worker、更新实际清单并回报结果。这个 opt-in 允许 Workspace Owner 扩大同一 Bridge 进程的 Codex 工作范围，应只授予受信 Owner。`cwd/all` 范围、固定 thread、Codex 路径、Connection Token、权限模式与审批模式仍只由设备环境决定；Thread 数仍会夹紧到本机上限，最大并行 turn 数则由网页在 `1..32` 内统一设置，标题与历史仍各自需要本机授权。网页停用 Bridge 时，进程仍保持在线以接收后续配置，但会先安全停止 worker、释放任务，再提交空的权威 thread 清单并取消后台历史扫描。
+
+## Web 触发 Bridge 自更新
+
+Bridge 1.4.0 起内置更新器。Owner 在“AI 连接”页为某个连接（或“全部升级”批量）选择目标版本后，看板把该版本写入这条连接的期望状态；Bridge 在下次配置交换（默认约 10 秒）读到目标版本，仅当设备显式设置 `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true` 且进程运行在 systemd 下时才执行更新：用 `npm pack` 从 npm registry 下载 `ai-task-board-bridge@<目标版本>`（npm 自动校验 registry 完整性），原子装入本地 `versions/<版本>/` 目录，冒烟检查新版本可启动后重写 systemd 用户单元并以非零码退出，由 `Restart=on-failure` 拉起新版本。上报版本达到目标后，看板自动清除期望标记；下载完成前可随时在网页取消。看板只传版本号、从不托管代码包，网页被攻破的最坏结果与首次 `npx` 安装同级；目标版本必须严格大于当前上报版本且真实存在于 npm。任一更新步骤失败时旧版本继续运行，错误随下一次配置交换回报并展示在“Bridge 设置”对话框；同一目标版本失败后不会立即重试。旧版本目录保留，手动回滚只需把 systemd 单元的 `ExecStart` 指回旧版本路径后 `systemctl --user daemon-reload && systemctl --user restart ai-task-board-bridge`。前台（非 systemd）运行的 Bridge 不执行自更新，只在 stderr 提示手动升级；1.4.0 之前的版本没有更新器，需要先在设备上手动升级一次。
 
 ## Web Console 管理 Threads
 
