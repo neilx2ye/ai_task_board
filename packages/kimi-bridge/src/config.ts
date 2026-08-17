@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 import { exactPath, isRecord, parseBoolean, parseInteger, stringValue } from "./utils.js";
@@ -18,18 +19,30 @@ export type KimiBridgeConfiguration = {
   connectionToken: string;
   workingDirectories: ManagedWorkingDirectory[];
   includeSessionTitles: boolean;
+  allowRemoteThreadTitles: boolean;
+  webConfigurationEnabled: boolean;
+  /** Runtime switch; when false, workers heartbeat but claim no Web turns. */
+  enabled: boolean;
   sessionNamePrefix: string | null;
   capabilities: string[];
   pollIntervalMs: number;
   leaseSeconds: number;
+  /** Applied thread cap; Web may lower it but never exceed `localMaxThreads`. */
   maxThreads: number;
+  /** Device-wide ceiling parsed from KIMI_MAX_THREADS. */
+  localMaxThreads: number;
   maxConcurrentTurns: number;
+  /** Inert for Kimi: mirrors the Web desired value so applied state is exact. */
+  historyTurnLimit: number;
   syncIntervalMs: number;
   commandPollIntervalMs: number;
   runtimeLeaseSeconds: number;
   approvalMode: KimiApprovalMode;
   agentMode: KimiAgentMode;
   kimiBinary: string;
+  kimiShareDir: string;
+  kimiOAuthHost: string;
+  kimiCodeBaseUrl: string;
   kimiWebServerUrl: string | null;
   kimiWebServerToken: string | null;
 };
@@ -133,6 +146,15 @@ export function loadConfiguration(
   const fallbackWorkingDirectory = path.resolve(
     environment.KIMI_WORKING_DIRECTORY?.trim() || process.cwd(),
   );
+  const includeSessionTitles = parseBoolean(
+    environment.KIMI_BRIDGE_INCLUDE_SESSION_TITLES,
+  );
+  const localMaxThreads = parseInteger(
+    environment.KIMI_MAX_THREADS,
+    50,
+    1,
+    500,
+  );
   return {
     boardUrl,
     connectionToken,
@@ -140,9 +162,14 @@ export function loadConfiguration(
       environment.KIMI_WORKING_DIRECTORIES,
       fallbackWorkingDirectory,
     ),
-    includeSessionTitles: parseBoolean(
-      environment.KIMI_BRIDGE_INCLUDE_SESSION_TITLES,
+    includeSessionTitles,
+    allowRemoteThreadTitles:
+      includeSessionTitles ||
+      parseBoolean(environment.KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
+    webConfigurationEnabled: parseBoolean(
+      environment.KIMI_BRIDGE_WEB_CONFIG,
     ),
+    enabled: true,
     sessionNamePrefix: environment.KIMI_SESSION_NAME?.trim() || null,
     capabilities: parseList(
       environment.KIMI_CAPABILITIES || "coding,shell,file-edit,multi-thread,acp",
@@ -159,13 +186,15 @@ export function loadConfiguration(
       60,
       3_600,
     ),
-    maxThreads: parseInteger(environment.KIMI_MAX_THREADS, 50, 1, 500),
+    maxThreads: localMaxThreads,
+    localMaxThreads,
     maxConcurrentTurns: parseInteger(
       environment.KIMI_MAX_CONCURRENT_TURNS,
       2,
       1,
       32,
     ),
+    historyTurnLimit: 50,
     syncIntervalMs: parseInteger(
       environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
       60_000,
@@ -182,6 +211,16 @@ export function loadConfiguration(
     approvalMode: parseApprovalMode(environment.KIMI_BRIDGE_APPROVAL_MODE),
     agentMode: parseAgentMode(environment.KIMI_BRIDGE_MODE),
     kimiBinary: environment.KIMI_BINARY?.trim() || "kimi",
+    kimiShareDir: path.resolve(
+      environment.KIMI_SHARE_DIR?.trim() || path.join(os.homedir(), ".kimi"),
+    ),
+    kimiOAuthHost:
+      environment.KIMI_CODE_OAUTH_HOST?.trim() ||
+      environment.KIMI_OAUTH_HOST?.trim() ||
+      "https://auth.kimi.com",
+    kimiCodeBaseUrl:
+      environment.KIMI_CODE_BASE_URL?.trim() ||
+      "https://api.kimi.com/coding/v1",
     kimiWebServerUrl: environment.KIMI_WEB_SERVER_URL?.trim() || null,
     kimiWebServerToken: environment.KIMI_WEB_SERVER_TOKEN?.trim() || null,
   };

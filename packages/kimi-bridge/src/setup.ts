@@ -609,6 +609,11 @@ export async function runInteractiveSetup(options: {
       "向看板上传本机 Kimi Session 标题",
       false,
     );
+    const webConfiguration = await prompt.confirm(
+      "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
+      configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") ===
+        "true",
+    );
 
     prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`systemd unit：${paths.unitFile}\n`);
@@ -632,6 +637,7 @@ export async function runInteractiveSetup(options: {
         KIMI_BRIDGE_APPROVAL_MODE: approvalMode,
         KIMI_BRIDGE_INCLUDE_SESSION_TITLES: String(includeTitles),
         KIMI_BRIDGE_MODE: agentMode,
+        KIMI_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
         KIMI_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
         KIMI_MAX_THREADS: maxThreads,
         KIMI_WORKING_DIRECTORY: workingDirectory,

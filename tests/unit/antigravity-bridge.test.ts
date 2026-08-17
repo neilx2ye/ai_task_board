@@ -18,7 +18,10 @@ import {
   workingDirectoryForKey,
 } from "@/packages/antigravity-bridge/src/config";
 import { BridgeRegistry } from "@/packages/antigravity-bridge/src/registry";
-import { TurnLimiter } from "@/packages/antigravity-bridge/src/bridge";
+import {
+  resolveRemoteConfiguration,
+  TurnLimiter,
+} from "@/packages/antigravity-bridge/src/bridge";
 import { compareSemver } from "@/packages/antigravity-bridge/src/utils";
 import {
   agentDisplayName,
@@ -222,6 +225,74 @@ describe("Antigravity Bridge configuration", () => {
   });
 });
 
+describe("Antigravity Bridge remote configuration", () => {
+  const base = loadConfiguration({
+    AI_TASK_BOARD_URL: "https://board.example.com",
+    AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+    ANTIGRAVITY_WORKING_DIRECTORY: "/srv/app",
+    ANTIGRAVITY_MAX_THREADS: "6",
+  });
+
+  it("clamps the thread cap to the local ceiling and ignores unsupported fields", () => {
+    const resolved = resolveRemoteConfiguration(base, {
+      enabled: false,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 8,
+      sync_history: true,
+      history_turn_limit: 100,
+      working_directories: [
+        {
+          directory_key: "other",
+          name: "Other",
+          working_directory: "/srv/other",
+        },
+      ],
+    });
+    expect(resolved.effective).toEqual({
+      enabled: false,
+      includeThreadTitles: false,
+      maxThreads: 6,
+      maxConcurrentTurns: 8,
+      syncHistory: false,
+      historyTurnLimit: 100,
+    });
+    expect(resolved.warnings.join("")).toContain("max_threads=50");
+    expect(resolved.warnings.join("")).toContain("历史同步");
+    expect(resolved.warnings.join("")).toContain("工作目录");
+  });
+
+  it("rejects invalid desired values before mutating runtime state", () => {
+    expect(() =>
+      resolveRemoteConfiguration(base, {
+        enabled: true,
+        include_thread_titles: true,
+        max_threads: 2,
+        max_concurrent_turns: 2.5,
+        sync_history: false,
+        history_turn_limit: 50,
+        working_directories: null,
+      }),
+    ).toThrow("max_concurrent_turns 必须是整数");
+  });
+
+  it("parses the Web config opt-in and keeps the local thread ceiling", () => {
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+      ANTIGRAVITY_WORKING_DIRECTORY: "/srv/app",
+      ANTIGRAVITY_MAX_THREADS: "9",
+      ANTIGRAVITY_BRIDGE_WEB_CONFIG: "true",
+    });
+    expect(configuration.webConfigurationEnabled).toBe(true);
+    expect(configuration.enabled).toBe(true);
+    expect(configuration.includeSessionTitles).toBe(true);
+    expect(configuration.localMaxThreads).toBe(9);
+    expect(configuration.maxThreads).toBe(9);
+    expect(configuration.historyTurnLimit).toBe(50);
+  });
+});
+
 describe("Antigravity Bridge registry", () => {
   it("persists, normalizes, and deletes thread bindings atomically", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "antigravity-registry-"));
@@ -278,6 +349,28 @@ describe("Antigravity Bridge turn limiter", () => {
     expect(acquired).toBe(false);
     first();
     await secondPromise;
+    expect(acquired).toBe(true);
+  });
+
+  it("resizes capacity when a remote concurrency limit is applied", async () => {
+    const limiter = new TurnLimiter(2);
+    const first = await limiter.acquire(new AbortController().signal);
+    const second = await limiter.acquire(new AbortController().signal);
+    limiter.resize(1);
+    let acquired = false;
+    const thirdPromise = limiter
+      .acquire(new AbortController().signal)
+      .then((release) => {
+        acquired = true;
+        return release;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(acquired).toBe(false);
+    first();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(acquired).toBe(false);
+    second();
+    await thirdPromise;
     expect(acquired).toBe(true);
   });
 });

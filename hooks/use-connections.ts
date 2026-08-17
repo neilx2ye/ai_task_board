@@ -9,12 +9,14 @@ import {
   isKimiPlatform,
 } from "@/lib/agent-platforms";
 import type { AgentModelCatalogEntry } from "@/lib/codex-models";
-import type { AIConnectionRow } from "@/lib/types/database";
+import type { AIConnectionRow, Json } from "@/lib/types/database";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
 export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
   model_catalog?: AgentModelCatalogEntry[] | null;
   model_catalog_updated_at?: string | null;
+  quota?: Json | null;
+  quota_updated_at?: string | null;
 };
 
 export type ConnectionWithToken = {

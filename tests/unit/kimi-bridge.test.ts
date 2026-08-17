@@ -11,7 +11,10 @@ import {
   parseWorkingDirectories,
   workingDirectoryForKey,
 } from "../../packages/kimi-bridge/src/config";
-import { TurnLimiter } from "../../packages/kimi-bridge/src/bridge";
+import {
+  resolveRemoteConfiguration,
+  TurnLimiter,
+} from "../../packages/kimi-bridge/src/bridge";
 import { agentModelOptions } from "@/lib/codex-models";
 
 const configOptions: SessionConfigOption[] = [
@@ -140,6 +143,85 @@ describe("Kimi Bridge configuration", () => {
   });
 });
 
+describe("Kimi Bridge remote configuration", () => {
+  const base = loadConfiguration({
+    AI_TASK_BOARD_URL: "https://board.example.com",
+    AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+    KIMI_WORKING_DIRECTORY: "/srv/app",
+    KIMI_MAX_THREADS: "8",
+    KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
+  });
+
+  it("clamps supported fields to the device ceiling and ignores unsupported ones", () => {
+    const resolved = resolveRemoteConfiguration(base, {
+      enabled: false,
+      include_thread_titles: true,
+      max_threads: 20,
+      max_concurrent_turns: 4,
+      sync_history: true,
+      history_turn_limit: 500,
+      working_directories: [],
+    });
+    expect(resolved.effective).toEqual({
+      enabled: false,
+      includeThreadTitles: true,
+      maxThreads: 8,
+      maxConcurrentTurns: 4,
+      syncHistory: false,
+      historyTurnLimit: 500,
+    });
+    expect(resolved.warnings.join("")).toContain("max_threads=20");
+    expect(resolved.warnings.join("")).toContain("历史同步");
+    expect(resolved.warnings.join("")).toContain("工作目录");
+  });
+
+  it("rejects invalid desired values and honors the local title authorization", () => {
+    expect(() =>
+      resolveRemoteConfiguration(base, {
+        enabled: true,
+        include_thread_titles: true,
+        max_threads: 1.5,
+        max_concurrent_turns: 2,
+        sync_history: false,
+        history_turn_limit: 50,
+        working_directories: null,
+      }),
+    ).toThrow("max_threads 必须是整数");
+
+    const blocked = resolveRemoteConfiguration(
+      { ...base, allowRemoteThreadTitles: false },
+      {
+        enabled: true,
+        include_thread_titles: true,
+        max_threads: 2,
+        max_concurrent_turns: 2,
+        sync_history: false,
+        history_turn_limit: 50,
+        working_directories: null,
+      },
+    );
+    expect(blocked.effective.includeThreadTitles).toBe(false);
+    expect(blocked.warnings.join("")).toContain(
+      "KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
+    );
+  });
+
+  it("parses the Web config opt-in and keeps the local thread ceiling", () => {
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+      KIMI_WORKING_DIRECTORY: "/srv/app",
+      KIMI_MAX_THREADS: "7",
+      KIMI_BRIDGE_WEB_CONFIG: "true",
+    });
+    expect(configuration.webConfigurationEnabled).toBe(true);
+    expect(configuration.enabled).toBe(true);
+    expect(configuration.localMaxThreads).toBe(7);
+    expect(configuration.maxThreads).toBe(7);
+    expect(configuration.historyTurnLimit).toBe(50);
+  });
+});
+
 describe("Kimi Bridge turn limiter", () => {
   it("queues a second turn until the first permit is released", async () => {
     const limiter = new TurnLimiter(1);
@@ -157,5 +239,28 @@ describe("Kimi Bridge turn limiter", () => {
     const second = await secondPromise;
     expect(acquired).toBe(true);
     second();
+  });
+
+  it("resizes capacity when a remote concurrency limit is applied", async () => {
+    const limiter = new TurnLimiter(2);
+    const first = await limiter.acquire(new AbortController().signal);
+    const second = await limiter.acquire(new AbortController().signal);
+    limiter.resize(1);
+    let acquired = false;
+    const thirdPromise = limiter
+      .acquire(new AbortController().signal)
+      .then((release) => {
+        acquired = true;
+        return release;
+      });
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    first();
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    second();
+    const third = await thirdPromise;
+    expect(acquired).toBe(true);
+    third();
   });
 });

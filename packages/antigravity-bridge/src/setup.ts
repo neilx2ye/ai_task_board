@@ -620,6 +620,11 @@ export async function runInteractiveSetup(options: {
       "decline",
     );
     const sandbox = await prompt.confirm("启用 agy 终端沙箱（--sandbox）", false);
+    const webConfiguration = await prompt.confirm(
+      "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
+      configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_WEB_CONFIG") ===
+        "true",
+    );
 
     prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`systemd unit：${paths.unitFile}\n`);
@@ -643,6 +648,7 @@ export async function runInteractiveSetup(options: {
         ANTIGRAVITY_BRIDGE_APPROVAL_MODE: approvalMode,
         ANTIGRAVITY_BRIDGE_MODE: agentMode,
         ANTIGRAVITY_BRIDGE_SANDBOX: String(sandbox),
+        ANTIGRAVITY_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
         ANTIGRAVITY_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
         ANTIGRAVITY_MAX_THREADS: maxThreads,
         ANTIGRAVITY_WORKING_DIRECTORY: workingDirectory,

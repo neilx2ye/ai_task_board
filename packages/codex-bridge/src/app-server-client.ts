@@ -116,6 +116,15 @@ export interface AppServerModelListResponse {
   [key: string]: unknown;
 }
 
+export type AppServerAccountRateLimitsParams = Record<string, never>;
+
+export interface AppServerAccountRateLimitsResponse {
+  rateLimits: Record<string, unknown>;
+  rateLimitsByLimitId?: Record<string, Record<string, unknown>> | null;
+  rateLimitResetCredits?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
 export interface AppServerThreadReadParams {
   threadId: string;
   includeTurns?: boolean;
@@ -469,7 +478,7 @@ export class CodexAppServerClient {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
         title: "AI Task Board Bridge",
-        version: "1.0.1",
+        version: "1.2.0",
       },
       capabilities: options.capabilities ?? null,
     };
@@ -669,6 +678,12 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerModelListResponse> {
     return this.initializedRequest("model/list", params, options);
+  }
+
+  async accountRateLimitsRead(
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerAccountRateLimitsResponse> {
+    return this.initializedRequest("account/rateLimits/read", {}, options);
   }
 
   async threadRead(

@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.1.0 setup codex
+npx --yes ai-task-board-bridge@1.2.0 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi Bridge 的唯一公开安装包。不带 `codex` 目标时，
@@ -74,7 +74,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.1.0 run codex
+npx --yes ai-task-board-bridge@1.2.0 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -97,7 +97,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.1.0 run codex
+npx --yes ai-task-board-bridge@1.2.0 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -109,7 +109,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.1.0 run codex
+npx --yes ai-task-board-bridge@1.2.0 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -160,11 +160,11 @@ Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新�
 
 ## 旧历史同步与隐私边界
 
-历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=notLoaded`）取得有界 turn 清单，再用 `thread/items/list` 分页读取持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
+历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=full`）直接取得有界 turn 及其持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。较新的 Codex 已不再为 rollout 型 thread 提供 `thread/items/list`；只有当旧版 App Server 仍返回 `itemsView=notLoaded` 时，Bridge 才回退到该接口分页读取 item。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。
 
 导入白名单只有用户的 `userMessage` 与最终 `agentMessage`。`reasoning.summary`、图片、`localImage`/skill 的本机路径、`reasoning.content` 原始推理、命令与输出、diff、MCP 参数/结果和其他工具 item 都不进入上传请求。消息文本仍会经过现有 Secret 尽力脱敏和 UTF-safe 的 50,000 字符上限。历史用户消息会对有权访问该 Workspace 的成员可见。
 
-扫描在独立、可取消且有界的后台循环运行：单个 turn 最多读取 10,000 个原始 item，每轮每个 thread 最多保留 500 条白名单活动；请求批次最多 100 条且不超过 512 KiB。命令、MCP、diff、附件路径与原始推理会在分页读取时直接丢弃，不进入跨页缓存。Bridge 以 `thread.updatedAt` 和有效 turn 上限组成签名，同一进程内签名未变化时只扫描一次；thread、上限变化或进程重启后的重扫依靠稳定的 thread/turn/item 外部引用、原始 turn 时间和 item 顺序保持幂等。`partial` 表示本次有界快照在达到有效 turn 上限前触发了本机安全扫描上限；触顶的 turn 不会部分导入，`local-safety-cap` 也不是可续扫的 App Server cursor。历史读取或上传失败只更新该 Session 的历史同步状态并做有界退避，不会让运行租约、清单同步、worker 或活跃 turn 退出。
+扫描在独立、可取消且有界的后台循环运行：单个 turn 最多读取 10,000 个原始 item，每轮每个 thread 最多保留 500 条白名单活动；请求批次最多 100 条且不超过 512 KiB。命令、MCP、diff、附件路径与原始推理会在读取时直接丢弃，不进入跨页缓存。Bridge 以 `thread.updatedAt` 和有效 turn 上限组成签名，同一进程内签名未变化时只扫描一次；thread、上限变化或进程重启后的重扫依靠稳定的 thread/turn/item 外部引用、原始 turn 时间和 item 顺序保持幂等。`partial` 表示本次有界快照在达到有效 turn 上限前触发了本机安全扫描上限；触顶的 turn 不会部分导入，`local-safety-cap` 也不是可续扫的 App Server cursor。历史读取或上传失败只更新该 Session 的历史同步状态并做有界退避，不会让运行租约、清单同步、worker 或活跃 turn 退出。
 
 Board 中已导入的历史是只追加数据。关闭历史同步或降低最近 turn 上限只会停止后续导入，不会删除此前已经上传的内容；需要清除时应使用 Board 对应的 Workspace / 数据删除流程。
 

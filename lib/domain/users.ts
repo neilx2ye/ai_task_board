@@ -109,6 +109,25 @@ function isMissingModelCatalogSchema(error: {
     .includes("model_catalog");
 }
 
+function isMissingQuotaSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("quota");
+}
+
 async function loadConnectionModelSettings(
   admin: AdminClient,
   workspaceId: string,
@@ -117,10 +136,25 @@ async function loadConnectionModelSettings(
   return collectChunkedRows(connectionIds, async (ids) => {
     const { data, error } = await admin
       .from("ai_connection_bridge_settings")
-      .select("connection_id, model_catalog, model_catalog_updated_at")
+      .select(
+        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at",
+      )
       .eq("workspace_id", workspaceId)
       .in("connection_id", [...ids]);
     if (error && !isMissingModelCatalogSchema(error)) {
+      if (isMissingQuotaSchema(error)) {
+        const legacy = await admin
+          .from("ai_connection_bridge_settings")
+          .select("connection_id, model_catalog, model_catalog_updated_at")
+          .eq("workspace_id", workspaceId)
+          .in("connection_id", [...ids]);
+        if (legacy.error) throw mapDatabaseError(legacy.error);
+        return (legacy.data ?? []).map((row) => ({
+          ...row,
+          quota: null,
+          quota_updated_at: null,
+        }));
+      }
       throw mapDatabaseError(error);
     }
     return data ?? [];
@@ -602,6 +636,8 @@ export async function listConnections(context: UserWorkspaceContext) {
         model_catalog: parseCodexModelCatalog(modelSettings?.model_catalog),
         model_catalog_updated_at:
           modelSettings?.model_catalog_updated_at ?? null,
+        quota: modelSettings?.quota ?? null,
+        quota_updated_at: modelSettings?.quota_updated_at ?? null,
       };
     }),
   };

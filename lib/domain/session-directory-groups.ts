@@ -20,7 +20,28 @@ export type SessionConnectionGroup = {
   directories: SessionDirectoryGroup[];
 };
 
-function directoryNameFromPath(workingDirectory: string): string {
+/**
+ * 项目级视图：同一个 working directory 可能挂在多个 Bridge 下，
+ * 项目 Tab 把它们按路径合并成一个可过滤的入口。
+ */
+export type SessionProjectGroup = {
+  id: string;
+  name: string;
+  workingDirectory: string | null;
+  sessionCount: number;
+};
+
+const UNASSIGNED_PROJECT_ID = "unassigned";
+
+export function sessionProjectIdForDirectory(
+  directory: Pick<SessionDirectoryGroup, "workingDirectory">,
+): string {
+  return directory.workingDirectory
+    ? `path:${directory.workingDirectory}`
+    : UNASSIGNED_PROJECT_ID;
+}
+
+export function directoryNameFromPath(workingDirectory: string): string {
   const segments = workingDirectory.split(/[\\/]+/).filter(Boolean);
   return segments.at(-1) ?? workingDirectory;
 }
@@ -169,5 +190,80 @@ export function groupSessionsByConnection(
       ),
       directories: connectionDirectories,
     };
+  });
+}
+
+function compareProjects(
+  left: SessionProjectGroup,
+  right: SessionProjectGroup,
+): number {
+  // 未归类的项目固定排最后，其余按名称再按路径排序。
+  const leftUnassigned = left.id === UNASSIGNED_PROJECT_ID;
+  const rightUnassigned = right.id === UNASSIGNED_PROJECT_ID;
+  if (leftUnassigned !== rightUnassigned) return leftUnassigned ? 1 : -1;
+  return (
+    left.name.localeCompare(right.name, "zh-CN") ||
+    (left.workingDirectory ?? "").localeCompare(right.workingDirectory ?? "")
+  );
+}
+
+/** 跨 Bridge 汇总项目 Tab：同一 working directory 合并为一个项目。 */
+export function listSessionProjects(
+  groups: readonly SessionConnectionGroup[],
+): SessionProjectGroup[] {
+  const projects = new Map<string, SessionProjectGroup>();
+
+  for (const group of groups) {
+    for (const directory of group.directories) {
+      const id = sessionProjectIdForDirectory(directory);
+      const existing = projects.get(id);
+      if (existing) {
+        existing.sessionCount += directory.sessions.length;
+        // 任意一个 Bridge 配置了该目录时，优先展示配置里的目录名。
+        if (directory.configured) existing.name = directory.name;
+        continue;
+      }
+      projects.set(id, {
+        id,
+        name: directory.name,
+        workingDirectory: directory.workingDirectory,
+        sessionCount: directory.sessions.length,
+      });
+    }
+  }
+
+  return [...projects.values()].sort(compareProjects);
+}
+
+/**
+ * 按项目过滤层级：只保留属于该项目的目录，重算每个 Bridge 的 Thread 列表；
+ * 过滤后没有任何目录的 Bridge 整个隐藏。projectId 为 null 时表示「全部」，原样返回。
+ */
+export function filterConnectionGroupsByProject(
+  groups: readonly SessionConnectionGroup[],
+  projectId: string | null,
+): SessionConnectionGroup[] {
+  if (projectId === null) return [...groups];
+
+  return groups.flatMap((group) => {
+    const directories = group.directories.filter(
+      (directory) => sessionProjectIdForDirectory(directory) === projectId,
+    );
+    if (directories.length === 0) return [];
+
+    const visibleSessionIds = new Set(
+      directories.flatMap((directory) =>
+        directory.sessions.map((session) => session.id),
+      ),
+    );
+    return [
+      {
+        ...group,
+        directories,
+        sessions: group.sessions.filter((session) =>
+          visibleSessionIds.has(session.id),
+        ),
+      },
+    ];
   });
 }

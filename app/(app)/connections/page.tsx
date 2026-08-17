@@ -12,6 +12,7 @@ import {
 
 import { BridgeConfigDialog } from "@/components/bridge-config-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ConnectionQuota } from "@/components/connection-quota";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TokenDisplayDialog } from "@/components/token-display-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -280,6 +281,8 @@ function ConnectionCard({
             )}
           </div>
         </dl>
+
+        <ConnectionQuota connection={connection} />
 
         {error ? (
           <p role="alert" className="text-xs text-destructive">

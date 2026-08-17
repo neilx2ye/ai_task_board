@@ -79,6 +79,37 @@ describe("AI command validation", () => {
     ).toBe(false);
   });
 
+  it("accepts a provider-neutral quota snapshot in Bridge inventory", () => {
+    const parsed = syncSessionsSchema.parse({
+      bridge_version: "1.2.0",
+      threads: [],
+      quota: {
+        provider: "codex",
+        status: "ok",
+        message: null,
+        account: null,
+        plan: "pro",
+        fetched_at: "2026-08-17T00:00:00.000Z",
+        buckets: [
+          {
+            id: "primary",
+            label: "5 小时",
+            remaining_percent: 62.5,
+            used_percent: 37.5,
+            limit: null,
+            used: null,
+            remaining: null,
+            resets_at: "2026-08-17T04:00:00.000Z",
+            unlimited: false,
+            description: null,
+          },
+        ],
+        credits: null,
+      },
+    });
+    expect(parsed.quota?.buckets[0]?.remaining_percent).toBe(62.5);
+  });
+
   it("normalizes an App Server model catalog and rejects duplicate models", () => {
     const model = {
       id: " custom-fast ",

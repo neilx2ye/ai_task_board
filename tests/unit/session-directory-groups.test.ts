@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { groupSessionsByConnection } from "@/lib/domain/session-directory-groups";
+import {
+  filterConnectionGroupsByProject,
+  groupSessionsByConnection,
+  listSessionProjects,
+} from "@/lib/domain/session-directory-groups";
 import type { AIBridgeDirectoryRow } from "@/lib/types/database";
 import type {
   SessionConnectionSummary,
@@ -173,5 +177,87 @@ describe("Session working-directory hierarchy", () => {
         ],
       }),
     ]);
+  });
+});
+
+describe("Session project tabs", () => {
+  const secondConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "connection-2",
+    name: "Desktop",
+  };
+
+  function twoConnectionGroups() {
+    return groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/alpha", "alpha"),
+        session("thread-b", "/workspace/alpha", "alpha", secondConnection),
+        session("thread-c", "/workspace/beta", null, secondConnection),
+        session("thread-d", null, null, secondConnection),
+      ],
+      [connection, secondConnection],
+      [
+        directory("alpha", "Alpha app", "/workspace/alpha"),
+        directory("alpha", "Alpha app", "/workspace/alpha", secondConnection.id),
+      ],
+    );
+  }
+
+  it("merges the same working directory across connections into one project", () => {
+    const projects = listSessionProjects(twoConnectionGroups());
+
+    expect(projects).toEqual([
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        name: "Alpha app",
+        workingDirectory: "/workspace/alpha",
+        sessionCount: 2,
+      }),
+      expect.objectContaining({
+        id: "path:/workspace/beta",
+        name: "beta",
+        sessionCount: 1,
+      }),
+      expect.objectContaining({
+        id: "unassigned",
+        name: "未归类",
+        workingDirectory: null,
+        sessionCount: 1,
+      }),
+    ]);
+  });
+
+  it("returns every group unchanged when no project is selected", () => {
+    const groups = twoConnectionGroups();
+
+    expect(filterConnectionGroupsByProject(groups, null)).toEqual(groups);
+  });
+
+  it("keeps only the selected project's directories per connection", () => {
+    const filtered = filterConnectionGroupsByProject(
+      twoConnectionGroups(),
+      "path:/workspace/alpha",
+    );
+
+    expect(filtered).toHaveLength(2);
+    for (const group of filtered) {
+      expect(group.directories).toEqual([
+        expect.objectContaining({ workingDirectory: "/workspace/alpha" }),
+      ]);
+      expect(
+        group.sessions.map((item) => item.working_directory),
+      ).toEqual(["/workspace/alpha"]);
+    }
+  });
+
+  it("drops connections that do not serve the selected project", () => {
+    const filtered = filterConnectionGroupsByProject(
+      twoConnectionGroups(),
+      "path:/workspace/beta",
+    );
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.connection.id).toBe(secondConnection.id);
+    expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
   });
 });

@@ -5,6 +5,7 @@ import type {
   KimiBridgeConfiguration,
   ManagedWorkingDirectory,
 } from "./config.js";
+import type { SyncedQuota } from "./quota.js";
 import {
   delay,
   errorMessage,
@@ -13,7 +14,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.0.0-kimi.1";
+export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.2.0-kimi.1";
 
 export type BoardSession = {
   id: string;
@@ -61,9 +62,23 @@ export type InventoryThread = {
   archived: false;
 };
 
+export type RemoteDesiredConfiguration = {
+  enabled: boolean;
+  include_thread_titles: boolean;
+  max_threads: number;
+  max_concurrent_turns: number;
+  sync_history: boolean;
+  history_turn_limit: number;
+  working_directories: unknown;
+};
+
 export type RemoteConfigurationResponse = {
   configuration: {
+    connection_id: string;
     version: number;
+    desired: RemoteDesiredConfiguration;
+    applied?: unknown;
+    updated_at: string;
   };
 };
 
@@ -79,6 +94,52 @@ type BoardRequestOptions = {
 
 function idempotencyKey(operation: string): string {
   return `kimi-bridge/${operation}/${randomUUID()}`;
+}
+
+function parseRemoteConfigurationResponse(
+  value: unknown,
+): RemoteConfigurationResponse {
+  if (!isRecord(value) || !isRecord(value.configuration)) {
+    throw new Error("看板配置响应缺少 configuration");
+  }
+  const configuration = value.configuration;
+  if (
+    !Number.isInteger(configuration.version) ||
+    (configuration.version as number) < 1
+  ) {
+    throw new Error("看板配置响应 version 无效");
+  }
+  if (!isRecord(configuration.desired)) {
+    throw new Error("看板配置响应缺少 desired");
+  }
+  const desired = configuration.desired;
+  return {
+    configuration: {
+      connection_id: stringValue(configuration.connection_id) ?? "",
+      version: configuration.version as number,
+      desired: {
+        enabled: desired.enabled as boolean,
+        include_thread_titles: desired.include_thread_titles as boolean,
+        max_threads: desired.max_threads as number,
+        max_concurrent_turns: desired.max_concurrent_turns as number,
+        // Legacy Board payloads predate history and Web directory fields.
+        sync_history:
+          desired.sync_history === undefined
+            ? false
+            : (desired.sync_history as boolean),
+        history_turn_limit:
+          desired.history_turn_limit === undefined
+            ? 50
+            : (desired.history_turn_limit as number),
+        working_directories:
+          desired.working_directories === undefined
+            ? null
+            : desired.working_directories,
+      },
+      applied: configuration.applied,
+      updated_at: stringValue(configuration.updated_at) ?? "",
+    },
+  };
 }
 
 export class BoardClient {
@@ -173,6 +234,7 @@ export class BoardClient {
     threads: readonly InventoryThread[],
     directories: readonly ManagedWorkingDirectory[],
     modelCatalog: readonly InventoryModel[],
+    quota: SyncedQuota | undefined,
     signal?: AbortSignal,
   ): Promise<Map<string, BoardSession>> {
     const response = await this.request<{ sessions: BoardSession[] }>(
@@ -184,6 +246,7 @@ export class BoardClient {
         idempotencyKey: idempotencyKey("sync-sessions"),
         body: {
           bridge_version: KIMI_BRIDGE_CAPABILITY_VERSION,
+          ...(quota === undefined ? {} : { quota }),
           model_catalog: modelCatalog,
           directories: directories.map((directory) => ({
             directory_key: directory.key,
@@ -208,21 +271,14 @@ export class BoardClient {
     signal?: AbortSignal,
     timeoutMs = 5_000,
   ): Promise<RemoteConfigurationResponse> {
-    const response = await this.request<unknown>("/api/ai/config", {
+    const result = await this.request<unknown>("/api/ai/config", {
       method: "POST",
       body,
       signal,
       timeoutMs,
       maxAttempts: 1,
     });
-    if (!isRecord(response) || !isRecord(response.configuration)) {
-      throw new Error("看板配置响应缺少 configuration");
-    }
-    const version = response.configuration.version;
-    if (!Number.isInteger(version) || Number(version) < 1) {
-      throw new Error("看板配置响应包含无效 version");
-    }
-    return { configuration: { version: Number(version) } };
+    return parseRemoteConfigurationResponse(result);
   }
 
   async claimThreadCommand(

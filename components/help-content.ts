@@ -36,4 +36,14 @@ export const HELP_ACTIONS: ReadonlyArray<HelpAction> = [
     label: "管理 AI 连接",
     description: "创建连接并获取一次性令牌",
   },
+  {
+    href: "/planning",
+    label: "打开任务规划",
+    description: "查看会话的思考笔记与 Turn 规划链",
+  },
+  {
+    href: "/files",
+    label: "浏览设备文件",
+    description: "按已上报的工作目录预览设备上的项目文件",
+  },
 ];

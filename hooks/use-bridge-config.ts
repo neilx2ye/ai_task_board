@@ -40,18 +40,27 @@ export function supportsBridgeSettings(connection: {
   bridge_version: string | null;
   platform: string;
 }): boolean {
-  // Kimi and Antigravity Bridges currently report a local-only lease/status
-  // envelope. The existing dialog exposes Codex-specific remote controls, so
-  // do not present those controls as capabilities of either runtime.
-  if (
-    isKimiPlatform(connection.platform) ||
-    isAntigravityPlatform(connection.platform)
-  ) {
-    return false;
-  }
+  // Any Bridge that has reported a capability version exposes the dialog.
+  // Codex/Kimi/Antigravity connections expose it from the start so a device
+  // can be onboarded even before its first status report.
   return (
     connection.bridge_version !== null ||
-    connection.platform.toLowerCase().includes("codex")
+    ["codex", "kimi", "antigravity"].some((platform) =>
+      connection.platform.toLowerCase().includes(platform),
+    )
+  );
+}
+
+export function supportsHistorySyncStatus(connection: {
+  bridge_version: string | null;
+  platform: string;
+}): boolean {
+  // Only the Codex runtime implements thread history import. Kimi and
+  // Antigravity must not show the Codex-specific history banner.
+  return (
+    supportsBridgeSettings(connection) &&
+    !isKimiPlatform(connection.platform) &&
+    !isAntigravityPlatform(connection.platform)
   );
 }
 

@@ -61,11 +61,11 @@ lines.on("line", (line) => {
     } });
   } else if (message.method === "thread/turns/list") {
     send({ id: message.id, result: {
-      data: turns.slice(0, message.params.limit || turns.length).map(({ items, ...turn }) => ({
-        ...turn,
-        items: [],
-        itemsView: message.params.itemsView
-      })),
+      data: turns.slice(0, message.params.limit || turns.length).map(({ items, ...turn }) =>
+        message.params.itemsView === "full"
+          ? { ...turn, items, itemsView: "full" }
+          : { ...turn, items: [], itemsView: message.params.itemsView }
+      ),
       nextCursor: null,
       backwardsCursor: null
     } });

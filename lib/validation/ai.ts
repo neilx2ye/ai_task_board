@@ -89,9 +89,48 @@ const syncedModelCatalogEntrySchema = z
     });
   });
 
+const syncedQuotaBucketSchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    label: nonEmptyText.max(200),
+    remaining_percent: z.number().min(0).max(100).nullable(),
+    used_percent: z.number().min(0).max(100).nullable(),
+    limit: z.number().finite().nonnegative().nullable(),
+    used: z.number().finite().nonnegative().nullable(),
+    remaining: z.number().finite().nonnegative().nullable(),
+    resets_at: z.string().trim().min(1).max(100).nullable(),
+    unlimited: z.boolean(),
+    description: z.string().trim().max(2_000).nullable(),
+  })
+  .strict();
+
+const syncedQuotaCreditsSchema = z
+  .object({
+    balance: z.string().trim().max(200).nullable(),
+    has_credits: z.boolean(),
+    unlimited: z.boolean(),
+    available_resets: z.number().int().nonnegative().nullable(),
+    description: z.string().trim().max(2_000).nullable(),
+  })
+  .strict();
+
+export const syncedQuotaSchema = z
+  .object({
+    provider: z.enum(["codex", "kimi", "antigravity"]),
+    status: z.enum(["ok", "unavailable", "error"]),
+    message: z.string().trim().max(2_000).nullable(),
+    account: z.string().trim().max(200).nullable(),
+    plan: z.string().trim().max(200).nullable(),
+    fetched_at: z.string().trim().min(1).max(100),
+    buckets: z.array(syncedQuotaBucketSchema).max(20),
+    credits: syncedQuotaCreditsSchema.nullable(),
+  })
+  .strict();
+
 export const syncSessionsSchema = z
   .object({
     bridge_version: nonEmptyText.max(100),
+    quota: syncedQuotaSchema.optional(),
     model_catalog: z.array(syncedModelCatalogEntrySchema).max(500).optional(),
     directories: z
       .array(syncedBridgeDirectorySchema)
@@ -168,6 +207,7 @@ export const syncSessionsSchema = z
         JSON.stringify({
           directories: value.directories ?? null,
           model_catalog: value.model_catalog ?? null,
+          quota: value.quota ?? null,
           threads: value.threads,
         }),
       ).byteLength >

@@ -15,6 +15,7 @@ import {
   CheckCircle2Icon,
   ChevronRightIcon,
   CircleDotIcon,
+  FolderIcon,
   HistoryIcon,
   ListChecksIcon,
   LoaderCircleIcon,
@@ -31,6 +32,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ErrorState, LoadingBlock } from "@/components/states";
+import { connectionColorMeta } from "@/components/connection-meta";
 import {
   ACTOR_TYPE_LABEL,
   eventTypeLabel,
@@ -63,7 +65,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDateTime } from "@/components/utils";
 import {
   bridgeSupportsHistorySync,
-  supportsBridgeSettings,
+  supportsHistorySyncStatus,
 } from "@/hooks/use-bridge-config";
 import {
   compareSessionActivities,
@@ -77,6 +79,7 @@ import {
   effectiveSessionStatus,
   isSessionAlive,
 } from "@/lib/domain/session-presence";
+import { directoryNameFromPath } from "@/lib/domain/session-directory-groups";
 import {
   DEFAULT_CODEX_REASONING_EFFORT,
   REASONING_EFFORT_LABELS,
@@ -836,6 +839,49 @@ function sessionContentDescription(session: SessionListItem): string {
   return `${location} · 展示用户消息与 AI 回复`;
 }
 
+/**
+ * 窗口头部的设备 / 项目徽标：设备徽标与侧边栏设备圆点、
+ * 窗口顶部标识条同色系，多窗口并排时能一眼对上号。
+ */
+function SessionLocationBadges({
+  session,
+  className,
+}: {
+  session: SessionListItem;
+  className?: string;
+}) {
+  const color = connectionColorMeta(session.connection.id);
+  const projectName = session.working_directory
+    ? directoryNameFromPath(session.working_directory)
+    : null;
+
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      <Badge
+        variant="outline"
+        className={cn("max-w-full gap-1.5", color.badgeClass)}
+        title={`设备：${session.connection.name}`}
+      >
+        <span
+          aria-hidden
+          className={cn("size-2 shrink-0 rounded-full", color.dotClass)}
+        />
+        <span className="truncate">{session.connection.name}</span>
+      </Badge>
+      {projectName ? (
+        <Badge
+          variant="outline"
+          className="max-w-full gap-1 text-muted-foreground"
+          title={session.working_directory ?? undefined}
+        >
+          <FolderIcon aria-hidden />
+          <span className="truncate">{projectName}</span>
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 function SessionConversationContent({
   session,
   active,
@@ -1078,6 +1124,9 @@ function SessionConversationContent({
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle>{currentSession?.name ?? "会话详情"}</DialogTitle>
             <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+            {currentSession ? (
+              <SessionLocationBadges session={currentSession} />
+            ) : null}
           </div>
           <DialogDescription>
             {currentSession
@@ -1086,31 +1135,44 @@ function SessionConversationContent({
           </DialogDescription>
         </DialogHeader>
       ) : (
-        <header className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
-              {currentSession?.name ?? "选择一个 Thread"}
-            </h2>
-            <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
-            {onClose ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                aria-label={`关闭 Thread「${currentSession?.name ?? ""}」面板`}
-                title="关闭面板（取消选中并清除已同步历史）"
-                className="-mr-2 size-7 shrink-0"
-              >
-                <XIcon className="size-4" />
-              </Button>
-            ) : null}
+        <header className="shrink-0 border-b border-border">
+          {currentSession ? (
+            <div
+              aria-hidden
+              className={cn(
+                "h-1 w-full",
+                connectionColorMeta(currentSession.connection.id).barClass,
+              )}
+            />
+          ) : null}
+          <div className="px-4 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
+                {currentSession?.name ?? "选择一个 Thread"}
+              </h2>
+              <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+              {onClose ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onClose}
+                  aria-label={`关闭 Thread「${currentSession?.name ?? ""}」面板`}
+                  title="关闭面板（取消选中并清除已同步历史）"
+                  className="-mr-2 size-7 shrink-0"
+                >
+                  <XIcon className="size-4" />
+                </Button>
+              ) : null}
+            </div>
+            {currentSession ? (
+              <SessionLocationBadges session={currentSession} className="mt-2" />
+            ) : (
+              <p className="mt-1 text-sm text-muted-foreground">
+                从左侧选择一个 Thread 查看上下文
+              </p>
+            )}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {currentSession
-              ? sessionContentDescription(currentSession)
-              : "从左侧选择一个 Thread 查看上下文"}
-          </p>
         </header>
       )}
 
@@ -1128,7 +1190,7 @@ function SessionConversationContent({
       >
         {details &&
         currentSession &&
-        supportsBridgeSettings(currentSession.connection) ? (
+        supportsHistorySyncStatus(currentSession.connection) ? (
           <div className="mx-auto mb-4 w-full max-w-4xl">
             <HistorySyncStatus
               historySync={details?.history_sync ?? null}
@@ -1234,178 +1296,6 @@ function SessionConversationContent({
                 {sendError}
               </p>
             ) : null}
-            <div className="flex items-end gap-2">
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                multiple
-                className="sr-only"
-                onChange={(event) => {
-                  const selected = Array.from(event.target.files ?? []);
-                  const combined = [...images, ...selected].slice(0, 4);
-                  if (
-                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
-                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
-                  ) {
-                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
-                    event.target.value = "";
-                    return;
-                  }
-                  setImages(combined);
-                  setSendError(null);
-                  event.target.value = "";
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                aria-label="添加图片"
-                disabled={!canSend || createTurn.isPending || images.length >= 4}
-                onClick={() => imageInputRef.current?.click()}
-                className="size-10 shrink-0"
-              >
-                <PaperclipIcon />
-              </Button>
-              <div className="relative min-w-0 flex-1">
-                <Textarea
-                  aria-label="发送下一任务"
-                  value={composer}
-                  maxLength={100_000}
-                  disabled={!canSend || createTurn.isPending}
-                  onChange={(event) => setComposer(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  onPaste={(event) => {
-                    const pasted = Array.from(event.clipboardData.files).filter((file) =>
-                      file.type.startsWith("image/"),
-                    );
-                    if (!pasted.length) return;
-                    event.preventDefault();
-                    const combined = [...images, ...pasted].slice(0, 4);
-                    if (
-                      combined.some((file) => file.size > 10 * 1024 * 1024) ||
-                      combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
-                    ) {
-                      setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
-                      return;
-                    }
-                    setImages(combined);
-                    setSendError(null);
-                  }}
-                  placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
-                  className="min-h-24 resize-none pb-11"
-                />
-                <div className="absolute right-2 bottom-2 left-2 flex min-w-0 items-center gap-1.5">
-                  <Select value={model} onValueChange={onModelChange}>
-                    <SelectTrigger
-                      aria-label="下一 Turn 的模型"
-                      title="选择下一 Turn 的模型"
-                      className="h-7 w-auto min-w-0 max-w-44 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={INHERIT_AGENT_SETTING}>
-                        使用 {agentDisplayName(session?.connection.platform)} 默认
-                      </SelectItem>
-                      {customModel ? (
-                        <SelectItem value={customModel}>{customModel}</SelectItem>
-                      ) : null}
-                      {modelOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={reasoningEffort}
-                    onValueChange={(value) => {
-                      turnSettingsTouchedRef.current = true;
-                      setReasoningEffort(value);
-                    }}
-                  >
-                    <SelectTrigger
-                      aria-label="下一 Turn 的思考强度"
-                      title="选择下一 Turn 的思考强度"
-                      className="h-7 w-auto min-w-0 max-w-40 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={INHERIT_AGENT_SETTING}>
-                        使用模型默认
-                      </SelectItem>
-                      {customReasoningEffort ? (
-                        <SelectItem value={customReasoningEffort}>
-                          {customReasoningEffort}
-                        </SelectItem>
-                      ) : null}
-                      {availableEfforts.map((effort) => (
-                        <SelectItem key={effort} value={effort}>
-                          {reasoningEffortLabel(
-                            effort,
-                            selectedModel?.effortDescriptions[effort],
-                          )}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {!isAntigravityPlatform(session?.connection.platform) && (
-                    <Select
-                      value={goalMode}
-                      onValueChange={(value) =>
-                        setGoalMode(value as "inherit" | "on" | "off")
-                      }
-                    >
-                      <SelectTrigger
-                        aria-label="下一 Turn 的 Goal 模式"
-                        title="选择是否以 /goal 模式发送下一 Turn"
-                        className={cn(
-                          "h-7 w-auto min-w-0 max-w-32 border-0 px-2 py-1 text-xs shadow-none",
-                          goalMode === "on"
-                            ? "bg-primary/15 text-primary"
-                            : goalMode === "off"
-                              ? "bg-destructive/10 text-destructive"
-                              : "bg-muted/70",
-                        )}
-                      >
-                        <TargetIcon className="size-3.5 shrink-0" />
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="inherit">Goal 不变</SelectItem>
-                        <SelectItem value="on">开启 Goal</SelectItem>
-                        <SelectItem value="off">关闭 Goal</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-              </div>
-              <Button
-                type="submit"
-                size="icon"
-                aria-label="发送下一任务"
-                disabled={
-                  !canSend ||
-                  createTurn.isPending ||
-                  (!composer.trim() && !images.length)
-                }
-                className="size-10 shrink-0"
-              >
-                <SendIcon />
-              </Button>
-            </div>
             {images.length ? (
               <div className="flex flex-wrap gap-2" aria-label="待发送图片">
                 {images.map((image, index) => (
@@ -1430,11 +1320,187 @@ function SessionConversationContent({
                 ))}
               </div>
             ) : null}
-            <p className="text-xs text-muted-foreground">
-              本次模型、思考强度与 Goal 开关会随下一 Turn 发送；开启 Goal
-              会以本条 Prompt 为目标，关闭 Goal 会在发送前清除当前目标。
-              尚未发送的内容会自动暂存在本浏览器中，关闭或刷新页面后可继续编辑。
-            </p>
+            <div className="rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring/50">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  const combined = [...images, ...selected].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    event.target.value = "";
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                  event.target.value = "";
+                }}
+              />
+              <Textarea
+                aria-label="发送下一任务"
+                value={composer}
+                maxLength={100_000}
+                disabled={!canSend || createTurn.isPending}
+                onChange={(event) => setComposer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !event.shiftKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                onPaste={(event) => {
+                  const pasted = Array.from(event.clipboardData.files).filter((file) =>
+                    file.type.startsWith("image/"),
+                  );
+                  if (!pasted.length) return;
+                  event.preventDefault();
+                  const combined = [...images, ...pasted].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                }}
+                placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
+                className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+              />
+              <div className="flex min-w-0 items-center gap-1.5 px-2 pb-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="添加图片"
+                  title="添加图片"
+                  disabled={!canSend || createTurn.isPending || images.length >= 4}
+                  onClick={() => imageInputRef.current?.click()}
+                  className="size-7 shrink-0 text-muted-foreground"
+                >
+                  <PaperclipIcon />
+                </Button>
+                <Select value={model} onValueChange={onModelChange}>
+                  <SelectTrigger
+                    aria-label="下一 Turn 的模型"
+                    title="选择下一 Turn 的模型"
+                    className="h-7 w-auto min-w-0 max-w-44 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={INHERIT_AGENT_SETTING}>
+                      使用 {agentDisplayName(session?.connection.platform)} 默认
+                    </SelectItem>
+                    {customModel ? (
+                      <SelectItem value={customModel}>{customModel}</SelectItem>
+                    ) : null}
+                    {modelOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={reasoningEffort}
+                  onValueChange={(value) => {
+                    turnSettingsTouchedRef.current = true;
+                    setReasoningEffort(value);
+                  }}
+                >
+                  <SelectTrigger
+                    aria-label="下一 Turn 的思考强度"
+                    title="选择下一 Turn 的思考强度"
+                    className="h-7 w-auto min-w-0 max-w-40 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={INHERIT_AGENT_SETTING}>
+                      使用模型默认
+                    </SelectItem>
+                    {customReasoningEffort ? (
+                      <SelectItem value={customReasoningEffort}>
+                        {customReasoningEffort}
+                      </SelectItem>
+                    ) : null}
+                    {availableEfforts.map((effort) => (
+                      <SelectItem key={effort} value={effort}>
+                        {reasoningEffortLabel(
+                          effort,
+                          selectedModel?.effortDescriptions[effort],
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!isAntigravityPlatform(session?.connection.platform) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label="下一 Turn 的 Goal 模式"
+                    aria-pressed={goalMode !== "inherit"}
+                    title={
+                      goalMode === "on"
+                        ? "Goal 开启：以本条 Prompt 为目标；点击切换为关闭"
+                        : goalMode === "off"
+                          ? "Goal 关闭：发送前清除当前目标；点击恢复不变"
+                          : "Goal 不变：点击开启 Goal 模式"
+                    }
+                    onClick={() =>
+                      setGoalMode((current) =>
+                        current === "inherit"
+                          ? "on"
+                          : current === "on"
+                            ? "off"
+                            : "inherit",
+                      )
+                    }
+                    className={cn(
+                      "h-7 shrink-0 gap-1 px-2 text-xs",
+                      goalMode === "on"
+                        ? "bg-primary/15 text-primary hover:bg-primary/20"
+                        : goalMode === "off"
+                          ? "bg-destructive/10 text-destructive hover:bg-destructive/15"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    <TargetIcon className="size-3.5" />
+                    {goalMode === "on"
+                      ? "Goal 开启"
+                      : goalMode === "off"
+                        ? "Goal 关闭"
+                        : "Goal 不变"}
+                  </Button>
+                )}
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label="发送下一任务"
+                  disabled={
+                    !canSend ||
+                    createTurn.isPending ||
+                    (!composer.trim() && !images.length)
+                  }
+                  className="ml-auto size-7 shrink-0"
+                >
+                  <SendIcon />
+                </Button>
+              </div>
+            </div>
           </div>
         </form>
       ) : null}

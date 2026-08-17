@@ -5,6 +5,8 @@ import {
   CableIcon,
   CircleHelpIcon,
   BotIcon,
+  FolderTreeIcon,
+  NotebookPenIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 
@@ -135,7 +137,7 @@ function FaqItem({ question, children }: { question: string; children: ReactNode
   );
 }
 
-const ACTION_ICONS = [BotIcon, CableIcon] as const;
+const ACTION_ICONS = [BotIcon, CableIcon, NotebookPenIcon, FolderTreeIcon] as const;
 
 export default function HelpPage() {
   return (
@@ -169,10 +171,11 @@ export default function HelpPage() {
         title="当我准备在一台新设备上安装和配置 Bridge 时，应该要怎么做？"
       >
         <ol className="flex flex-col gap-4">
-          <Step index={1} title="准备新设备和 Codex">
-            安装 Node.js 18 或更高版本以及兼容的 Codex CLI，并使用准备运行 Bridge
-            的同一个操作系统用户完成 Codex 登录。确认该用户可以访问目标工作目录，
-            且设备可以通过 HTTPS 访问 AI Task Board。
+          <Step index={1} title="准备新设备和 Agent CLI">
+            安装 Node.js 18 或更高版本，以及这台设备要接入的 Agent CLI（Codex、Kimi
+            Code，或 Antigravity CLI 1.1.8 及以上），并使用准备运行 Bridge 的同一个
+            操作系统用户完成对应登录。确认该用户可以访问目标工作目录，且设备可以通过
+            HTTPS 访问 AI Task Board。
           </Step>
           <Step index={2} title="为这台设备创建 AI 连接">
             打开
@@ -182,19 +185,23 @@ export default function HelpPage() {
             >
               「AI 连接」
             </Link>
-            ，创建一个 Codex 连接。连接令牌
+            ，按设备上的 Agent 创建平台匹配的连接（Codex、Kimi Code 或 Antigravity，
+            一台设备运行多个 Bridge 时每个平台各建一个）。连接令牌
             <strong className="text-foreground">只显示一次</strong>
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
           <Step index={3} title="确定工作目录和权限边界">
-            准备项目在新设备上的绝对路径。默认的
+            准备项目在新设备上的绝对路径。三个 Bridge 都只管理各自白名单
+            （*_WORKING_DIRECTORY(S)）内的目录；Codex Bridge 默认的
             <code className="mx-1 rounded bg-muted px-1 text-xs">
               CODEX_THREAD_SCOPE=cwd
             </code>
-            只管理工作目录完全匹配的顶层 thread；除非明确需要跨项目发现，否则不要改为
+            进一步限定只接管 cwd 完全匹配的既有顶层 thread；除非明确需要跨项目发现，
+            否则不要改为
             <code className="mx-1 rounded bg-muted px-1 text-xs">all</code>。
-            如果任务不需要完整文件和网络访问，请把权限模式设为
-            <code className="mx-1 rounded bg-muted px-1 text-xs">safe</code>。
+            如果任务不需要完整文件和网络访问，Codex 请把权限模式设为
+            <code className="mx-1 rounded bg-muted px-1 text-xs">safe</code>
+            ；Kimi / Antigravity 保持安装器默认的拒绝额外权限即可。
           </Step>
           <Step index={4} title="在新设备上启动 Bridge">
             使用
@@ -204,12 +211,16 @@ export default function HelpPage() {
             >
               下方交互式安装命令
             </a>
-            ，按提示填写看板地址、一次性连接令牌和工作目录。命令必须由拥有本机
-            Codex 登录与工作区的用户执行；安装器会为该用户配置服务，同一台设备和
-            Connection 只运行一个 Bridge。
+            ，按提示选择要安装的 Bridge 并填写看板地址、一次性连接令牌和工作目录。
+            命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
+            同一台设备和 Connection 只运行一个 Bridge。
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
-            Bridge 上线后，在「AI 连接 → Bridge 设置」确认实际配置，再到
+            Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置。Kimi /
+            Antigravity 需要先在本机设置
+            <code className="mx-1">KIMI_BRIDGE_WEB_CONFIG=true</code>（Antigravity
+            为 <code>ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>）才会应用 Web 期望值，
+            再到
             <Link
               href="/sessions"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
@@ -239,7 +250,7 @@ export default function HelpPage() {
           Codex 后会继续收集 Codex 配置：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.0.1 setup`}
+          {`npx --yes ai-task-board-bridge@1.1.0 setup`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           如需前台运行或自动化部署，也可以直接通过环境变量配置：
@@ -255,7 +266,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-bridge@1.0.1 run codex`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.1.0 run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -273,8 +284,12 @@ npx --yes ai-task-board-bridge@1.0.1 run codex`}</CopyableCodeBlock>
           </li>
           <li>
             本机显式允许 Web 配置后，Workspace Owner 可以在“AI 连接 → Bridge 设置”
-            动态启停、切换标题与历史同步，并调整 thread/并发/历史上限。Bridge 0.8
-            额外设置 <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
+            动态启停、切换标题与历史同步，并调整 thread/并发/历史上限；这套远程配置
+            在 Codex、Kimi 与 Antigravity 连接上均可使用（Kimi / Antigravity 分别用
+            <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code> /
+            <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code> 开启，
+            且暂不支持历史同步与 Web 工作目录管理）。设备额外设置
+            <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
             后，还可在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
           </li>
           <li>
@@ -295,7 +310,7 @@ npx --yes ai-task-board-bridge@1.0.1 run codex`}</CopyableCodeBlock>
             也只补录最近完成 turn 的 AI 最终回复。
           </li>
           <li>
-            0.8 保留 Web Thread 管理和同 turn 结构化问答；仍不支持网页逐次审批、
+            当前版本支持 Web Thread 管理和同 turn 结构化问答转发；仍不支持网页逐次审批、
             可靠的运行中 steer/interrupt。默认 <code>danger-full-access</code>
             不启用 sandbox，默认 <code>accept</code> 会在设备端自动同意与当前活跃 turn
             关联的受支持请求，无需网页确认；组合使用会在当前 OS 用户权限范围内无沙箱执行，
@@ -319,7 +334,7 @@ npx --yes ai-task-board-bridge@1.0.1 run codex`}</CopyableCodeBlock>
           运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.0.1 setup kimi`}
+          {`npx --yes ai-task-board-bridge@1.1.0 setup kimi`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Kimi Code 连接：
@@ -329,7 +344,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.1.0 run kimi`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             Bridge 会动态上报 Kimi ACP 返回的模型和 low/high/max 等思考强度；新建
@@ -337,11 +352,23 @@ npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
           </li>
           <li>
             可用 <code>KIMI_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；网页新建
-            只发送稳定目录 key，不能注入任意本机路径。
+            只发送稳定目录 key，不能注入任意本机路径。Kimi ACP 只能按目录发现本机
+            Session，等价于固定的工作目录范围。
           </li>
           <li>
             Kimi ACP 支持新建和删除 Session，但当前没有可靠的改名方法，所以 Kimi
             连接会隐藏 Thread 改名入口；网页创建时填写的名称仍作为看板显示名保留。
+          </li>
+          <li>
+            会话标题默认不上传，本机设置
+            <code className="ml-1">KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true</code>
+            后才会同步，或设置
+            <code className="ml-1">KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true</code>
+            让 Web 控制。设置
+            <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code>
+            后，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
+            <code className="ml-1">KIMI_MAX_THREADS</code>
+            仍是设备本机上限，Web 不能超过它。
           </li>
           <li>
             <code>KIMI_BRIDGE_MODE=yolo</code> 与
@@ -349,6 +376,8 @@ npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
             都会扩大自动执行范围。安装器默认拒绝额外权限，请只在可信工作区显式开启。
           </li>
           <li>
+            Linux 安装器创建并启动当前用户的
+            <code className="mx-1">ai-task-board-kimi-bridge.service</code>。
             Board Connection Token 会从 <code>kimi acp</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
           </li>
@@ -364,7 +393,7 @@ npx --yes ai-task-board-bridge@1.0.1 run kimi`}</CopyableCodeBlock>
           已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.0.1 setup antigravity`}
+          {`npx --yes ai-task-board-bridge@1.1.0 setup antigravity`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           前台运行或自动化部署可使用以下变量；令牌必须来自独立的 Antigravity 连接：
@@ -374,7 +403,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \\
 ANTIGRAVITY_BRIDGE_MODE='auto' \\
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \\
-npx --yes ai-task-board-bridge@1.0.1 run antigravity`}</CopyableCodeBlock>
+npx --yes ai-task-board-bridge@1.1.0 run antigravity`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             需要 Antigravity CLI 1.1.8 或更新版本（<code>agy update</code> 升级）。
@@ -392,7 +421,17 @@ npx --yes ai-task-board-bridge@1.0.1 run antigravity`}</CopyableCodeBlock>
           <li>
             agy headless 没有公开的改名与历史读取接口，因此 Antigravity 连接会隐藏
             Thread 改名，删除 Thread 只移除 Bridge 绑定、保留本机会话文件，也不会导入
-            TUI 中既有的会话。
+            TUI 中既有的会话。Bridge 只管理自己创建的 Thread，清单保存在本机注册表
+            （可用 <code>ANTIGRAVITY_REGISTRY_FILE</code> 换路径）。
+          </li>
+          <li>
+            本机设置
+            <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>
+            后，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
+            <code className="ml-1">ANTIGRAVITY_MAX_THREADS</code>
+            仍是设备本机上限，Web 不能超过它。单次执行时长可用
+            <code className="ml-1">ANTIGRAVITY_PRINT_TIMEOUT</code>
+            （如 5m、90s，默认按租约自动预留余量）。
           </li>
           <li>
             <code>ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept</code> 会向 agy 传入
@@ -402,6 +441,8 @@ npx --yes ai-task-board-bridge@1.0.1 run antigravity`}</CopyableCodeBlock>
             额外启用 agy 终端沙箱。
           </li>
           <li>
+            Linux 安装器创建并启动当前用户的
+            <code className="mx-1">ai-task-board-antigravity-bridge.service</code>。
             Board Connection Token 会从 <code>agy</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
           </li>
@@ -425,7 +466,7 @@ npx --yes ai-task-board-bridge@1.0.1 run antigravity`}</CopyableCodeBlock>
           />
           <StatusRow
             status="waiting_user"
-            description="AI 正在等你回答。Bridge 0.6 的结构化问题会显示为选择框，并保留原 turn 与 claim；旧 REST/MCP 纯文字提问仍会结束租约，回复后回到原会话队列。"
+            description="AI 正在等你回答。Codex Bridge 转发的结构化问题会显示为选择框，并保留原 turn 与 claim（Kimi / Antigravity 通道暂不支持结构化问答）；REST/MCP 纯文字提问仍会结束租约，回复后回到原会话队列。"
           />
           <StatusRow
             status="completed"
@@ -539,9 +580,18 @@ Idempotency-Key: <唯一键>
             租约过期说明会话可能已失联；任务不会被别的 AI 抢走。你可以手动释放后再明确改派。
           </FaqItem>
           <FaqItem question="页面会自动刷新吗？">
-            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话活动、会话和附件的
-            变化并自动更新；断线重连后会补拉遗漏事件，另有 30 秒低频轮询兜底，
-            不需要手动刷新。
+            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话活动、会话、附件、
+            Bridge 工作目录、历史同步和规划笔记等数据的变化并自动更新；断线重连后会补拉
+            遗漏事件，另有 30 秒低频轮询兜底，不需要手动刷新。
+          </FaqItem>
+          <FaqItem question="为什么三个 Bridge 的环境变量数量差很多？">
+            三者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单。差异来自
+            Agent 能力面：Codex Bridge 要发现并接管本机已存在的 Codex threads，因此多出
+            thread 范围（CODEX_THREAD_SCOPE / CODEX_THREAD_ID）、标题、历史同步和 Web
+            远程配置等开关；Kimi（ACP）和 Antigravity（agy headless）由 Bridge 按需创建
+            会话，没有可接管的本机清单，也就不需要这些变量。权限类变量则直接映射各自 CLI
+            的原生模型：Codex 用沙箱加审批组合，Kimi 用 ACP mode，Antigravity 用
+            --mode、--dangerously-skip-permissions 和 --sandbox。
           </FaqItem>
           <FaqItem question="密钥和令牌应该如何保管？">
             SUPABASE_SECRET_KEY 只存在于服务端环境，浏览器永远不会接触；

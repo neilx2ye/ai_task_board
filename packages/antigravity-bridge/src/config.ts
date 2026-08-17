@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -24,12 +25,21 @@ export type AntigravityBridgeConfiguration = {
   boardUrl: string;
   connectionToken: string;
   workingDirectories: ManagedWorkingDirectory[];
+  includeSessionTitles: boolean;
+  webConfigurationEnabled: boolean;
+  /** Runtime switch; when false, workers heartbeat but claim no Web turns. */
+  enabled: boolean;
   sessionNamePrefix: string | null;
   capabilities: string[];
   pollIntervalMs: number;
   leaseSeconds: number;
+  /** Applied thread cap; Web may lower it but never exceed `localMaxThreads`. */
   maxThreads: number;
+  /** Device-wide ceiling parsed from ANTIGRAVITY_MAX_THREADS. */
+  localMaxThreads: number;
   maxConcurrentTurns: number;
+  /** Inert for Antigravity: mirrors the Web desired value for exact status. */
+  historyTurnLimit: number;
   syncIntervalMs: number;
   commandPollIntervalMs: number;
   runtimeLeaseSeconds: number;
@@ -37,6 +47,8 @@ export type AntigravityBridgeConfiguration = {
   agentMode: AntigravityAgentMode;
   sandbox: boolean;
   agyBinary: string;
+  stateDir: string;
+  codeAssistBaseUrl: string;
   registryFile: string;
   printTimeoutMs: number;
 };
@@ -191,6 +203,12 @@ export function loadConfiguration(
   const fallbackWorkingDirectory = path.resolve(
     environment.ANTIGRAVITY_WORKING_DIRECTORY?.trim() || process.cwd(),
   );
+  const localMaxThreads = parseInteger(
+    environment.ANTIGRAVITY_MAX_THREADS,
+    50,
+    1,
+    500,
+  );
   const leaseSeconds = parseInteger(
     environment.AI_TASK_BOARD_LEASE_SECONDS,
     900,
@@ -212,6 +230,11 @@ export function loadConfiguration(
       environment.ANTIGRAVITY_WORKING_DIRECTORIES,
       fallbackWorkingDirectory,
     ),
+    includeSessionTitles: true,
+    webConfigurationEnabled: parseBoolean(
+      environment.ANTIGRAVITY_BRIDGE_WEB_CONFIG,
+    ),
+    enabled: true,
     sessionNamePrefix: environment.ANTIGRAVITY_SESSION_NAME?.trim() || null,
     capabilities: parseList(
       environment.ANTIGRAVITY_CAPABILITIES ||
@@ -224,18 +247,15 @@ export function loadConfiguration(
       60_000,
     ),
     leaseSeconds,
-    maxThreads: parseInteger(
-      environment.ANTIGRAVITY_MAX_THREADS,
-      50,
-      1,
-      500,
-    ),
+    maxThreads: localMaxThreads,
+    localMaxThreads,
     maxConcurrentTurns: parseInteger(
       environment.ANTIGRAVITY_MAX_CONCURRENT_TURNS,
       2,
       1,
       32,
     ),
+    historyTurnLimit: 50,
     syncIntervalMs: parseInteger(
       environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
       60_000,
@@ -255,6 +275,13 @@ export function loadConfiguration(
     agentMode: parseAgentMode(environment.ANTIGRAVITY_BRIDGE_MODE),
     sandbox: parseBoolean(environment.ANTIGRAVITY_BRIDGE_SANDBOX),
     agyBinary: environment.ANTIGRAVITY_BINARY?.trim() || "agy",
+    stateDir: path.resolve(
+      environment.ANTIGRAVITY_STATE_DIR?.trim() ||
+        path.join(os.homedir(), ".gemini", "antigravity-cli"),
+    ),
+    codeAssistBaseUrl:
+      environment.AGY_CODE_ASSIST_BASE_URL?.trim() ||
+      "https://daily-cloudcode-pa.googleapis.com/v1internal",
     registryFile: environment.ANTIGRAVITY_REGISTRY_FILE?.trim()
       ? path.resolve(environment.ANTIGRAVITY_REGISTRY_FILE.trim())
       : defaultRegistryFile(

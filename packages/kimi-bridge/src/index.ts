@@ -10,6 +10,8 @@ export {
   type BoardSession,
   type ClaimedTask,
   type InventoryThread,
+  type RemoteConfigurationResponse,
+  type RemoteDesiredConfiguration,
   type ThreadCommand,
 } from "./board-client.js";
 export {
@@ -22,6 +24,12 @@ export {
   type KimiBridgeConfiguration,
   type ManagedWorkingDirectory,
 } from "./config.js";
-export { KimiBridge, prepareKimiSession, TurnLimiter } from "./bridge.js";
+export {
+  KimiBridge,
+  prepareKimiSession,
+  resolveRemoteConfiguration,
+  TurnLimiter,
+  type ResolvedKimiRemoteConfiguration,
+} from "./bridge.js";
 export { runBridgeCli as runKimiBridgeCli } from "./bridge.js";
 export { runInteractiveSetup as runKimiInteractiveSetup } from "./setup.js";

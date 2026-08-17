@@ -24,8 +24,9 @@ Optional environment variables:
   ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
   ANTIGRAVITY_SESSION_NAME        Prefix for names shown in the Board
   ANTIGRAVITY_CAPABILITIES        Comma/space-separated Board capabilities
-  ANTIGRAVITY_MAX_THREADS         Maximum Threads to manage (1..500, default: 50)
-  ANTIGRAVITY_MAX_CONCURRENT_TURNS Device-wide concurrent turns (1..32, default: 2)
+  ANTIGRAVITY_BRIDGE_WEB_CONFIG   true lets Web apply enabled/limits/titles
+  ANTIGRAVITY_MAX_THREADS         Local Thread ceiling (1..500, default: 50)
+  ANTIGRAVITY_MAX_CONCURRENT_TURNS Startup concurrency (1..32, default: 2)
   ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept (default) or decline
   ANTIGRAVITY_BRIDGE_MODE         auto (default), default, accept-edits, or plan
   ANTIGRAVITY_BRIDGE_SANDBOX      true enables agy terminal sandbox

@@ -26,6 +26,8 @@ describe("帮助页结构元数据", () => {
     expect(HELP_ACTIONS.map((action) => action.href)).toEqual([
       "/sessions",
       "/connections",
+      "/planning",
+      "/files",
     ]);
     for (const action of HELP_ACTIONS) {
       expect(action.label.length).toBeGreaterThan(0);

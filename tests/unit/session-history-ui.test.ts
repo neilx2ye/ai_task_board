@@ -85,17 +85,15 @@ describe("session history UI state", () => {
       ),
     );
 
-    expect(markup).toContain(
-      "Codex device › /workspace/project · 展示用户消息与 AI 回复",
-    );
+    expect(markup).toContain('title="设备：Codex device"');
+    expect(markup).toContain('title="/workspace/project"');
     expect(markup).not.toContain('role="switch"');
     expect(markup).not.toContain("sync-process-details");
     expect(markup).not.toContain("同步过程详情");
     expect(markup).toContain('aria-label="下一 Turn 的模型"');
     expect(markup).toContain('aria-label="下一 Turn 的思考强度"');
-    expect(markup).toContain(
-      "本次模型、思考强度与 Goal 开关会随下一 Turn 发送",
-    );
+    expect(markup).toContain('aria-label="下一 Turn 的 Goal 模式"');
+    expect(markup).not.toContain("本次模型、思考强度与 Goal 开关");
   });
 
   it("keeps imported user messages and assistant replies in the conversation", () => {

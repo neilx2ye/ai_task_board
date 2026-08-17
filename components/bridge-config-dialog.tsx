@@ -35,11 +35,16 @@ import {
   type BridgeConfiguration,
   type BridgeDesiredConfig,
 } from "@/hooks/use-bridge-config";
+import {
+  isAntigravityPlatform,
+  isKimiPlatform,
+} from "@/lib/agent-platforms";
 import type { AIBridgeDirectoryRow } from "@/lib/types/database";
 
 type BridgeConnection = {
   id: string;
   name: string;
+  platform: string;
   bridge_version: string | null;
 };
 
@@ -231,10 +236,12 @@ function EffectiveValues({
   desired,
   effective,
   reported,
+  showCodexRows,
 }: {
   desired: BridgeDesiredConfig;
   effective: BridgeDesiredConfig | null;
   reported: boolean;
+  showCodexRows: boolean;
 }) {
   const desiredDirectorySummary = desired.working_directories
     ? `${desired.working_directories.length} 个 Web 项目`
@@ -244,7 +251,7 @@ function EffectiveValues({
       ? `${effective.working_directories.length} 个项目`
       : "设备本机配置"
     : "等待上报";
-  const rows = [
+  const rows: Array<[string, string, string]> = [
     [
       "Bridge",
       yesNo(desired.enabled),
@@ -265,18 +272,22 @@ function EffectiveValues({
       String(desired.max_concurrent_turns),
       effective ? String(effective.max_concurrent_turns) : "等待上报",
     ],
-    [
-      "Codex 历史同步",
-      yesNo(desired.sync_history ?? false),
-      effective ? yesNo(effective.sync_history ?? false) : "等待上报",
-    ],
-    [
-      "最近历史 Turn",
-      String(desired.history_turn_limit ?? 50),
-      effective ? String(effective.history_turn_limit ?? 50) : "等待上报",
-    ],
-    ["工作目录", desiredDirectorySummary, effectiveDirectorySummary],
   ];
+  if (showCodexRows) {
+    rows.push(
+      [
+        "Codex 历史同步",
+        yesNo(desired.sync_history ?? false),
+        effective ? yesNo(effective.sync_history ?? false) : "等待上报",
+      ],
+      [
+        "最近历史 Turn",
+        String(desired.history_turn_limit ?? 50),
+        effective ? String(effective.history_turn_limit ?? 50) : "等待上报",
+      ],
+      ["工作目录", desiredDirectorySummary, effectiveDirectorySummary],
+    );
+  }
 
   return (
     <div className="overflow-hidden rounded-md border border-border text-xs">
@@ -457,6 +468,11 @@ function BridgeConfigForm({
   const [error, setError] = useState<string | null>(null);
 
   const constraints = configuration.applied?.constraints ?? null;
+  // Kimi and Antigravity do not implement history import or Web-managed
+  // working directories; hide those Codex-specific controls entirely.
+  const showCodexRows =
+    !isKimiPlatform(connection.platform) &&
+    !isAntigravityPlatform(connection.platform);
   const titleUploadBlocked = constraints?.allow_thread_titles === false;
   // A locally blocked device must still let the Owner turn an already-saved
   // desired value off; only enabling the disclosure is forbidden.
@@ -515,7 +531,7 @@ function BridgeConfigForm({
       name: directory.name.trim(),
       working_directory: directory.working_directory.trim(),
     }));
-    if (manageWorkingDirectories) {
+    if (showCodexRows && manageWorkingDirectories) {
       const directoryError = validateWorkingDirectories(
         normalizedWorkingDirectories,
       );
@@ -533,9 +549,10 @@ function BridgeConfigForm({
       return;
     }
     if (
-      !Number.isInteger(parsedHistoryTurnLimit) ||
-      parsedHistoryTurnLimit < 1 ||
-      parsedHistoryTurnLimit > 500
+      showCodexRows &&
+      (!Number.isInteger(parsedHistoryTurnLimit) ||
+        parsedHistoryTurnLimit < 1 ||
+        parsedHistoryTurnLimit > 500)
     ) {
       setError("最近历史 Turn 数必须是 1 到 500 之间的整数");
       return;
@@ -556,11 +573,12 @@ function BridgeConfigForm({
         include_thread_titles: includeTitles,
         max_threads: parsedMaxThreads,
         max_concurrent_turns: parsedMaxConcurrentTurns,
-        sync_history: syncHistory,
-        history_turn_limit: parsedHistoryTurnLimit,
-        working_directories: manageWorkingDirectories
-          ? normalizedWorkingDirectories
-          : null,
+        sync_history: showCodexRows ? syncHistory : false,
+        history_turn_limit: showCodexRows ? parsedHistoryTurnLimit : 50,
+        working_directories:
+          showCodexRows && manageWorkingDirectories
+            ? normalizedWorkingDirectories
+            : null,
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -590,6 +608,7 @@ function BridgeConfigForm({
         desired={configuration.desired}
         effective={configuration.applied?.effective ?? null}
         reported={bridgeSupportsRemoteConfiguration(connection.bridge_version)}
+        showCodexRows={showCodexRows}
       />
 
       <fieldset className="flex flex-col gap-3">
@@ -614,45 +633,49 @@ function BridgeConfigForm({
           />
         </label>
 
-        <label
-          htmlFor={`${fieldId}-history`}
-          className={`flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5 ${
-            historyToggleDisabled
-              ? "cursor-not-allowed opacity-60"
-              : "cursor-pointer"
-          }`}
-        >
-          <span>
-            <span className="block text-sm font-medium">同步 Codex Thread 历史</span>
-            <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
-              只会上传最近的 AI 最终回复；当前 Workspace 的所有成员
-              都可以查看，且必须先在设备上明确授权。
-            </span>
-            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-              {BRIDGE_HISTORY_RETENTION_NOTICE}
-            </span>
-            {!historySupported ? (
-              <span className="mt-1 block text-xs text-muted-foreground">
-                需要 Bridge 0.4.0 或更高版本。
+        {showCodexRows ? (
+          <label
+            htmlFor={`${fieldId}-history`}
+            className={`flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5 ${
+              historyToggleDisabled
+                ? "cursor-not-allowed opacity-60"
+                : "cursor-pointer"
+            }`}
+          >
+            <span>
+              <span className="block text-sm font-medium">
+                同步 Codex Thread 历史
               </span>
-            ) : historySyncBlocked ? (
-              <span className="mt-1 block text-xs text-muted-foreground">
-                {constraints
-                  ? "本机尚未允许历史同步；需在设备设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"
-                  : "等待设备上报本机历史同步授权；需先设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"}
+              <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
+                只会上传最近的 AI 最终回复；当前 Workspace 的所有成员
+                都可以查看，且必须先在设备上明确授权。
               </span>
-            ) : null}
-          </span>
-          <input
-            id={`${fieldId}-history`}
-            type="checkbox"
-            role="switch"
-            checked={syncHistory}
-            disabled={historyToggleDisabled}
-            onChange={(event) => setSyncHistory(event.target.checked)}
-            className="mt-0.5 size-4 shrink-0 accent-indigo-600"
-          />
-        </label>
+              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                {BRIDGE_HISTORY_RETENTION_NOTICE}
+              </span>
+              {!historySupported ? (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  需要 Bridge 0.4.0 或更高版本。
+                </span>
+              ) : historySyncBlocked ? (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {constraints
+                    ? "本机尚未允许历史同步；需在设备设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"
+                    : "等待设备上报本机历史同步授权；需先设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"}
+                </span>
+              ) : null}
+            </span>
+            <input
+              id={`${fieldId}-history`}
+              type="checkbox"
+              role="switch"
+              checked={syncHistory}
+              disabled={historyToggleDisabled}
+              onChange={(event) => setSyncHistory(event.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-indigo-600"
+            />
+          </label>
+        ) : null}
 
         <label
           htmlFor={`${fieldId}-titles`}
@@ -677,11 +700,12 @@ function BridgeConfigForm({
           />
         </label>
 
-        <div
-          className={`rounded-md border border-border px-3 py-3 ${
-            workingDirectoriesToggleDisabled ? "opacity-60" : ""
-          }`}
-        >
+        {showCodexRows ? (
+          <div
+            className={`rounded-md border border-border px-3 py-3 ${
+              workingDirectoriesToggleDisabled ? "opacity-60" : ""
+            }`}
+          >
           <label
             htmlFor={`${fieldId}-working-directories`}
             className={`flex items-start justify-between gap-4 ${
@@ -842,7 +866,8 @@ function BridgeConfigForm({
               </Button>
             </div>
           ) : null}
-        </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
@@ -882,31 +907,44 @@ function BridgeConfigForm({
               {BRIDGE_CONCURRENCY_NOTICE}
             </p>
           </div>
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor={`${fieldId}-history-turns`}>
-              同步最近 Turn 数
-            </Label>
-            <Input
-              id={`${fieldId}-history-turns`}
-              type="number"
-              inputMode="numeric"
-              required
-              min={1}
-              max={500}
-              step={1}
-              value={historyTurnLimit}
-              onChange={(event) => setHistoryTurnLimit(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Web 最多请求最近 500 个 Turn；本机上限
-              {constraints
-                ? ` ${constraints.max_history_turns}`
-                : "尚未上报"}
-              。关闭历史同步时保留此期望值。
-            </p>
-          </div>
+          {showCodexRows ? (
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <Label htmlFor={`${fieldId}-history-turns`}>
+                同步最近 Turn 数
+              </Label>
+              <Input
+                id={`${fieldId}-history-turns`}
+                type="number"
+                inputMode="numeric"
+                required
+                min={1}
+                max={500}
+                step={1}
+                value={historyTurnLimit}
+                onChange={(event) => setHistoryTurnLimit(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Web 最多请求最近 500 个 Turn；本机上限
+                {constraints
+                  ? ` ${constraints.max_history_turns}`
+                  : "尚未上报"}
+                。关闭历史同步时保留此期望值。
+              </p>
+            </div>
+          ) : null}
         </div>
       </fieldset>
+
+      {!showCodexRows ? (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Kimi / Antigravity 运行时暂不支持历史同步与 Web 工作目录管理；这两项
+          以设备本机配置为准。设备还需设置
+          {isKimiPlatform(connection.platform)
+            ? " KIMI_BRIDGE_WEB_CONFIG=true"
+            : " ANTIGRAVITY_BRIDGE_WEB_CONFIG=true"}
+          后才会应用这里的启停、标题与上限设置。
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">设备本地安全边界</h3>

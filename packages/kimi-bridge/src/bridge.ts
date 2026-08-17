@@ -24,6 +24,8 @@ import {
   type BoardSession,
   type ClaimedTask,
   type InventoryThread,
+  type RemoteConfigurationResponse,
+  type RemoteDesiredConfiguration,
   type ThreadCommand,
 } from "./board-client.js";
 import {
@@ -32,6 +34,7 @@ import {
   workingDirectoryForKey,
   type KimiBridgeConfiguration,
 } from "./config.js";
+import { fetchKimiQuota, type SyncedQuota } from "./quota.js";
 import {
   appendBoundedText,
   delay,
@@ -51,6 +54,8 @@ const IMAGE_MIME_TYPES = new Set([
   "image/webp",
   "image/gif",
 ]);
+const MAX_CONCURRENT_TURNS = 32;
+const MAX_HISTORY_TURNS = 500;
 
 export class TurnLimiter {
   private active = 0;
@@ -61,10 +66,22 @@ export class TurnLimiter {
     abort: () => void;
   }> = [];
 
-  constructor(private readonly limit: number) {
+  constructor(private limit: number) {
     if (!Number.isInteger(limit) || limit < 1) {
       throw new Error("TurnLimiter limit 必须是正整数");
     }
+  }
+
+  get capacity(): number {
+    return this.limit;
+  }
+
+  resize(limit: number): void {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error("TurnLimiter limit 必须是正整数");
+    }
+    this.limit = limit;
+    this.drain();
   }
 
   acquire(signal: AbortSignal): Promise<() => void> {
@@ -113,6 +130,100 @@ export class TurnLimiter {
       waiter.resolve(this.releaseFunction());
     }
   }
+}
+
+function clampedRemoteInteger(
+  value: number,
+  maximum: number,
+  field: string,
+  warnings: string[],
+): number {
+  if (!Number.isInteger(value)) {
+    throw new Error(`看板配置 ${field} 必须是整数`);
+  }
+  const clamped = Math.min(maximum, Math.max(1, value));
+  if (clamped !== value) {
+    warnings.push(
+      `${field}=${value} 超出设备允许范围，已限制为 ${clamped}`,
+    );
+  }
+  return clamped;
+}
+
+export type ResolvedKimiRemoteConfiguration = {
+  effective: {
+    enabled: boolean;
+    includeThreadTitles: boolean;
+    maxThreads: number;
+    maxConcurrentTurns: number;
+    syncHistory: boolean;
+    historyTurnLimit: number;
+  };
+  warnings: string[];
+};
+
+export function resolveRemoteConfiguration(
+  configuration: KimiBridgeConfiguration,
+  desired: RemoteDesiredConfiguration,
+): ResolvedKimiRemoteConfiguration {
+  if (typeof desired.enabled !== "boolean") {
+    throw new Error("看板配置 enabled 必须是布尔值");
+  }
+  if (typeof desired.include_thread_titles !== "boolean") {
+    throw new Error("看板配置 include_thread_titles 必须是布尔值");
+  }
+  if (typeof desired.sync_history !== "boolean") {
+    throw new Error("看板配置 sync_history 必须是布尔值");
+  }
+  const warnings: string[] = [];
+  const includeThreadTitles =
+    desired.include_thread_titles &&
+    configuration.allowRemoteThreadTitles;
+  if (desired.include_thread_titles && !includeThreadTitles) {
+    warnings.push(
+      "看板请求上传 Session 标题，但设备未启用 KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
+    );
+  }
+  if (desired.sync_history) {
+    warnings.push("Kimi Bridge 不支持历史同步，忽略看板的历史同步请求");
+  }
+  if (
+    desired.working_directories !== null &&
+    desired.working_directories !== undefined
+  ) {
+    warnings.push(
+      "Kimi Bridge 不支持 Web 工作目录管理，继续使用本机启动目录",
+    );
+  }
+  return {
+    effective: {
+      enabled: desired.enabled,
+      includeThreadTitles,
+      maxThreads: clampedRemoteInteger(
+        desired.max_threads,
+        configuration.localMaxThreads,
+        "max_threads",
+        warnings,
+      ),
+      maxConcurrentTurns: clampedRemoteInteger(
+        desired.max_concurrent_turns,
+        MAX_CONCURRENT_TURNS,
+        "max_concurrent_turns",
+        warnings,
+      ),
+      // History import is not implemented by this runtime. The inert limit
+      // mirrors the Web desired value so the disabled feature never reports
+      // a spurious applied/effective mismatch.
+      syncHistory: false,
+      historyTurnLimit: clampedRemoteInteger(
+        desired.history_turn_limit ?? 50,
+        MAX_HISTORY_TURNS,
+        "history_turn_limit",
+        warnings,
+      ),
+    },
+    warnings,
+  };
 }
 
 type PreparedSession = {
@@ -316,6 +427,15 @@ class SessionWorker {
   }
 
   private async runOneIteration(): Promise<void> {
+    if (!this.configuration.enabled) {
+      // A disabled Bridge keeps its workers alive for presence heartbeats
+      // and configuration updates, but never claims new Web turns.
+      await delay(
+        this.configuration.pollIntervalMs,
+        this.stopController.signal,
+      );
+      return;
+    }
     let release: (() => void) | null = null;
     try {
       release = await this.limiter.acquire(this.stopController.signal);
@@ -526,6 +646,8 @@ export class KimiBridge {
   private managedSessionIds = new Set<string>();
   private modelCatalog: InventoryModel[];
   private reportSequence = 0;
+  private appliedConfigurationVersion: number | null = null;
+  private configurationError: string | null = null;
   private runtimeLeaseClaimed = false;
   private leaseSafetyDeadline = 0;
   private leaseRenewalPromise: Promise<void> | null = null;
@@ -533,6 +655,7 @@ export class KimiBridge {
   private fatalError: Error | null = null;
   private stopPromise: Promise<void> | null = null;
   private inventoryReady = false;
+  private quota: SyncedQuota | undefined;
 
   constructor(
     private readonly configuration: KimiBridgeConfiguration,
@@ -571,6 +694,27 @@ export class KimiBridge {
 
     let nextInventorySyncAt = 0;
     while (!this.stopping) {
+      if (this.configuration.webConfigurationEnabled) {
+        try {
+          const reconciled = await this.reconcileRemoteConfiguration();
+          if (reconciled) {
+            // The reconcile already retired excess workers through
+            // syncWorkers; skip the immediate duplicate inventory pass.
+            nextInventorySyncAt =
+              Date.now() + this.configuration.syncIntervalMs;
+          }
+        } catch (error) {
+          if (this.stopping) break;
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `同步 Web Bridge 配置失败，继续使用当前有效配置：${errorMessage(error)}\n`,
+          );
+        }
+      }
+      if (this.stopping) break;
       if (Date.now() >= nextInventorySyncAt) {
         try {
           await this.syncWorkers();
@@ -653,14 +797,14 @@ export class KimiBridge {
       report_sequence: this.reportSequence,
       lease_seconds: this.configuration.runtimeLeaseSeconds,
       release_runtime: releaseRuntime,
-      applied_version: null,
+      applied_version: this.appliedConfigurationVersion,
       effective: {
-        enabled: true,
+        enabled: this.configuration.enabled,
         include_thread_titles: this.configuration.includeSessionTitles,
         max_threads: this.configuration.maxThreads,
         max_concurrent_turns: this.configuration.maxConcurrentTurns,
         sync_history: false,
-        history_turn_limit: 1,
+        history_turn_limit: this.configuration.historyTurnLimit,
         working_directories: this.configuration.workingDirectories.map(
           (directory) => ({
             directory_key: directory.key,
@@ -670,10 +814,11 @@ export class KimiBridge {
         ),
       },
       constraints: {
-        remote_configuration_enabled: false,
-        allow_thread_titles: this.configuration.includeSessionTitles,
-        max_threads: this.configuration.maxThreads,
-        max_concurrent_turns: this.configuration.maxConcurrentTurns,
+        remote_configuration_enabled:
+          this.configuration.webConfigurationEnabled,
+        allow_thread_titles: this.configuration.allowRemoteThreadTitles,
+        max_threads: this.configuration.localMaxThreads,
+        max_concurrent_turns: MAX_CONCURRENT_TURNS,
         thread_scope: "cwd",
         working_directory: firstDirectory?.workingDirectory ?? process.cwd(),
         fixed_thread: false,
@@ -681,16 +826,18 @@ export class KimiBridge {
         approval_mode:
           this.configuration.approvalMode === "accept" ? "accept" : "decline",
         allow_history_sync: false,
-        max_history_turns: 1,
+        max_history_turns: MAX_HISTORY_TURNS,
         allow_working_directory_configuration: false,
       },
-      error: null,
+      error: this.configurationError,
     };
   }
 
-  private async exchangeRuntimeLease(release = false): Promise<void> {
+  private async exchangeRuntimeLease(
+    release = false,
+  ): Promise<RemoteConfigurationResponse> {
     const startedAt = Date.now();
-    await this.board.exchangeConfiguration(
+    const response = await this.board.exchangeConfiguration(
       this.configurationStatus(release),
       release ? undefined : this.stopController.signal,
       release ? 1_500 : 5_000,
@@ -698,11 +845,12 @@ export class KimiBridge {
     if (release) {
       this.runtimeLeaseClaimed = false;
       this.leaseSafetyDeadline = 0;
-      return;
+      return response;
     }
     this.runtimeLeaseClaimed = true;
     this.leaseSafetyDeadline =
       startedAt + this.configuration.runtimeLeaseSeconds * 1_000 - 5_000;
+    return response;
   }
 
   private async establishRuntimeLease(): Promise<void> {
@@ -776,6 +924,101 @@ export class KimiBridge {
   private async releaseRuntimeLease(): Promise<void> {
     if (!this.runtimeLeaseClaimed) return;
     await this.exchangeRuntimeLease(true).catch(() => undefined);
+  }
+
+  private async reconcileRemoteConfiguration(): Promise<boolean> {
+    let response = await this.exchangeRuntimeLease();
+    let reconciled = false;
+
+    // A re-report can race a Web edit. Apply a few consecutive versions now;
+    // any later version remains unapplied and is picked up by the next loop.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const remote = response.configuration;
+      if (remote.version === this.appliedConfigurationVersion) {
+        return reconciled;
+      }
+      if (
+        this.appliedConfigurationVersion !== null &&
+        remote.version < this.appliedConfigurationVersion
+      ) {
+        this.configurationError =
+          `忽略过期看板配置 version=${remote.version}；设备已应用 version=${this.appliedConfigurationVersion}`;
+        process.stderr.write(`${this.configurationError}\n`);
+        return reconciled;
+      }
+
+      const previous = {
+        enabled: this.configuration.enabled,
+        includeSessionTitles: this.configuration.includeSessionTitles,
+        maxThreads: this.configuration.maxThreads,
+        maxConcurrentTurns: this.configuration.maxConcurrentTurns,
+        historyTurnLimit: this.configuration.historyTurnLimit,
+      };
+      let resolved: ResolvedKimiRemoteConfiguration;
+      try {
+        resolved = resolveRemoteConfiguration(
+          this.configuration,
+          remote.desired,
+        );
+      } catch (error) {
+        // Validation failures happen before any runtime state is mutated.
+        this.configurationError =
+          `应用 version=${remote.version} 失败：${errorMessage(error)}`;
+        process.stderr.write(`${this.configurationError}\n`);
+        await this.exchangeRuntimeLease().catch(() => undefined);
+        throw error;
+      }
+      this.configuration.enabled = resolved.effective.enabled;
+      this.configuration.includeSessionTitles =
+        resolved.effective.includeThreadTitles;
+      this.configuration.maxThreads = resolved.effective.maxThreads;
+      this.configuration.maxConcurrentTurns =
+        resolved.effective.maxConcurrentTurns;
+      this.configuration.historyTurnLimit =
+        resolved.effective.historyTurnLimit;
+      this.limiter.resize(resolved.effective.maxConcurrentTurns);
+      this.configurationError = resolved.warnings.length
+        ? resolved.warnings.join("；")
+        : null;
+      for (const warning of resolved.warnings) {
+        process.stderr.write(`Web Bridge 配置警告：${warning}\n`);
+      }
+
+      try {
+        // Retire workers beyond a lowered thread cap before acknowledging
+        // the applied version; the next inventory pass restores any worker
+        // if the values are rolled back below.
+        await this.syncWorkers();
+      } catch (error) {
+        this.configuration.enabled = previous.enabled;
+        this.configuration.includeSessionTitles =
+          previous.includeSessionTitles;
+        this.configuration.maxThreads = previous.maxThreads;
+        this.configuration.maxConcurrentTurns =
+          previous.maxConcurrentTurns;
+        this.configuration.historyTurnLimit = previous.historyTurnLimit;
+        this.limiter.resize(previous.maxConcurrentTurns);
+        this.configurationError = [
+          this.configurationError,
+          `应用 version=${remote.version} 失败：${errorMessage(error)}`,
+        ]
+          .filter(Boolean)
+          .join("；");
+        await this.exchangeRuntimeLease().catch(() => undefined);
+        throw error;
+      }
+
+      this.appliedConfigurationVersion = remote.version;
+      reconciled = true;
+      process.stdout.write(
+        `已应用 Web Bridge 配置 version=${remote.version}：${
+          this.configuration.enabled ? "已启用" : "已停用"
+        }，最多 ${this.configuration.maxThreads} 个 Session / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
+      );
+
+      response = await this.exchangeRuntimeLease();
+    }
+    return reconciled;
   }
 
   private async discoverModelCatalog(session?: SessionInfo): Promise<void> {
@@ -879,8 +1122,11 @@ export class KimiBridge {
       sessions.map((session) => this.inventoryThread(session)),
       this.configuration.workingDirectories,
       this.modelCatalog,
+      this.quota,
       this.stopController.signal,
     );
+    if (this.stopping) return;
+    void this.refreshQuota();
     this.managedSessionIds = visibleIds;
     this.inventoryReady = true;
 
@@ -942,6 +1188,30 @@ export class KimiBridge {
     );
   }
 
+  private async refreshQuota(): Promise<void> {
+    try {
+      const quota = await fetchKimiQuota({
+        shareDir: this.configuration.kimiShareDir,
+        oauthHost: this.configuration.kimiOAuthHost,
+        codeBaseUrl: this.configuration.kimiCodeBaseUrl,
+        signal: this.stopController.signal,
+      });
+      if (!this.stopping) this.quota = quota;
+    } catch (error) {
+      process.stderr.write(`读取 Kimi 额度失败：${errorMessage(error)}\n`);
+      this.quota = {
+        provider: "kimi",
+        status: "error",
+        message: errorMessage(error),
+        account: null,
+        plan: null,
+        fetched_at: new Date().toISOString(),
+        buckets: [],
+        credits: null,
+      };
+    }
+  }
+
   private async processThreadCommands(): Promise<boolean> {
     let inventoryChanged = false;
     for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
@@ -983,6 +1253,9 @@ export class KimiBridge {
     command: ThreadCommand,
   ): Promise<string | null> {
     if (command.action === "create") {
+      if (!this.configuration.enabled) {
+        throw new Error("Kimi Bridge 已暂停，无法新建 Session");
+      }
       if (this.managedSessionIds.size >= this.configuration.maxThreads) {
         throw new Error("已达到 Kimi Bridge 的 Session 数量上限");
       }

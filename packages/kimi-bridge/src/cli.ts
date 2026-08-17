@@ -24,9 +24,11 @@ Optional environment variables:
   KIMI_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
   KIMI_SESSION_NAME               Prefix for names shown in the Board
   KIMI_BRIDGE_INCLUDE_SESSION_TITLES  true uploads local Kimi session titles
+  KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
+  KIMI_BRIDGE_WEB_CONFIG          true lets Web apply enabled/limits/titles
   KIMI_CAPABILITIES               Comma/space-separated Board capabilities
-  KIMI_MAX_THREADS                Maximum Sessions to manage (1..500, default: 50)
-  KIMI_MAX_CONCURRENT_TURNS       Device-wide concurrent turns (1..32, default: 2)
+  KIMI_MAX_THREADS                Local Session ceiling (1..500, default: 50)
+  KIMI_MAX_CONCURRENT_TURNS       Startup concurrency (1..32, default: 2)
   KIMI_BRIDGE_APPROVAL_MODE       accept (default) or decline
   KIMI_BRIDGE_MODE                auto (default), default, plan, or yolo
   KIMI_BINARY                     Kimi Code executable (default: kimi)

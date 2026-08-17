@@ -10,58 +10,24 @@ import {
 } from "lucide-react";
 
 import { FilePreview } from "@/components/file-explorer/file-preview";
-import { FileTree } from "@/components/file-explorer/file-tree";
+import { FileRootsTree, FileTree } from "@/components/file-explorer/file-tree";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, apiFetch } from "@/hooks/api-client";
 import { useFileExplorerProjects } from "@/hooks/use-file-explorer";
-import type {
-  FileExplorerDirectory,
-  FileExplorerProject,
-} from "@/lib/types/domain";
+import type { FileExplorerDirectory } from "@/lib/types/domain";
 
-function ProjectSuggestionList({
-  title,
-  projects,
+function RootsExplorer({
+  selectedPath,
   onOpen,
+  onSelectFile,
+  onRefresh,
 }: {
-  title: string;
-  projects: FileExplorerProject[];
+  selectedPath: string | null;
   onOpen: (path: string) => void;
-}) {
-  if (projects.length === 0) return null;
-  return (
-    <section>
-      <h3 className="px-3 pb-1 pt-3 text-xs font-medium text-muted-foreground">
-        {title}
-      </h3>
-      <ul className="flex flex-col gap-0.5">
-        {projects.map((project) => (
-          <li key={project.path}>
-            <button
-              type="button"
-              onClick={() => onOpen(project.path)}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              title={project.path}
-            >
-              <FolderTreeIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">{project.name}</span>
-              <span className="max-w-[40%] truncate text-xs text-muted-foreground">
-                {project.path}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function ProjectPicker({
-  onOpen,
-}: {
-  onOpen: (path: string) => void;
+  onSelectFile: (path: string) => void;
+  onRefresh: () => void;
 }) {
   const projects = useFileExplorerProjects();
   const [pathInput, setPathInput] = useState("");
@@ -104,8 +70,8 @@ function ProjectPicker({
   }));
 
   return (
-    <div className="flex min-h-0 flex-col overflow-y-auto">
-      <form onSubmit={submit} className="flex flex-col gap-2 p-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <form onSubmit={submit} className="flex shrink-0 flex-col gap-2 p-3">
         <div className="flex gap-2">
           <Input
             value={pathInput}
@@ -145,7 +111,7 @@ function ProjectPicker({
 
       {projects.isLoading ? (
         <div className="px-3">
-          <LoadingBlock label="加载候选项目…" />
+          <LoadingBlock label="加载目录树…" />
         </div>
       ) : projects.error ? (
         <div className="px-3">
@@ -155,18 +121,13 @@ function ProjectPicker({
           />
         </div>
       ) : (
-        <div className="pb-3">
-          <ProjectSuggestionList
-            title="可浏览的根目录"
-            projects={rootSuggestions}
-            onOpen={(path) => void openPath(path)}
-          />
-          <ProjectSuggestionList
-            title="项目目录"
-            projects={suggestions}
-            onOpen={(path) => void openPath(path)}
-          />
-        </div>
+        <FileRootsTree
+          key={(projects.data?.roots ?? []).join("\n")}
+          roots={projects.data?.roots ?? []}
+          selectedPath={selectedPath}
+          onSelectFile={onSelectFile}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );
@@ -199,13 +160,11 @@ export default function FilesPage() {
         >
           <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold">
-                {rootPath ? "文件浏览" : "选择项目路径"}
-              </h2>
+              <h2 className="text-sm font-semibold">文件浏览</h2>
               <p className="truncate text-xs text-muted-foreground">
                 {rootPath
                   ? "点击左侧文件，在右侧预览内容"
-                  : "选择要浏览文件的项目目录"}
+                  : "展开左侧根目录，点击文件预览内容"}
               </p>
             </div>
             {rootPath ? (
@@ -234,19 +193,24 @@ export default function FilesPage() {
               onRefresh={refreshTree}
             />
           ) : (
-            <ProjectPicker onOpen={openRoot} />
+            <RootsExplorer
+              selectedPath={selectedFile}
+              onOpen={openRoot}
+              onSelectFile={setSelectedFile}
+              onRefresh={refreshTree}
+            />
           )}
         </aside>
 
         <div className="min-h-[45dvh] min-w-0 lg:min-h-0">
-          {rootPath ? (
+          {selectedFile ? (
             <FilePreview path={selectedFile} />
           ) : (
             <div className="flex h-full items-center justify-center p-6">
               <EmptyState
                 icon={<FolderTreeIcon className="size-6" />}
-                title="还没有选择项目路径"
-                description="在左侧选择一个项目目录或输入绝对路径，即可浏览其下的文件并预览 Markdown、图片与文本内容。"
+                title="还没有选择文件"
+                description="在左侧展开根目录和子目录，点击文件即可预览 Markdown、图片与文本内容。"
                 className="w-full max-w-md"
               />
             </div>

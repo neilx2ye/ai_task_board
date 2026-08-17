@@ -56,6 +56,7 @@ export async function syncSessions(
   );
   if (!error) {
     await persistModelCatalog(admin, auth, input);
+    await persistConnectionQuota(admin, auth, input);
     return data;
   }
   if (!isMissingDirectorySyncFunction(error)) throw mapDatabaseError(error);
@@ -83,6 +84,7 @@ export async function syncSessions(
     p_request_hash: hashRequest("sync_ai_sessions", legacyInput),
   });
   await persistModelCatalog(admin, auth, input);
+  await persistConnectionQuota(admin, auth, input);
   return result;
 }
 
@@ -101,6 +103,24 @@ async function persistModelCatalog(
     .eq("workspace_id", auth.workspaceId)
     .eq("connection_id", auth.connectionId);
   if (!error || isMissingModelCatalogSchema(error)) return;
+  throw mapDatabaseError(error);
+}
+
+async function persistConnectionQuota(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: AIAuthContext,
+  input: SyncSessionsInput,
+): Promise<void> {
+  if (input.quota === undefined) return;
+  const { error } = await admin
+    .from("ai_connection_bridge_settings")
+    .update({
+      quota: JSON.parse(JSON.stringify(input.quota)) as Json,
+      quota_updated_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", auth.workspaceId)
+    .eq("connection_id", auth.connectionId);
+  if (!error || isMissingQuotaSchema(error)) return;
   throw mapDatabaseError(error);
 }
 
@@ -134,6 +154,25 @@ function isMissingModelCatalogSchema(error: {
     .filter(Boolean)
     .join(" ")
     .includes("model_catalog");
+}
+
+function isMissingQuotaSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("quota");
 }
 
 export async function heartbeatSession(

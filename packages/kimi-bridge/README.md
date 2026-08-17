@@ -22,7 +22,7 @@ reply to the matching Board conversation.
 Run setup as the same OS user that owns the Kimi login and target workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.1.0 setup kimi
+npx --yes ai-task-board-bridge@1.2.0 setup kimi
 ```
 
 The installer writes a `0600` environment file, stages the CLI and its ACP SDK
@@ -38,7 +38,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.1.0 run kimi
+npx --yes ai-task-board-bridge@1.2.0 run kimi
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -50,6 +50,25 @@ KIMI_WORKING_DIRECTORIES='[{"key":"app","name":"Main App","path":"/srv/app"},{"k
 The list accepts 1 to 100 unique `{key,name?,path}` objects. Web creation sends
 only a stable directory key; the Bridge resolves it against this local list, so
 a command cannot inject an arbitrary device path.
+
+## Remote Web configuration
+
+Set `KIMI_BRIDGE_WEB_CONFIG=true` to let the Workspace Owner apply the Bridge
+settings from the Board UI:
+
+- enable/pause the Bridge (paused workers keep heartbeats but claim no new
+  turns, and Web Thread creation is rejected);
+- change the thread cap and device-wide concurrent-turn cap;
+- toggle session-title upload, when the device authorizes it with
+  `KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true` or
+  `KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true`.
+
+`KIMI_MAX_THREADS` remains the immutable local ceiling: Web can lower the
+runtime cap but never exceed it. `KIMI_MAX_CONCURRENT_TURNS` is the startup
+value; with Web configuration enabled the Board owns the live 1..32 limit.
+Kimi does not implement thread-history import or Web-managed working
+directories, so those Codex-specific controls are hidden and the local
+`KIMI_WORKING_DIRECTORIES` allowlist always wins.
 
 ## Execution and safety
 

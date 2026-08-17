@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
+import { ProjectTabBar } from "@/components/project-tab-bar";
 import { ResizableSessionPanel } from "@/components/resizable-session-panel";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
@@ -21,6 +22,7 @@ import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { sessionQueryKey } from "@/hooks/query-keys";
 import { useSelectedSessionIds } from "@/hooks/use-selected-session-ids";
+import { useSelectedProject } from "@/hooks/use-selected-project";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   supportsWorkingDirectoryInventory,
@@ -31,7 +33,9 @@ import {
 import { useWorkspace } from "@/hooks/use-workspace";
 import { agentDisplayName } from "@/lib/agent-platforms";
 import {
+  filterConnectionGroupsByProject,
   groupSessionsByConnection,
+  listSessionProjects,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
 } from "@/lib/domain/session-directory-groups";
@@ -62,6 +66,8 @@ export default function SessionsPage() {
   const { selectedSessionIds, setSelectedSessionIds } =
     useSelectedSessionIds();
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
+  // 项目 Tab 过滤：两页共享并用 localStorage 记忆，null 表示「全部」。
+  const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   const [pickerTarget, setPickerTarget] =
     useState<ThreadPickerTarget | null>(null);
   const [createTarget, setCreateTarget] =
@@ -110,6 +116,39 @@ export default function SessionsPage() {
     () => connectionGroups.flatMap((group) => group.sessions),
     [connectionGroups],
   );
+  const projects = useMemo(
+    () => listSessionProjects(connectionGroups),
+    [connectionGroups],
+  );
+  const visibleGroups = useMemo(
+    () => filterConnectionGroupsByProject(connectionGroups, selectedProjectId),
+    [connectionGroups, selectedProjectId],
+  );
+  const visibleSessions = useMemo(
+    () => visibleGroups.flatMap((group) => group.sessions),
+    [visibleGroups],
+  );
+
+  // 选中的项目随 Bridge 清单消失时，退回「全部」。
+  useEffect(() => {
+    if (
+      hierarchyError ||
+      sessionsQuery.isLoading ||
+      directoriesQuery.isLoading ||
+      selectedProjectId === null ||
+      projects.some((project) => project.id === selectedProjectId)
+    ) {
+      return;
+    }
+    setSelectedProjectId(null);
+  }, [
+    directoriesQuery.isLoading,
+    hierarchyError,
+    projects,
+    selectedProjectId,
+    sessionsQuery.isLoading,
+    setSelectedProjectId,
+  ]);
   const pickerContext = useMemo(() => {
     if (!pickerTarget) return null;
     const group = connectionGroups.find(
@@ -130,15 +169,18 @@ export default function SessionsPage() {
         pickerContext.project.inventoryActive &&
         pickerContext.project.directoryKey !== null)
     : false;
-  const selectedSessions = useMemo(
-    () =>
-      selectedSessionIds
-        .map((id) => sessions.find((session) => session.id === id))
-        .filter(
-          (session): session is SessionListItem => session !== undefined,
-        ),
-    [selectedSessionIds, sessions],
-  );
+  // 只展示当前项目下的已选 Thread；其它项目的面板隐藏但保留选中状态，切回即恢复。
+  const selectedSessions = useMemo(() => {
+    const visibleSessionIds = new Set(
+      visibleSessions.map((session) => session.id),
+    );
+    return selectedSessionIds
+      .map((id) => sessions.find((session) => session.id === id))
+      .filter(
+        (session): session is SessionListItem =>
+          session !== undefined && visibleSessionIds.has(session.id),
+      );
+  }, [selectedSessionIds, sessions, visibleSessions]);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -295,104 +337,116 @@ export default function SessionsPage() {
           description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端注册的会话会显示在这里。"
         />
       ) : (
-        <div
-          className={cn(
-            "grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-[grid-template-columns] duration-200",
-            isSidebarCollapsed
-              ? "lg:grid-cols-[3.25rem_minmax(0,1fr)]"
-              : "lg:grid-cols-[22rem_minmax(0,1fr)]",
-          )}
-        >
-          <aside
-            aria-label="会话导航侧边栏"
-            className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
+        <>
+          <ProjectTabBar
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelect={setSelectedProjectId}
+            totalSessionCount={sessions.length}
+          />
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-[grid-template-columns] duration-200",
+              isSidebarCollapsed
+                ? "lg:grid-cols-[3.25rem_minmax(0,1fr)]"
+                : "lg:grid-cols-[22rem_minmax(0,1fr)]",
+            )}
           >
-            <header
-              className={cn(
-                "flex items-center gap-2 border-b border-border py-3",
-                isSidebarCollapsed
-                  ? "justify-end px-3 lg:justify-center lg:px-2"
-                  : "justify-between px-3",
-              )}
+            <aside
+              aria-label="会话导航侧边栏"
+              className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
             >
-              {isSidebarCollapsed ? null : (
-                <div>
-                  <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
-                  <p className="text-xs text-muted-foreground">
-                    点击选中，可多选并排查看
-                  </p>
-                </div>
-              )}
-              <div className="flex shrink-0 items-center gap-1">
-                {isSidebarCollapsed ? null : (
-                  <Badge variant="secondary" className="tabular-nums">
-                    {sessions.length}
-                  </Badge>
+              <header
+                className={cn(
+                  "flex items-center gap-2 border-b border-border py-3",
+                  isSidebarCollapsed
+                    ? "justify-end px-3 lg:justify-center lg:px-2"
+                    : "justify-between px-3",
                 )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  aria-controls="session-directory-navigation"
-                  aria-expanded={!isSidebarCollapsed}
-                  aria-label={
-                    isSidebarCollapsed ? "展开会话侧边栏" : "折叠会话侧边栏"
-                  }
-                  title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
-                  onClick={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
-                >
-                  {isSidebarCollapsed ? (
-                    <PanelLeftOpenIcon />
-                  ) : (
-                    <PanelLeftCloseIcon />
+              >
+                {isSidebarCollapsed ? null : (
+                  <div>
+                    <h2 className="text-sm font-semibold">
+                      设备、目录与 Threads
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      点击选中，可多选并排查看
+                    </p>
+                  </div>
+                )}
+                <div className="flex shrink-0 items-center gap-1">
+                  {isSidebarCollapsed ? null : (
+                    <Badge variant="secondary" className="tabular-nums">
+                      {visibleSessions.length}
+                    </Badge>
                   )}
-                </Button>
-              </div>
-            </header>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    aria-controls="session-directory-navigation"
+                    aria-expanded={!isSidebarCollapsed}
+                    aria-label={
+                      isSidebarCollapsed ? "展开会话侧边栏" : "折叠会话侧边栏"
+                    }
+                    title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+                    onClick={() =>
+                      setIsSidebarCollapsed((collapsed) => !collapsed)
+                    }
+                  >
+                    {isSidebarCollapsed ? (
+                      <PanelLeftOpenIcon />
+                    ) : (
+                      <PanelLeftCloseIcon />
+                    )}
+                  </Button>
+                </div>
+              </header>
 
-            <div
-              id="session-directory-navigation"
-              hidden={isSidebarCollapsed}
-            >
-              <SessionDirectoryNavigation
-                groups={connectionGroups}
-                visibleIds={visibleIds}
-                selectedSessionIds={selectedSessionIds}
-                isOwner={Boolean(isOwner)}
-                onToggleSession={toggleSessionSelected}
-                onReserve={setTargetSessionId}
-                onManage={(connectionId, directoryId) =>
-                  setPickerTarget({ connectionId, directoryId })
-                }
-                onCreate={openCreateDialog}
-              />
-            </div>
-          </aside>
-
-          <div id="session-console" className="min-h-0">
-            {selectedSessions.length === 0 ? (
-              <div className="flex h-full items-center justify-center p-6">
-                <EmptyState
-                  icon={<BotIcon className="size-6" />}
-                  title="没有选中的 Thread"
-                  description="在左侧点击 Thread 即可打开对话面板，可多选并排查看；再次点击或关闭面板会取消选中，并清除已同步的历史记录。"
-                  className="w-full max-w-md"
+              <div
+                id="session-directory-navigation"
+                hidden={isSidebarCollapsed}
+              >
+                <SessionDirectoryNavigation
+                  groups={visibleGroups}
+                  visibleIds={visibleIds}
+                  selectedSessionIds={selectedSessionIds}
+                  isOwner={Boolean(isOwner)}
+                  onToggleSession={toggleSessionSelected}
+                  onReserve={setTargetSessionId}
+                  onManage={(connectionId, directoryId) =>
+                    setPickerTarget({ connectionId, directoryId })
+                  }
+                  onCreate={openCreateDialog}
                 />
               </div>
-            ) : (
-              <div className="flex h-full min-h-0 flex-col divide-y divide-border lg:flex-row lg:divide-x lg:divide-y-0 lg:overflow-x-auto">
-                {selectedSessions.map((session) => (
-                  <ResizableSessionPanel
-                    key={session.id}
-                    session={session}
-                    onClose={() => deselectSession(session.id)}
+            </aside>
+
+            <div id="session-console" className="min-h-0">
+              {selectedSessions.length === 0 ? (
+                <div className="flex h-full items-center justify-center p-6">
+                  <EmptyState
+                    icon={<BotIcon className="size-6" />}
+                    title="没有选中的 Thread"
+                    description="在左侧点击 Thread 即可打开对话面板，可多选并排查看；再次点击或关闭面板会取消选中，并清除已同步的历史记录。"
+                    className="w-full max-w-md"
                   />
-                ))}
-              </div>
-            )}
+                </div>
+              ) : (
+                <div className="flex h-full min-h-0 flex-col divide-y divide-border lg:flex-row lg:divide-x lg:divide-y-0 lg:overflow-x-auto">
+                  {selectedSessions.map((session) => (
+                    <ResizableSessionPanel
+                      key={session.id}
+                      session={session}
+                      onClose={() => deselectSession(session.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       <TaskFormDialog

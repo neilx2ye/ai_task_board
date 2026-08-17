@@ -1,0 +1,10 @@
+[Unit]
+Description=AI Task Board availability watchdog timer
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10s
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target

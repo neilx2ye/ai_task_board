@@ -5,6 +5,7 @@ import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
 import { DirectoryPlanningView } from "@/components/directory-planning-view";
 import { PlanningNotesEditor } from "@/components/planning-notes-editor";
+import { ProjectTabBar } from "@/components/project-tab-bar";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { TaskFormDialog } from "@/components/task-form-dialog";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
+import { useSelectedProject } from "@/hooks/use-selected-project";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   supportsWebThreadManagement,
@@ -30,7 +32,9 @@ import {
 import { useWorkspace } from "@/hooks/use-workspace";
 import { agentDisplayName } from "@/lib/agent-platforms";
 import {
+  filterConnectionGroupsByProject,
   groupSessionsByConnection,
+  listSessionProjects,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
 } from "@/lib/domain/session-directory-groups";
@@ -71,6 +75,8 @@ export default function PlanningPage() {
     directoryId: string;
   } | null>(null);
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
+  // 项目 Tab 过滤：与会话页共享并用 localStorage 记忆，null 表示「全部」。
+  const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   const [pickerTarget, setPickerTarget] = useState<ThreadPickerTarget | null>(
     null,
   );
@@ -120,30 +126,67 @@ export default function PlanningPage() {
     () => connectionGroups.flatMap((group) => group.sessions),
     [connectionGroups],
   );
+  const projects = useMemo(
+    () => listSessionProjects(connectionGroups),
+    [connectionGroups],
+  );
+  const visibleGroups = useMemo(
+    () => filterConnectionGroupsByProject(connectionGroups, selectedProjectId),
+    [connectionGroups, selectedProjectId],
+  );
+  const visibleSessions = useMemo(
+    () => visibleGroups.flatMap((group) => group.sessions),
+    [visibleGroups],
+  );
+
+  // 选中的项目随 Bridge 清单消失时，退回「全部」。
+  useEffect(() => {
+    if (
+      hierarchyError ||
+      sessionsQuery.isLoading ||
+      directoriesQuery.isLoading ||
+      selectedProjectId === null ||
+      projects.some((project) => project.id === selectedProjectId)
+    ) {
+      return;
+    }
+    setSelectedProjectId(null);
+  }, [
+    directoriesQuery.isLoading,
+    hierarchyError,
+    projects,
+    selectedProjectId,
+    sessionsQuery.isLoading,
+    setSelectedProjectId,
+  ]);
+
+  // 选中态从过滤后的层级派生：切换到其它项目 Tab 时隐藏（id 保留，切回即恢复）。
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId) ?? null,
-    [selectedSessionId, sessions],
+    () =>
+      visibleSessions.find((session) => session.id === selectedSessionId) ??
+      null,
+    [selectedSessionId, visibleSessions],
   );
   const selectedDirectoryContext = useMemo(() => {
     if (!selectedDirectory) return null;
-    const group = connectionGroups.find(
+    const group = visibleGroups.find(
       (candidate) => candidate.connection.id === selectedDirectory.connectionId,
     );
     const directory = group?.directories.find(
       (candidate) => candidate.id === selectedDirectory.directoryId,
     );
     return group && directory ? { group, directory } : null;
-  }, [connectionGroups, selectedDirectory]);
+  }, [visibleGroups, selectedDirectory]);
   const selectedContext = useMemo(() => {
     if (!selectedSession) return null;
-    const group = connectionGroups.find(
+    const group = visibleGroups.find(
       (candidate) => candidate.connection.id === selectedSession.connection.id,
     );
     const directory = group?.directories.find((candidate) =>
       candidate.sessions.some((session) => session.id === selectedSession.id),
     );
     return group && directory ? { group, directory } : null;
-  }, [connectionGroups, selectedSession]);
+  }, [visibleGroups, selectedSession]);
   const pickerContext = useMemo(() => {
     if (!pickerTarget) return null;
     const group = connectionGroups.find(
@@ -280,138 +323,152 @@ export default function PlanningPage() {
           description="在“AI 连接”页创建连接并配置到 AI 客户端后，客户端注册的会话会显示在这里。"
         />
       ) : (
-        <div
-          className={cn(
-            "grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-[grid-template-columns] duration-200",
-            isSidebarCollapsed
-              ? "lg:grid-cols-[3.25rem_minmax(0,1fr)]"
-              : "lg:grid-cols-[22rem_minmax(0,1fr)]",
-          )}
-        >
-          <aside
-            aria-label="规划导航侧边栏"
-            className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
+        <>
+          <ProjectTabBar
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelect={setSelectedProjectId}
+            totalSessionCount={sessions.length}
+          />
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-[grid-template-columns] duration-200",
+              isSidebarCollapsed
+                ? "lg:grid-cols-[3.25rem_minmax(0,1fr)]"
+                : "lg:grid-cols-[22rem_minmax(0,1fr)]",
+            )}
           >
-            <header
-              className={cn(
-                "flex items-center gap-2 border-b border-border py-3",
-                isSidebarCollapsed
-                  ? "justify-end px-3 lg:justify-center lg:px-2"
-                  : "justify-between px-3",
-              )}
+            <aside
+              aria-label="规划导航侧边栏"
+              className="border-b border-border lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
             >
-              {isSidebarCollapsed ? null : (
-                <div>
-                  <h2 className="text-sm font-semibold">设备、目录与 Threads</h2>
-                  <p className="text-xs text-muted-foreground">
-                    选中项目看共享规划，选中 Thread 编排 Turn 链
-                  </p>
-                </div>
-              )}
-              <div className="flex shrink-0 items-center gap-1">
-                {isSidebarCollapsed ? null : (
-                  <Badge variant="secondary" className="tabular-nums">
-                    {sessions.length}
-                  </Badge>
+              <header
+                className={cn(
+                  "flex items-center gap-2 border-b border-border py-3",
+                  isSidebarCollapsed
+                    ? "justify-end px-3 lg:justify-center lg:px-2"
+                    : "justify-between px-3",
                 )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  aria-controls="planning-directory-navigation"
-                  aria-expanded={!isSidebarCollapsed}
-                  aria-label={
-                    isSidebarCollapsed ? "展开规划侧边栏" : "折叠规划侧边栏"
-                  }
-                  title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
-                  onClick={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
-                >
-                  {isSidebarCollapsed ? (
-                    <PanelLeftOpenIcon />
-                  ) : (
-                    <PanelLeftCloseIcon />
-                  )}
-                </Button>
-              </div>
-            </header>
-
-            <div
-              id="planning-directory-navigation"
-              hidden={isSidebarCollapsed}
-            >
-              <SessionDirectoryNavigation
-                groups={connectionGroups}
-                visibleIds={visibleIds}
-                selectedSessionIds={
-                  selectedSessionId ? [selectedSessionId] : []
-                }
-                isOwner={Boolean(isOwner)}
-                onToggleSession={toggleSessionSelected}
-                onReserve={setTargetSessionId}
-                onManage={(connectionId, directoryId) =>
-                  setPickerTarget({ connectionId, directoryId })
-                }
-                onCreate={openCreateDialog}
-                selectedDirectory={selectedDirectory}
-                onToggleDirectory={toggleDirectorySelected}
-              />
-            </div>
-          </aside>
-
-          <div className="min-h-0 lg:overflow-y-auto">
-            {selectedSession ? (
-              <div className="flex min-h-full flex-col gap-4 p-4 lg:p-6">
-                <header className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div className="min-w-0">
-                    <h1 className="truncate text-base font-semibold">
-                      {selectedSession.name}
-                    </h1>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {selectedSession.working_directory ??
-                        selectedContext?.directory.workingDirectory ??
-                        selectedContext?.directory.name ??
-                        ""}
+              >
+                {isSidebarCollapsed ? null : (
+                  <div>
+                    <h2 className="text-sm font-semibold">
+                      设备、目录与 Threads
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      选中项目看共享规划，选中 Thread 编排 Turn 链
                     </p>
                   </div>
-                  <Badge variant="secondary" className="shrink-0">
-                    {agentDisplayName(selectedSession.connection.platform)}
-                  </Badge>
-                </header>
+                )}
+                <div className="flex shrink-0 items-center gap-1">
+                  {isSidebarCollapsed ? null : (
+                    <Badge variant="secondary" className="tabular-nums">
+                      {visibleSessions.length}
+                    </Badge>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    aria-controls="planning-directory-navigation"
+                    aria-expanded={!isSidebarCollapsed}
+                    aria-label={
+                      isSidebarCollapsed ? "展开规划侧边栏" : "折叠规划侧边栏"
+                    }
+                    title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+                    onClick={() =>
+                      setIsSidebarCollapsed((collapsed) => !collapsed)
+                    }
+                  >
+                    {isSidebarCollapsed ? (
+                      <PanelLeftOpenIcon />
+                    ) : (
+                      <PanelLeftCloseIcon />
+                    )}
+                  </Button>
+                </div>
+              </header>
 
-                {selectedContext ? (
-                  <PlanningNotesEditor
-                    key={`${selectedContext.group.connection.id}:${selectedContext.directory.id}`}
-                    connectionId={selectedContext.group.connection.id}
-                    directoryRef={selectedContext.directory.id}
-                    directoryName={selectedContext.directory.name}
-                    workingDirectory={selectedContext.directory.workingDirectory}
-                  />
-                ) : null}
-
-                <TurnPlanPanel session={selectedSession} />
-              </div>
-            ) : selectedDirectoryContext ? (
-              <DirectoryPlanningView
-                group={selectedDirectoryContext.group}
-                directory={selectedDirectoryContext.directory}
-                onOpenThread={(sessionId) => {
-                  setSelectedDirectory(null);
-                  setSelectedSessionId(sessionId);
-                }}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center p-6">
-                <EmptyState
-                  icon={<BotIcon className="size-6" />}
-                  title="没有选中的项目或 Thread"
-                  description="在左侧点击项目目录，可以记录整个项目的思考与规划；点击一个 Thread，则可以把任务拆成 Turn 链交给它自动依次执行。"
-                  className="w-full max-w-md"
+              <div
+                id="planning-directory-navigation"
+                hidden={isSidebarCollapsed}
+              >
+                <SessionDirectoryNavigation
+                  groups={visibleGroups}
+                  visibleIds={visibleIds}
+                  selectedSessionIds={
+                    selectedSessionId ? [selectedSessionId] : []
+                  }
+                  isOwner={Boolean(isOwner)}
+                  onToggleSession={toggleSessionSelected}
+                  onReserve={setTargetSessionId}
+                  onManage={(connectionId, directoryId) =>
+                    setPickerTarget({ connectionId, directoryId })
+                  }
+                  onCreate={openCreateDialog}
+                  selectedDirectory={selectedDirectory}
+                  onToggleDirectory={toggleDirectorySelected}
                 />
               </div>
-            )}
+            </aside>
+
+            <div className="min-h-0 lg:overflow-y-auto">
+              {selectedSession ? (
+                <div className="flex min-h-full flex-col gap-4 p-4 lg:p-6">
+                  <header className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="min-w-0">
+                      <h1 className="truncate text-base font-semibold">
+                        {selectedSession.name}
+                      </h1>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {selectedSession.working_directory ??
+                          selectedContext?.directory.workingDirectory ??
+                          selectedContext?.directory.name ??
+                          ""}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="shrink-0">
+                      {agentDisplayName(selectedSession.connection.platform)}
+                    </Badge>
+                  </header>
+
+                  {selectedContext ? (
+                    <PlanningNotesEditor
+                      key={`${selectedContext.group.connection.id}:${selectedContext.directory.id}`}
+                      connectionId={selectedContext.group.connection.id}
+                      directoryRef={selectedContext.directory.id}
+                      directoryName={selectedContext.directory.name}
+                      workingDirectory={
+                        selectedContext.directory.workingDirectory
+                      }
+                    />
+                  ) : null}
+
+                  <TurnPlanPanel session={selectedSession} />
+                </div>
+              ) : selectedDirectoryContext ? (
+                <DirectoryPlanningView
+                  group={selectedDirectoryContext.group}
+                  directory={selectedDirectoryContext.directory}
+                  onOpenThread={(sessionId) => {
+                    setSelectedDirectory(null);
+                    setSelectedSessionId(sessionId);
+                  }}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6">
+                  <EmptyState
+                    icon={<BotIcon className="size-6" />}
+                    title="没有选中的项目或 Thread"
+                    description="在左侧点击项目目录，可以记录整个项目的思考与规划；点击一个 Thread，则可以把任务拆成 Turn 链交给它自动依次执行。"
+                    className="w-full max-w-md"
+                  />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       <TaskFormDialog

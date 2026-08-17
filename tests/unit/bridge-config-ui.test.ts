@@ -13,6 +13,7 @@ import {
   bridgeSupportsHistorySync,
   bridgeSupportsRemoteConfiguration,
   bridgeSupportsWorkingDirectoryConfiguration,
+  supportsHistorySyncStatus,
   supportsBridgeSettings,
   type BridgeConfiguration,
 } from "@/hooks/use-bridge-config";
@@ -93,7 +94,7 @@ describe("Bridge configuration UI model", () => {
     expect(BRIDGE_HISTORY_RETENTION_NOTICE).toContain("不会删除已经上传的历史");
   });
 
-  it("only exposes settings for a reported Bridge or a Codex connection", () => {
+  it("exposes settings for every Bridge platform", () => {
     expect(
       supportsBridgeSettings({ bridge_version: "0.3.0", platform: "自定义 Agent" }),
     ).toBe(true);
@@ -107,9 +108,30 @@ describe("Bridge configuration UI model", () => {
       supportsBridgeSettings({ bridge_version: null, platform: "Claude" }),
     ).toBe(false);
     expect(
+      supportsBridgeSettings({ bridge_version: null, platform: "Kimi Code" }),
+    ).toBe(true);
+    expect(
       supportsBridgeSettings({
-        bridge_version: "0.9.0-kimi.1",
+        bridge_version: null,
+        platform: "Antigravity",
+      }),
+    ).toBe(true);
+  });
+
+  it("limits the Codex history banner to non-Kimi/Antigravity Bridges", () => {
+    expect(
+      supportsHistorySyncStatus({ bridge_version: "1.1.0", platform: "Codex CLI" }),
+    ).toBe(true);
+    expect(
+      supportsHistorySyncStatus({
+        bridge_version: "1.1.0-kimi.1",
         platform: "Kimi Code",
+      }),
+    ).toBe(false);
+    expect(
+      supportsHistorySyncStatus({
+        bridge_version: "1.1.0-antigravity.1",
+        platform: "Antigravity",
       }),
     ).toBe(false);
   });

@@ -16,6 +16,8 @@ export {
   type BoardSession,
   type ClaimedTask,
   type InventoryThread,
+  type RemoteConfigurationResponse,
+  type RemoteDesiredConfiguration,
   type ThreadCommand,
 } from "./board-client.js";
 export {
@@ -30,6 +32,12 @@ export {
   type ManagedWorkingDirectory,
 } from "./config.js";
 export { BridgeRegistry, type RegistryBinding } from "./registry.js";
-export { AntigravityBridge, TurnLimiter, type ManagedThread } from "./bridge.js";
+export {
+  AntigravityBridge,
+  resolveRemoteConfiguration,
+  TurnLimiter,
+  type ManagedThread,
+  type ResolvedAntigravityRemoteConfiguration,
+} from "./bridge.js";
 export { runBridgeCli as runAntigravityBridgeCli } from "./bridge.js";
 export { runInteractiveSetup as runAntigravityInteractiveSetup } from "./setup.js";

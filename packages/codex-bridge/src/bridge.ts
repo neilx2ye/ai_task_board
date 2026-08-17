@@ -10,6 +10,11 @@ import {
   CodexAppServerClient,
 } from "./app-server-client.js";
 import {
+  normalizeCodexQuota,
+  quotaError,
+  type SyncedQuota,
+} from "./account-quota.js";
+import {
   type HistoryImportRequest,
   type HistoryImportResponse,
   HistorySynchronizer,
@@ -50,7 +55,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.0.1";
+const BRIDGE_VERSION = "1.2.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -1259,10 +1264,12 @@ class BoardClient {
   async syncSessions(
     threads: ThreadRecord[],
     modelCatalog: readonly InventoryModel[] | undefined,
+    quota: SyncedQuota | undefined,
     signal?: AbortSignal,
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      ...(quota === undefined ? {} : { quota }),
       ...(modelCatalog === undefined
         ? {}
         : { model_catalog: modelCatalog }),
@@ -2823,6 +2830,7 @@ class DeviceBridge {
   private legacyConfigurationCompatibility = false;
   private inventoryReady = false;
   private modelCatalog: InventoryModel[] | undefined;
+  private quota: SyncedQuota | undefined;
 
   constructor(
     private readonly configuration: BridgeConfiguration,
@@ -3344,6 +3352,41 @@ class DeviceBridge {
     return reconciled;
   }
 
+  private async refreshAccountQuota(): Promise<void> {
+    try {
+      const quota = normalizeCodexQuota(
+        await this.appServer.accountRateLimitsRead({ timeoutMs: 10_000 }),
+      );
+      if (!this.stopping) this.quota = quota;
+    } catch (error) {
+      const message = errorMessage(error);
+      if (
+        error instanceof AppServerRpcError &&
+        (error.code === -32601 ||
+          message.toLowerCase().includes("authentication required"))
+      ) {
+        this.quota = {
+          provider: "codex",
+          status: "unavailable",
+          message:
+            error.code === -32601
+              ? "当前 Codex 版本不支持 account/rateLimits/read"
+              : "当前登录方式不提供账户套餐额度",
+          account: null,
+          plan: null,
+          fetched_at: new Date().toISOString(),
+          buckets: [],
+          credits: null,
+        };
+        return;
+      }
+      process.stderr.write(
+        `读取 Codex 账户额度失败：${message}\n`,
+      );
+      this.quota = quotaError(new Date(), message);
+    }
+  }
+
   private async syncWorkers(): Promise<void> {
     const threads = await this.listThreads();
     const visibleThreadIds = new Set(threads.map((thread) => thread.id));
@@ -3376,9 +3419,11 @@ class DeviceBridge {
     const sessions = await this.board.syncSessions(
       threads,
       this.modelCatalog,
+      this.quota,
       this.stopController.signal,
     );
     if (this.stopping) return;
+    void this.refreshAccountQuota();
     this.managedThreadIds = visibleThreadIds;
     this.historySynchronizer.updateTargets(
       threads.flatMap((thread) => {

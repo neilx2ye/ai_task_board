@@ -133,6 +133,7 @@ function DirectoryNode({
       <button
         type="button"
         onClick={() => onToggle(entry.path)}
+        title={entry.path}
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
         className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 pr-2 text-left text-sm text-foreground transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
@@ -170,6 +171,7 @@ function FileNode({
       <button
         type="button"
         onClick={onSelect}
+        title={entry.path}
         style={{ paddingLeft: `${depth * 14 + 20}px` }}
         className={cn(
           "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 pr-2 text-left text-sm transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
@@ -250,6 +252,75 @@ export function FileTree({
           onToggle={toggle}
           onSelectFile={onSelectFile}
         />
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * 多根目录文件树：每个可浏览根目录都是顶层层级，展开后同时展示
+ * 目录与文件，文件可直接选中预览。
+ */
+export function FileRootsTree({
+  roots,
+  selectedPath,
+  onSelectFile,
+  onRefresh,
+}: {
+  roots: string[];
+  selectedPath: string | null;
+  onSelectFile: (path: string) => void;
+  onRefresh: () => void;
+}) {
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(roots),
+  );
+
+  const toggle = (path: string) => {
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {roots.length > 0 ? `${roots.length} 个根目录` : "没有可浏览的根目录"}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          aria-label="刷新文件列表"
+          title="刷新文件列表"
+          onClick={onRefresh}
+        >
+          <RefreshCwIcon />
+        </Button>
+      </div>
+      <ul role="tree" className="min-h-0 flex-1 overflow-y-auto p-1">
+        {roots.map((root) => (
+          <DirectoryNode
+            key={root}
+            entry={{
+              name: root === "/" ? "/" : root,
+              path: root,
+              type: "directory",
+              size: null,
+              modifiedAt: null,
+            }}
+            depth={0}
+            expandedPaths={expandedPaths}
+            selectedPath={selectedPath}
+            onToggle={toggle}
+            onSelectFile={onSelectFile}
+          />
+        ))}
       </ul>
     </div>
   );

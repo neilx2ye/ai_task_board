@@ -26,7 +26,7 @@ Run setup as the same OS user that owns the Antigravity login and target
 workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.1.0 setup antigravity
+npx --yes ai-task-board-bridge@1.2.0 setup antigravity
 ```
 
 The installer writes a `0600` environment file, stages the runtime under the
@@ -42,7 +42,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.1.0 run antigravity
+npx --yes ai-task-board-bridge@1.2.0 run antigravity
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -54,6 +54,24 @@ ANTIGRAVITY_WORKING_DIRECTORIES='[{"key":"app","name":"Main App","path":"/srv/ap
 The list accepts 1 to 100 unique `{key,name?,path}` objects. Web creation sends
 only a stable directory key; the Bridge resolves it against this local list, so
 a command cannot inject an arbitrary device path.
+
+## Remote Web configuration
+
+Set `ANTIGRAVITY_BRIDGE_WEB_CONFIG=true` to let the Workspace Owner apply the
+Bridge settings from the Board UI:
+
+- enable/pause the Bridge (paused workers keep heartbeats but claim no new
+  turns, and Web Thread creation is rejected);
+- change the thread cap and device-wide concurrent-turn cap;
+- toggle thread-title upload. Antigravity uploads titles by default, so Web
+  can only reduce that exposure.
+
+`ANTIGRAVITY_MAX_THREADS` remains the immutable local ceiling: Web can lower
+the runtime cap but never exceed it. `ANTIGRAVITY_MAX_CONCURRENT_TURNS` is the
+startup value; with Web configuration enabled the Board owns the live 1..32
+limit. Antigravity does not implement thread-history import or Web-managed
+working directories, so those Codex-specific controls are hidden and the local
+`ANTIGRAVITY_WORKING_DIRECTORIES` allowlist always wins.
 
 ## Execution and safety
 
