@@ -63,8 +63,8 @@ function summarizeResults(results: ProjectDispatchResult[]): string {
 }
 
 /**
- * Web 创建项目：选定设备后，把新项目目录（含 create_if_missing 授权）
- * 下发到该设备上所有支持托管目录创建的 Bridge。
+ * Web 创建项目：选定一个 Bridge，把新项目目录（含 create_if_missing 授权）
+ * 下发到该 Bridge 所在设备上所有支持托管目录创建的 Bridge。
  */
 export function CreateProjectDialog({
   connections,
@@ -78,20 +78,23 @@ export function CreateProjectDialog({
   onCreated: (projectId: string, summary: string) => void;
 }) {
   const deviceGroups = useMemo(
-    () =>
-      groupConnectionsByDevice(connections).map((group) => {
-        const capable = group.connections.filter((connection) =>
-          supportsManagedDirectoryCreation(connection),
-        );
-        return { ...group, capable };
-      }),
+    () => groupConnectionsByDevice(connections),
     [connections],
   );
-  const creatableGroups = deviceGroups.filter(
-    (group) => group.capable.length > 0,
+  // 选项按用户认识的 Bridge 连接名展示；设备由选中的 Bridge 推断。
+  const bridgeOptions = useMemo(
+    () =>
+      [...connections]
+        .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+        .map((connection) => ({
+          connection,
+          capable: supportsManagedDirectoryCreation(connection),
+        })),
+    [connections],
   );
+  const hasCapableBridge = bridgeOptions.some((option) => option.capable);
 
-  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [bridgeId, setBridgeId] = useState<string | null>(null);
   const [workingDirectory, setWorkingDirectory] = useState("");
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
@@ -102,16 +105,28 @@ export function CreateProjectDialog({
     crypto.randomUUID(),
   );
 
-  const selectedGroup =
-    creatableGroups.find((group) => group.deviceId === deviceId) ?? null;
+  const selectedDevice = useMemo(() => {
+    if (!bridgeId) return null;
+    const group = deviceGroups.find((candidate) =>
+      candidate.connections.some((connection) => connection.id === bridgeId),
+    );
+    if (!group) return null;
+    const capable = group.connections.filter((connection) =>
+      supportsManagedDirectoryCreation(connection),
+    );
+    const outdated = group.connections.filter(
+      (connection) => !supportsManagedDirectoryCreation(connection),
+    );
+    return { group, capable, outdated };
+  }, [bridgeId, deviceGroups]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     const path = workingDirectory.trim();
     const projectName = name.trim() || directoryNameFromPath(path);
-    if (!selectedGroup) {
-      setError("请选择一台设备");
+    if (!selectedDevice || selectedDevice.capable.length === 0) {
+      setError("请选择一个 Bridge");
       return;
     }
     if (!/^(?:\/|[A-Za-z]:[\\/])/.test(path)) {
@@ -128,7 +143,7 @@ export function CreateProjectDialog({
           json: {
             name: projectName,
             working_directory: path,
-            connection_ids: selectedGroup.capable.map(
+            connection_ids: selectedDevice.capable.map(
               (connection) => connection.id,
             ),
           },
@@ -169,45 +184,57 @@ export function CreateProjectDialog({
         <DialogHeader>
           <DialogTitle>新建项目</DialogTitle>
           <DialogDescription>
-            选择一台设备并输入项目路径，该设备上所有支持托管目录的 Bridge
-            都会关联到该项目（目录不存在时由设备自动创建）。
+            选择一个 Bridge，新项目会关联到它所在设备的所有 Bridge（目录不存在时由设备自动创建）。
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="create-project-device">设备</Label>
+            <Label htmlFor="create-project-bridge">Bridge</Label>
             <Select
-              value={deviceId ?? ""}
-              onValueChange={(value) => setDeviceId(value)}
+              value={bridgeId ?? ""}
+              onValueChange={(value) => setBridgeId(value)}
             >
-              <SelectTrigger id="create-project-device">
-                <SelectValue placeholder="选择设备" />
+              <SelectTrigger id="create-project-bridge">
+                <SelectValue placeholder="选择 Bridge" />
               </SelectTrigger>
               <SelectContent>
-                {creatableGroups.map((group) => (
-                  <SelectItem key={group.deviceId} value={group.deviceId}>
-                    {group.label}（{group.capable.length}/
-                    {group.connections.length} 个 Bridge 可创建）
+                {bridgeOptions.map(({ connection, capable }) => (
+                  <SelectItem
+                    key={connection.id}
+                    value={connection.id}
+                    disabled={!capable}
+                  >
+                    {connection.name}（{connection.platform}）
+                    {capable ? "" : " · 需升级 1.3.0"}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {creatableGroups.length === 0 ? (
+            {!hasCapableBridge ? (
               <p className="text-xs text-muted-foreground">
-                暂无可用的设备：需要 Bridge 1.3.0 及以上版本，并在设备上允许
+                暂无可用的 Bridge：需要 1.3.0 及以上版本，并在设备上允许
                 Web 工作目录配置。
               </p>
             ) : null}
-            {selectedGroup &&
-            selectedGroup.capable.length <
-              selectedGroup.connections.length ? (
-              <p className="text-xs text-muted-foreground">
-                该设备上有{" "}
-                {selectedGroup.connections.length -
-                  selectedGroup.capable.length}{" "}
-                个 Bridge 版本过低，需升级到 1.3.0 后才能关联新项目。
-              </p>
+            {selectedDevice ? (
+              <div className="text-xs text-muted-foreground">
+                <p>
+                  将关联到该设备的 {selectedDevice.capable.length} 个 Bridge：
+                  {selectedDevice.capable
+                    .map((connection) => connection.name)
+                    .join("、")}
+                  。
+                </p>
+                {selectedDevice.outdated.length > 0 ? (
+                  <p className="mt-0.5">
+                    {selectedDevice.outdated
+                      .map((connection) => connection.name)
+                      .join("、")}{" "}
+                    版本过低，升级到 1.3.0 后才会关联新项目。
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -255,10 +282,7 @@ export function CreateProjectDialog({
             >
               取消
             </Button>
-            <Button
-              type="submit"
-              disabled={submitting || creatableGroups.length === 0}
-            >
+            <Button type="submit" disabled={submitting || !hasCapableBridge}>
               {submitting ? "下发中…" : "创建项目"}
             </Button>
           </DialogFooter>
