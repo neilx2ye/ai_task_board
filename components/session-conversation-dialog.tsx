@@ -19,6 +19,7 @@ import {
   HistoryIcon,
   ListChecksIcon,
   LoaderCircleIcon,
+  LockKeyholeIcon,
   PaperclipIcon,
   SendIcon,
   TargetIcon,
@@ -39,7 +40,7 @@ import {
   SESSION_STATUS_META,
 } from "@/components/task-meta";
 import { reduceAppServerActivityStream } from "@/components/session-activity-stream";
-import { StructuredUserInputForm } from "@/components/structured-user-input-form";
+import { StructuredUserInputDialog } from "@/components/structured-user-input-form";
 import {
   activityDetailsData,
   summarizeTokenUsage,
@@ -933,6 +934,8 @@ function SessionConversationContent({
   });
   const [goalMode, setGoalMode] = useState<"inherit" | "on" | "off">("inherit");
   const [sendError, setSendError] = useState<string | null>(null);
+  const [dismissedInputRequestId, setDismissedInputRequestId] =
+    useState<string | null>(null);
   const turnSettingsTouchedRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -991,6 +994,9 @@ function SessionConversationContent({
         ) ?? null,
     [details?.input_requests, taskById],
   );
+  const choicePopupOpen =
+    pendingStructuredRequest !== null &&
+    pendingStructuredRequest.id !== dismissedInputRequestId;
   const latestTimelineKey = timeline.at(-1)?.key ?? null;
   const latestActivityId = details?.activities.at(-1)?.id ?? null;
   const timelineRevision = `${latestTimelineKey ?? "empty"}:${latestActivityId ?? "none"}:${pendingStructuredRequest?.id ?? "no-input"}`;
@@ -1265,12 +1271,25 @@ function SessionConversationContent({
               ))}
             </ol>
             {pendingStructuredRequest ? (
-              <StructuredUserInputForm
-                request={pendingStructuredRequest}
-                sourceTaskTitle={
-                  taskById.get(pendingStructuredRequest.task_id)?.title ?? null
-                }
-              />
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <LockKeyholeIcon className="size-4 shrink-0 text-amber-700" />
+                  <p className="min-w-0 truncate text-sm font-medium text-amber-950">
+                    AI 正在等待你的选择
+                    {taskById.get(pendingStructuredRequest.task_id)?.title
+                      ? `：${taskById.get(pendingStructuredRequest.task_id)!.title}`
+                      : ""}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDismissedInputRequestId(null)}
+                >
+                  打开选择框
+                </Button>
+              </div>
             ) : null}
           </div>
         )}
@@ -1288,7 +1307,7 @@ function SessionConversationContent({
               </p>
             ) : pendingStructuredRequest ? (
               <p className="text-xs text-amber-700">
-                当前 turn 正在等待上方结构化回答，提交后会原地继续。
+                当前 turn 正在等待你的选择，提交后会原地继续。
               </p>
             ) : null}
             {sendError ? (
@@ -1503,6 +1522,24 @@ function SessionConversationContent({
             </div>
           </div>
         </form>
+      ) : null}
+      {pendingStructuredRequest ? (
+        <StructuredUserInputDialog
+          request={pendingStructuredRequest}
+          open={choicePopupOpen}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setDismissedInputRequestId(pendingStructuredRequest.id);
+            }
+          }}
+          sourceTaskTitle={
+            taskById.get(pendingStructuredRequest.task_id)?.title ?? null
+          }
+          onAnswered={() => {
+            setDismissedInputRequestId(pendingStructuredRequest.id);
+            void conversationQuery.refetch({ cancelRefetch: false });
+          }}
+        />
       ) : null}
     </>
   );

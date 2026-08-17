@@ -4,6 +4,13 @@ import { useMemo, useState, type FormEvent } from "react";
 import { CheckIcon, LockKeyholeIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/components/utils";
 import { useAnswerTaskUserInput } from "@/hooks/use-tasks";
 import type { TaskUserInputRequestRow } from "@/lib/types/database";
@@ -17,10 +24,14 @@ export function StructuredUserInputForm({
   request,
   className,
   sourceTaskTitle,
+  hideIntro = false,
+  onAnswered,
 }: {
   request: TaskUserInputRequestRow;
   className?: string;
   sourceTaskTitle?: string | null;
+  hideIntro?: boolean;
+  onAnswered?: () => void;
 }) {
   const answerRequest = useAnswerTaskUserInput(request.task_id, request.id);
   const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({});
@@ -61,6 +72,7 @@ export function StructuredUserInputForm({
     try {
       await answerRequest.mutateAsync(answers);
       setDrafts({});
+      onAnswered?.();
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -78,18 +90,20 @@ export function StructuredUserInputForm({
         className,
       )}
     >
-      <div className="flex items-start gap-2">
-        <LockKeyholeIcon className="mt-0.5 size-4 shrink-0 text-amber-700" />
-        <div>
-          <p className="text-sm font-semibold text-amber-950">
-            AI 正在当前 turn 中等待选择
-          </p>
-          <p className="mt-0.5 text-xs leading-relaxed text-amber-800">
-            {sourceTaskTitle ? `来自「${sourceTaskTitle}」。` : ""}
-            提交后同一个 turn 会立即继续，不会重新排队或丢失上下文。
-          </p>
+      {!hideIntro ? (
+        <div className="flex items-start gap-2">
+          <LockKeyholeIcon className="mt-0.5 size-4 shrink-0 text-amber-700" />
+          <div>
+            <p className="text-sm font-semibold text-amber-950">
+              AI 正在当前 turn 中等待选择
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed text-amber-800">
+              {sourceTaskTitle ? `来自「${sourceTaskTitle}」。` : ""}
+              提交后同一个 turn 会立即继续，不会重新排队或丢失上下文。
+            </p>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {request.questions.map((question, questionIndex) => {
         const draft = drafts[question.id] ?? { choice: "", text: "" };
@@ -219,5 +233,45 @@ export function StructuredUserInputForm({
         {answerRequest.isPending ? "正在提交…" : "提交并继续原 turn"}
       </Button>
     </form>
+  );
+}
+
+/**
+ * 会话框的「方案选择」弹窗：模型通过结构化提问给出多个可行方向时，
+ * 自动弹出让用户选择；提交后 Bridge 会原地恢复同一个 turn 继续执行。
+ */
+export function StructuredUserInputDialog({
+  request,
+  sourceTaskTitle,
+  open,
+  onOpenChange,
+  onAnswered,
+}: {
+  request: TaskUserInputRequestRow;
+  sourceTaskTitle?: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAnswered?: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl flex-col gap-0 overflow-hidden p-0 sm:p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
+          <DialogTitle>AI 需要你的选择</DialogTitle>
+          <DialogDescription>
+            选择一个方案后，当前 turn 会立即原地继续，不会重新排队或丢失上下文。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5">
+          <StructuredUserInputForm
+            request={request}
+            sourceTaskTitle={sourceTaskTitle}
+            hideIntro
+            className="border-0 bg-transparent p-0"
+            onAnswered={onAnswered}
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
