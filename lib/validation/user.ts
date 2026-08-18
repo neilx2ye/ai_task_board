@@ -274,6 +274,18 @@ export const taskListQuerySchema = z
   })
   .strict();
 
+export const createDeviceFileCommandSchema = z
+  .object({
+    connection_id: uuidSchema,
+    action: z.enum(["list", "read"]),
+    path: z.string().trim().min(1).max(4096),
+  })
+  .strict();
+
+export const deviceFileCommandParamsSchema = z
+  .object({ commandId: uuidSchema })
+  .strict();
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type ReplyToTaskInput = z.infer<typeof replyToTaskSchema>;
@@ -289,3 +301,6 @@ export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;
 export type UpsertPlanningNotesInput = z.infer<typeof upsertPlanningNotesSchema>;
 export type CreateTurnPlanStepInput = z.infer<typeof createTurnPlanStepSchema>;
 export type UpdateTurnPlanStepInput = z.infer<typeof updateTurnPlanStepSchema>;
+export type CreateDeviceFileCommandInput = z.infer<
+  typeof createDeviceFileCommandSchema
+>;

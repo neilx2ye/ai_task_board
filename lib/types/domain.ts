@@ -171,11 +171,45 @@ export type FileExplorerProject = {
   path: string;
 };
 
-/** 文件浏览页：可浏览根目录与候选项目列表。 */
+/** 文件浏览页：Bridge 上报的工作目录聚合成的项目（页面顶部项目 Tab 同源）。 */
+export type FileExplorerBridgeProject = {
+  id: string;
+  name: string;
+  workingDirectory: string;
+  connections: {
+    id: string;
+    name: string;
+    platform: string;
+    bridgeVersion: string | null;
+  }[];
+  /** 工作目录是否位于 Board 服务本机可访问的根目录内。 */
+  serverAccessible: boolean;
+};
+
+/** 文件浏览页：可浏览根目录、候选项目路径与 Bridge 项目列表。 */
 export type FileExplorerProjects = {
   roots: string[];
   projects: FileExplorerProject[];
+  bridgeProjects: FileExplorerBridgeProject[];
 };
+
+/** 文件浏览页：设备文件命令状态与结果。 */
+export type FileDeviceCommand = {
+  id: string;
+  connectionId: string;
+  action: "list" | "read";
+  path: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  result: FileExplorerDirectory | FilePreview | null;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+/** 文件浏览页：目录/文件内容来源（服务本机或指定连接的设备 Bridge）。 */
+export type FileSource =
+  | { kind: "local" }
+  | { kind: "device"; connectionId: string };
 
 /** 文件浏览页：单文件预览结果。 */
 export type FilePreview =

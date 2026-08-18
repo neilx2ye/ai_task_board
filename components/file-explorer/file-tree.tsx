@@ -15,13 +15,23 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { cn, formatBytes } from "@/components/utils";
-import { useFileExplorerDirectory } from "@/hooks/use-file-explorer";
+import {
+  useDeviceFileExplorerDirectory,
+  useFileExplorerDirectory,
+} from "@/hooks/use-file-explorer";
+import { compareBridgeVersions } from "@/lib/bridge-version";
 import {
   isImageExtension,
   isMarkdownFile,
   isTextFile,
 } from "@/lib/file-kinds";
-import type { FileExplorerEntry } from "@/lib/types/domain";
+import type {
+  FileExplorerBridgeProject,
+  FileExplorerEntry,
+  FileSource,
+} from "@/lib/types/domain";
+
+const DEVICE_FILE_BROWSING_MIN_VERSION = "1.5.0";
 
 function iconForEntry(entry: FileExplorerEntry): ReactNode {
   const extension = entry.name.split(".").pop()?.toLowerCase() ?? "";
@@ -38,22 +48,35 @@ function iconForEntry(entry: FileExplorerEntry): ReactNode {
 type DirectoryNodeProps = {
   entry: FileExplorerEntry;
   depth: number;
+  source: FileSource;
   expandedPaths: Set<string>;
   selectedPath: string | null;
   onToggle: (path: string) => void;
   onSelectFile: (path: string) => void;
+  trailing?: ReactNode;
 };
 
 function DirectoryNode({
   entry,
   depth,
+  source,
   expandedPaths,
   selectedPath,
   onToggle,
   onSelectFile,
+  trailing,
 }: DirectoryNodeProps) {
   const isExpanded = expandedPaths.has(entry.path);
-  const listing = useFileExplorerDirectory(entry.path, isExpanded);
+  const localListing = useFileExplorerDirectory(
+    entry.path,
+    source.kind === "local" && isExpanded,
+  );
+  const deviceListing = useDeviceFileExplorerDirectory(
+    source.kind === "device" ? source.connectionId : null,
+    entry.path,
+    source.kind === "device" && isExpanded,
+  );
+  const listing = source.kind === "device" ? deviceListing : localListing;
 
   let children: ReactNode = null;
   if (isExpanded && listing.isLoading) {
@@ -97,6 +120,7 @@ function DirectoryNode({
               key={child.path}
               entry={child}
               depth={depth + 1}
+              source={source}
               expandedPaths={expandedPaths}
               selectedPath={selectedPath}
               onToggle={onToggle}
@@ -149,6 +173,7 @@ function DirectoryNode({
           <FolderIcon className="size-4 shrink-0 text-primary" />
         )}
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        {trailing}
       </button>
       {children}
     </li>
@@ -212,6 +237,7 @@ export function FileTree({
     size: null,
     modifiedAt: null,
   };
+  const source: FileSource = { kind: "local" };
 
   const toggle = (path: string) => {
     setExpandedPaths((current) => {
@@ -247,6 +273,7 @@ export function FileTree({
         <DirectoryNode
           entry={rootEntry}
           depth={0}
+          source={source}
           expandedPaths={expandedPaths}
           selectedPath={selectedPath}
           onToggle={toggle}
@@ -315,12 +342,143 @@ export function FileRootsTree({
               modifiedAt: null,
             }}
             depth={0}
+            source={{ kind: "local" }}
             expandedPaths={expandedPaths}
             selectedPath={selectedPath}
             onToggle={toggle}
             onSelectFile={onSelectFile}
           />
         ))}
+      </ul>
+    </div>
+  );
+}
+
+function projectSource(
+  project: FileExplorerBridgeProject,
+): { source: FileSource; capableConnection: boolean } {
+  if (project.serverAccessible) {
+    return { source: { kind: "local" }, capableConnection: true };
+  }
+  const connection = project.connections.find((candidate) => {
+    const comparison = compareBridgeVersions(
+      candidate.bridgeVersion,
+      DEVICE_FILE_BROWSING_MIN_VERSION,
+    );
+    return comparison !== null && comparison >= 0;
+  });
+  return connection
+    ? { source: { kind: "device", connectionId: connection.id }, capableConnection: true }
+    : { source: { kind: "local" }, capableConnection: false };
+}
+
+/**
+ * 项目文件树：与页面顶部项目 Tab 同源，每个 Bridge 工作目录都是一个顶层
+ * 项目节点；本机可读的直接列目录，远端设备走设备 Bridge 文件命令。
+ */
+export function ProjectFileTrees({
+  projects,
+  selectedPath,
+  onSelectFile,
+  onRefresh,
+}: {
+  projects: FileExplorerBridgeProject[];
+  selectedPath: string | null;
+  onSelectFile: (path: string, source: FileSource) => void;
+  onRefresh: () => void;
+}) {
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const toggle = (path: string) => {
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  if (projects.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+        <p className="text-xs text-muted-foreground">
+          暂无项目目录，请先在 Bridge 上配置工作目录
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {projects.length} 个项目
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          aria-label="刷新文件列表"
+          title="刷新文件列表"
+          onClick={onRefresh}
+        >
+          <RefreshCwIcon />
+        </Button>
+      </div>
+      <ul role="tree" className="min-h-0 flex-1 overflow-y-auto p-1">
+        {projects.map((project) => {
+          const { source, capableConnection } = projectSource(project);
+          const platform =
+            source.kind === "device"
+              ? (project.connections.find(
+                  (candidate) => candidate.id === source.connectionId,
+                )?.platform ?? null)
+              : null;
+          const entry: FileExplorerEntry = {
+            name: project.name,
+            path: project.workingDirectory,
+            type: "directory",
+            size: null,
+            modifiedAt: null,
+          };
+          if (!capableConnection) {
+            return (
+              <li
+                key={project.id}
+                role="treeitem"
+                aria-selected="false"
+                title={project.workingDirectory}
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground"
+              >
+                <FolderIcon className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  需升级 Bridge 1.5.0
+                </span>
+              </li>
+            );
+          }
+          return (
+            <DirectoryNode
+              key={project.id}
+              entry={entry}
+              depth={0}
+              source={source}
+              expandedPaths={expandedPaths}
+              selectedPath={selectedPath}
+              onToggle={toggle}
+              onSelectFile={(path) => onSelectFile(path, source)}
+              trailing={
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {project.serverAccessible ? "本机" : (platform ?? "设备")}
+                </span>
+              }
+            />
+          );
+        })}
       </ul>
     </div>
   );

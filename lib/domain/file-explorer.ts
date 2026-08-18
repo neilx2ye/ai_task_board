@@ -127,6 +127,28 @@ async function assertPathWithinRoots(
   return resolved;
 }
 
+/** 软检查：路径真实存在且位于允许根目录内；不满足时返回 false 而不抛错。 */
+export async function pathExistsWithinRoots(rawPath: string): Promise<boolean> {
+  if (!rawPath || rawPath.length > 4096 || !path.isAbsolute(rawPath)) {
+    return false;
+  }
+  try {
+    const resolved = await realpath(rawPath);
+    const info = await stat(resolved);
+    if (!info.isDirectory() && !info.isFile()) return false;
+    const roots = await allowedRoots();
+    return roots.some((root) => {
+      const relative = path.relative(root, resolved);
+      return (
+        relative === "" ||
+        (!relative.startsWith("..") && !path.isAbsolute(relative))
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
 function sortEntries(entries: FileExplorerEntry[]): void {
   entries.sort((left, right) => {
     if (left.type !== right.type) return left.type === "directory" ? -1 : 1;
@@ -190,7 +212,9 @@ export async function listDirectoryContents(
   };
 }
 
-export async function listProjectSuggestions(): Promise<FileExplorerProjects> {
+export async function listProjectSuggestions(): Promise<
+  Omit<FileExplorerProjects, "bridgeProjects">
+> {
   const roots = await allowedRoots();
   const projects = new Map<string, { name: string; path: string }>();
 

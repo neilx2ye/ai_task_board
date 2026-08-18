@@ -17,7 +17,7 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 - AI Connection 令牌和领取令牌只保存带 Pepper 的哈希；原始值只在创建/领取时返回。
 - REST 和 MCP 共用领域服务、Zod 输入校验与稳定业务错误码。
 - Supabase Auth/RLS 隔离 Workspace，Realtime 驱动页面刷新；网页附件以 multipart 上传到私有 Bucket，并通过 60 秒签名 URL 下载。
-- 文件预览工作台按「项目路径 → 文件树 → 预览面板」浏览服务端可访问的本地目录，惰性加载目录树并预览 Markdown、图片与文本；仅 Workspace Owner 可访问，路径限制在 `FILE_EXPLORER_ROOTS` 配置的根目录内，并自动跳过隐藏文件、敏感密钥与 `node_modules` 等目录。
+- 文件预览工作台按「项目 → 文件树 → 预览面板」浏览文件：项目与页面顶部项目 Tab 同源（Bridge 上报的工作目录），本机可访问的目录直接读取，远端设备目录通过 Bridge 1.5.0+ 的 list/read 文件命令回传，惰性加载目录树并预览 Markdown、图片与文本；仅 Workspace Owner 可访问，本机路径限制在 `FILE_EXPLORER_ROOTS` 根目录内，设备侧同样只允许连接白名单内的工作目录，并自动跳过隐藏文件、敏感密钥与 `node_modules` 等目录。
 - 可选的设备级 Codex Bridge 通过 stdio App Server 自动发现多个顶层 thread，通过认证 SSE 接收任务唤醒，并只把 AI 回复增量同步到各自的会话对话框；Workspace Owner 还可从网页新建、重命名和删除受管 Thread。
 - 独立的 Kimi Bridge 通过 Kimi ACP 发现真实 Kimi Sessions，上报 Kimi 模型与思考强度，并支持网页新建、执行和删除；ACP 不支持可靠改名，因此 Kimi 连接不会展示改名入口。
 - 独立的 Antigravity Bridge 通过 Antigravity CLI 官方 headless `stream-json` 接口驱动本机 `agy`，按 Thread 保持真实 conversation 上下文并回传最终回复；不读取 Google 未公开的会话数据库。

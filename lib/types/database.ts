@@ -26,6 +26,12 @@ export type AIThreadCommandStatus =
   | "running"
   | "succeeded"
   | "failed";
+export type AIFileCommandAction = "list" | "read";
+export type AIFileCommandStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
 export type SessionActivityKind =
   | "user_message"
   | "assistant_message"
@@ -347,6 +353,44 @@ export type AIThreadCommandInsert = {
   requested_by_user_id?: string | null;
   runtime_instance_id?: string | null;
   lease_expires_at?: string | null;
+  error?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string;
+};
+
+export type AIFileCommandRow = {
+  id: string;
+  workspace_id: string;
+  connection_id: string;
+  action: AIFileCommandAction;
+  path: string;
+  status: AIFileCommandStatus;
+  attempt_count: number;
+  requested_by_user_id: string | null;
+  runtime_instance_id: string | null;
+  lease_expires_at: string | null;
+  result: Json | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type AIFileCommandInsert = {
+  id?: string;
+  workspace_id: string;
+  connection_id: string;
+  action: AIFileCommandAction;
+  path: string;
+  status?: AIFileCommandStatus;
+  attempt_count?: number;
+  requested_by_user_id?: string | null;
+  runtime_instance_id?: string | null;
+  lease_expires_at?: string | null;
+  result?: Json | null;
   error?: string | null;
   created_at?: string;
   started_at?: string | null;
@@ -835,6 +879,9 @@ type ConnectionResponse = { connection: PublicAIConnectionRow };
 export type AIThreadCommandResponse = {
   command: AIThreadCommandRow | null;
 };
+export type AIFileCommandResponse = {
+  command: AIFileCommandRow | null;
+};
 type ArtifactResponse = { artifact: ArtifactRow };
 
 export type BridgeWorkingDirectory = {
@@ -1027,6 +1074,34 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: "ai_connections";
             referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      ai_file_commands: TableDefinition<
+        AIFileCommandRow,
+        AIFileCommandInsert,
+        Partial<AIFileCommandRow>,
+        [
+          {
+            foreignKeyName: "ai_file_commands_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_file_commands_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "ai_file_commands_requested_by_user_id_fkey";
+            columns: ["requested_by_user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           },
         ]
       >;
@@ -1825,6 +1900,32 @@ export interface Database {
           p_error: string | null;
         };
         Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_file_command: {
+        Args: UserArgs & {
+          p_command_id: string;
+          p_connection_id: string;
+          p_action: AIFileCommandAction;
+          p_path: string;
+        };
+        Returns: AIFileCommandResponse;
+      };
+      claim_ai_file_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_lease_seconds: number;
+        };
+        Returns: AIFileCommandResponse;
+      };
+      complete_ai_file_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_command_id: string;
+          p_succeeded: boolean;
+          p_result: Json | null;
+          p_error: string | null;
+        };
+        Returns: AIFileCommandResponse;
       };
       update_ai_connection_bridge_config: {
         Args: UserArgs &

@@ -10,15 +10,18 @@ import {
 } from "lucide-react";
 
 import { FilePreview } from "@/components/file-explorer/file-preview";
-import { FileRootsTree, FileTree } from "@/components/file-explorer/file-tree";
+import { FileTree, ProjectFileTrees } from "@/components/file-explorer/file-tree";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, apiFetch } from "@/hooks/api-client";
 import { useFileExplorerProjects } from "@/hooks/use-file-explorer";
-import type { FileExplorerDirectory } from "@/lib/types/domain";
+import type {
+  FileExplorerDirectory,
+  FileSource,
+} from "@/lib/types/domain";
 
-function RootsExplorer({
+function ProjectsExplorer({
   selectedPath,
   onOpen,
   onSelectFile,
@@ -26,7 +29,7 @@ function RootsExplorer({
 }: {
   selectedPath: string | null;
   onOpen: (path: string) => void;
-  onSelectFile: (path: string) => void;
+  onSelectFile: (path: string, source: FileSource) => void;
   onRefresh: () => void;
 }) {
   const projects = useFileExplorerProjects();
@@ -63,11 +66,7 @@ function RootsExplorer({
     }
   };
 
-  const suggestions = projects.data?.projects ?? [];
-  const rootSuggestions = (projects.data?.roots ?? []).map((root) => ({
-    name: root,
-    path: root,
-  }));
+  const suggestions = projects.data?.bridgeProjects ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -76,7 +75,7 @@ function RootsExplorer({
           <Input
             value={pathInput}
             onChange={(event) => setPathInput(event.target.value)}
-            placeholder="输入绝对路径，如 /home/ubuntu/project"
+            placeholder="输入服务本机绝对路径，如 /home/ubuntu/project"
             aria-label="项目路径"
             list="file-explorer-path-suggestions"
             className="min-w-0 flex-1 font-mono text-xs"
@@ -96,8 +95,8 @@ function RootsExplorer({
           </Button>
         </div>
         <datalist id="file-explorer-path-suggestions">
-          {[...rootSuggestions, ...suggestions].map((suggestion) => (
-            <option key={suggestion.path} value={suggestion.path}>
+          {suggestions.map((suggestion) => (
+            <option key={suggestion.id} value={suggestion.workingDirectory}>
               {suggestion.name}
             </option>
           ))}
@@ -111,7 +110,7 @@ function RootsExplorer({
 
       {projects.isLoading ? (
         <div className="px-3">
-          <LoadingBlock label="加载目录树…" />
+          <LoadingBlock label="加载项目列表…" />
         </div>
       ) : projects.error ? (
         <div className="px-3">
@@ -121,9 +120,11 @@ function RootsExplorer({
           />
         </div>
       ) : (
-        <FileRootsTree
-          key={(projects.data?.roots ?? []).join("\n")}
-          roots={projects.data?.roots ?? []}
+        <ProjectFileTrees
+          key={(projects.data?.bridgeProjects ?? [])
+            .map((project) => project.id)
+            .join("\n")}
+          projects={projects.data?.bridgeProjects ?? []}
           selectedPath={selectedPath}
           onSelectFile={onSelectFile}
           onRefresh={onRefresh}
@@ -140,7 +141,10 @@ function RootsExplorer({
 export default function FilesPage() {
   const queryClient = useQueryClient();
   const [rootPath, setRootPath] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{
+    path: string;
+    source: FileSource;
+  } | null>(null);
 
   const openRoot = (path: string) => {
     setRootPath(path);
@@ -149,6 +153,10 @@ export default function FilesPage() {
 
   const refreshTree = () => {
     void queryClient.invalidateQueries({ queryKey: ["file-explorer"] });
+  };
+
+  const selectFile = (path: string, source: FileSource = { kind: "local" }) => {
+    setSelectedFile({ path, source });
   };
 
   return (
@@ -164,7 +172,7 @@ export default function FilesPage() {
               <p className="truncate text-xs text-muted-foreground">
                 {rootPath
                   ? "点击左侧文件，在右侧预览内容"
-                  : "展开左侧根目录，点击文件预览内容"}
+                  : "展开左侧项目，点击文件预览内容"}
               </p>
             </div>
             {rootPath ? (
@@ -188,15 +196,15 @@ export default function FilesPage() {
             <FileTree
               key={rootPath}
               rootPath={rootPath}
-              selectedPath={selectedFile}
-              onSelectFile={setSelectedFile}
+              selectedPath={selectedFile?.path ?? null}
+              onSelectFile={selectFile}
               onRefresh={refreshTree}
             />
           ) : (
-            <RootsExplorer
-              selectedPath={selectedFile}
+            <ProjectsExplorer
+              selectedPath={selectedFile?.path ?? null}
               onOpen={openRoot}
-              onSelectFile={setSelectedFile}
+              onSelectFile={selectFile}
               onRefresh={refreshTree}
             />
           )}
@@ -204,13 +212,13 @@ export default function FilesPage() {
 
         <div className="min-h-[45dvh] min-w-0 lg:min-h-0">
           {selectedFile ? (
-            <FilePreview path={selectedFile} />
+            <FilePreview path={selectedFile.path} source={selectedFile.source} />
           ) : (
             <div className="flex h-full items-center justify-center p-6">
               <EmptyState
                 icon={<FolderTreeIcon className="size-6" />}
                 title="还没有选择文件"
-                description="在左侧展开根目录和子目录，点击文件即可预览 Markdown、图片与文本内容。"
+                description="在左侧展开项目目录树，点击文件即可预览 Markdown、图片与文本内容。"
                 className="w-full max-w-md"
               />
             </div>

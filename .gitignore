@@ -14,3 +14,6 @@ supabase/.temp/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+
+# npm 凭证禁止入库
+.npmrc

@@ -174,6 +174,10 @@ Bridge 0.5 起，Workspace Owner 可以在“AI 会话”的设备菜单中新�
 
 删除只允许空闲且没有已预留任务的 Thread。请求被接受后，Board Session 会立即隐藏并停止接收新任务，再由 Bridge 调用 Codex App Server 的硬删除接口；缺少硬删除方法的兼容 App Server 会退化为归档。看板中的审计与已同步历史仍保留。
 
+## Web 文件浏览（设备文件指令）
+
+Bridge 1.5.0 起，文件预览页可以浏览设备上的项目目录：Owner 展开目录或点击文件时，Board 先校验目标路径位于该连接已上报的受管工作目录清单内，再持久化一条 `list` / `read` 文件指令；持有连接租约的 Bridge 领取后在本机 `realpath` 校验同一白名单边界，列目录或按 1 MB 文本 / 10 MB 图片上限读取预览，并回传结果。设备侧与看板本机一致地跳过隐藏条目、敏感密钥和 `node_modules` 等目录；软链先解析再校验，无法通过软链逃出白名单。文件指令是只读幂等操作，租约过期后可以安全重放；Board 服务本身不会获得设备的文件系统访问权，目录与文件内容只以单条 JSON 结果回传。指令由 Bridge 的既有轮询周期领取（默认约 5 到 10 秒），因此远端目录首次展开有数秒等待。
+
 ## 旧历史同步与隐私边界
 
 历史同步默认关闭。设备必须同时设置 `CODEX_BRIDGE_WEB_CONFIG=true` 和 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`，再由 Workspace Owner 在网页开启；仅设置本机 allow 变量不会自行上传内容。Bridge 使用 App Server 的 `thread/turns/list`（`itemsView=full`）直接取得有界 turn 及其持久化 item，只扫描普通 CLI / VS Code thread 的最近完成 turn。较新的 Codex 已不再为 rollout 型 thread 提供 `thread/items/list`；只有当旧版 App Server 仍返回 `itemsView=notLoaded` 时，Bridge 才回退到该接口分页读取 item。带有持久化 `clientUserMessageId` 的 turn 来自 Board 实时任务，会整轮跳过，避免与实时回传重复。

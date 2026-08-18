@@ -7,9 +7,12 @@ import remarkGfm from "remark-gfm";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { formatBytes, formatDateTime } from "@/components/utils";
-import { useFileExplorerFile } from "@/hooks/use-file-explorer";
+import {
+  useDeviceFileExplorerFile,
+  useFileExplorerFile,
+} from "@/hooks/use-file-explorer";
 import { isMarkdownFile } from "@/lib/file-kinds";
-import type { FilePreview } from "@/lib/types/domain";
+import type { FilePreview, FileSource } from "@/lib/types/domain";
 
 function PreviewMeta({ preview }: { preview: FilePreview }) {
   return (
@@ -68,8 +71,21 @@ function ImagePreview({ preview }: { preview: FilePreview & { kind: "image" } })
   );
 }
 
-export function FilePreview({ path }: { path: string | null }) {
-  const preview = useFileExplorerFile(path);
+export function FilePreview({
+  path,
+  source = { kind: "local" },
+}: {
+  path: string | null;
+  source?: FileSource;
+}) {
+  const localPreview = useFileExplorerFile(
+    source.kind === "local" ? path : null,
+  );
+  const devicePreview = useDeviceFileExplorerFile(
+    source.kind === "device" ? source.connectionId : null,
+    source.kind === "device" ? path : null,
+  );
+  const preview = source.kind === "device" ? devicePreview : localPreview;
 
   if (!path) {
     return (

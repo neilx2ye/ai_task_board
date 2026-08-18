@@ -5,6 +5,10 @@ import type {
   KimiBridgeConfiguration,
   ManagedWorkingDirectory,
 } from "./config.js";
+import type {
+  DeviceFileListResult,
+  DeviceFilePreviewResult,
+} from "./device-file-access.js";
 import {
   loadDeviceIdentity,
   type DeviceIdentity,
@@ -18,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.4.0-kimi.1";
+export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.5.0-kimi.1";
 
 export type BoardSession = {
   id: string;
@@ -52,6 +56,13 @@ export type ThreadCommand = {
   model?: string | null;
   reasoning_effort?: string | null;
   external_thread_id: string | null;
+  attempt_count?: number;
+};
+
+export type FileCommand = {
+  id: string;
+  action: "list" | "read";
+  path: string;
   attempt_count?: number;
 };
 
@@ -327,6 +338,46 @@ export class BoardClient {
         runtime_instance_id: runtimeInstanceId,
         succeeded: result.succeeded,
         external_thread_id: result.succeeded ? result.externalThreadId : null,
+        error: result.succeeded ? null : result.error,
+      },
+    });
+  }
+
+  async claimFileCommand(
+    runtimeInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<FileCommand | null> {
+    const response = await this.request<{ command: FileCommand | null }>(
+      "/api/ai/file-commands/claim",
+      {
+        method: "POST",
+        body: { runtime_instance_id: runtimeInstanceId, lease_seconds: 60 },
+        signal,
+        timeoutMs: 5_000,
+        maxAttempts: 1,
+      },
+    );
+    return response.command;
+  }
+
+  async completeFileCommand(
+    runtimeInstanceId: string,
+    commandId: string,
+    result:
+      | {
+          succeeded: true;
+          result: DeviceFileListResult | DeviceFilePreviewResult;
+        }
+      | { succeeded: false; error: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(`/api/ai/file-commands/${commandId}/complete`, {
+      method: "POST",
+      signal,
+      body: {
+        runtime_instance_id: runtimeInstanceId,
+        succeeded: result.succeeded,
+        result: result.succeeded ? result.result : null,
         error: result.succeeded ? null : result.error,
       },
     });

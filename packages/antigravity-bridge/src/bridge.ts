@@ -16,11 +16,18 @@ import {
   commandString,
   type BoardSession,
   type ClaimedTask,
+  type FileCommand,
   type InventoryThread,
   type RemoteConfigurationResponse,
   type RemoteDesiredConfiguration,
   type ThreadCommand,
 } from "./board-client.js";
+import {
+  listDeviceDirectory,
+  readDeviceFilePreview,
+  type DeviceFileListResult,
+  type DeviceFilePreviewResult,
+} from "./device-file-access.js";
 import {
   directoryForWorkingDirectory,
   loadConfiguration,
@@ -659,6 +666,20 @@ export class AntigravityBridge {
           `处理 Antigravity Thread 管理指令失败：${errorMessage(error)}\n`,
         );
       }
+      if (this.inventoryReady) {
+        try {
+          await this.processFileCommands();
+        } catch (error) {
+          if (this.stopping) break;
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `处理 Antigravity 文件浏览指令失败：${errorMessage(error)}\n`,
+          );
+        }
+      }
       try {
         await delay(
           Math.min(
@@ -1176,6 +1197,52 @@ export class AntigravityBridge {
       }
     }
     return inventoryChanged;
+  }
+
+  private async processFileCommands(): Promise<void> {
+    for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
+      const command = await this.board.claimFileCommand(
+        this.runtimeInstanceId,
+        this.stopController.signal,
+      );
+      if (!command) break;
+      try {
+        const result = await this.executeFileCommand(command);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: true, result },
+          this.stopController.signal,
+        );
+      } catch (error) {
+        if (this.stopping) throw error;
+        const message = commandError(error);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: false, error: message },
+          this.stopController.signal,
+        );
+        process.stderr.write(
+          `Web Antigravity 文件指令 ${command.action} 失败：${message}\n`,
+        );
+      }
+    }
+  }
+
+  private async executeFileCommand(
+    command: FileCommand,
+  ): Promise<DeviceFileListResult | DeviceFilePreviewResult> {
+    if (command.action === "list") {
+      return listDeviceDirectory(
+        this.configuration.workingDirectories,
+        command.path,
+      );
+    }
+    return readDeviceFilePreview(
+      this.configuration.workingDirectories,
+      command.path,
+    );
   }
 
   private async executeThreadCommand(

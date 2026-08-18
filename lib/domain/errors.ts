@@ -16,6 +16,7 @@ export const BUSINESS_ERROR_CODES = [
   "HISTORY_SYNC_NOT_ALLOWED",
   "THREAD_MANAGEMENT_NOT_SUPPORTED",
   "THREAD_NOT_IDLE",
+  "INVALID_FILE_COMMAND",
   "PATH_NOT_FOUND",
 ] as const;
 
@@ -51,6 +52,7 @@ const statusByCode: Record<ApiErrorCode, number> = {
   HISTORY_SYNC_NOT_ALLOWED: 403,
   THREAD_MANAGEMENT_NOT_SUPPORTED: 409,
   THREAD_NOT_IDLE: 409,
+  INVALID_FILE_COMMAND: 400,
   INTERNAL_ERROR: 500,
 };
 
@@ -129,6 +131,7 @@ function messageForCode(code: BusinessErrorCode): string {
     THREAD_MANAGEMENT_NOT_SUPPORTED:
       "This Bridge version does not support Web Thread management",
     THREAD_NOT_IDLE: "The Thread still has active or queued work",
+    INVALID_FILE_COMMAND: "The device file command is invalid",
     PATH_NOT_FOUND: "The requested path does not exist",
   };
   return messages[code];

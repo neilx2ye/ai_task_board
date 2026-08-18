@@ -273,6 +273,43 @@ export type CompleteThreadCommandInput = z.infer<
   typeof completeThreadCommandSchema
 >;
 
+export const claimFileCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    lease_seconds: z.number().int().min(15).max(300).default(60),
+  })
+  .strict();
+
+export const completeFileCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    succeeded: z.boolean(),
+    result: z.record(z.string(), z.unknown()).nullable().optional(),
+    error: z.string().trim().min(1).max(2000).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.succeeded && !value.result) {
+      context.addIssue({
+        code: "custom",
+        message: "A successful file command must include a result",
+        path: ["result"],
+      });
+    }
+    if (!value.succeeded && !value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A failed file command must include an error",
+        path: ["error"],
+      });
+    }
+  });
+
+export type ClaimFileCommandInput = z.infer<typeof claimFileCommandSchema>;
+export type CompleteFileCommandInput = z.infer<
+  typeof completeFileCommandSchema
+>;
+
 export const reportCurrentTaskSchema = z
   .object({
     title: nonEmptyText.max(500),

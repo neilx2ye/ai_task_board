@@ -34,6 +34,12 @@ import {
   type DeviceIdentity,
 } from "./device-identity.js";
 import {
+  listDeviceDirectory,
+  readDeviceFilePreview,
+  type DeviceFileListResult,
+  type DeviceFilePreviewResult,
+} from "./device-file-access.js";
+import {
   adaptiveIdlePollDelay,
   runSessionWakeListener,
   WakeLatch,
@@ -60,7 +66,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.4.0";
+const BRIDGE_VERSION = "1.5.0";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -326,6 +332,17 @@ type ThreadCommand = {
 
 type ThreadCommandResponse = {
   command: ThreadCommand | null;
+};
+
+type FileCommand = {
+  id: string;
+  action: "list" | "read";
+  path: string;
+  attempt_count?: number;
+};
+
+type FileCommandResponse = {
+  command: FileCommand | null;
 };
 
 type CreatedThreadIdsResponse = {
@@ -1393,6 +1410,52 @@ class BoardClient {
           succeeded: result.succeeded,
           external_thread_id:
             result.succeeded ? result.externalThreadId : null,
+          error: result.succeeded ? null : result.error,
+        },
+      },
+    );
+  }
+
+  async claimFileCommand(
+    runtimeInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<FileCommand | null> {
+    const result = await this.request<FileCommandResponse>(
+      "/api/ai/file-commands/claim",
+      {
+        method: "POST",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          lease_seconds: 60,
+        },
+      },
+    );
+    return result.command;
+  }
+
+  async completeFileCommand(
+    runtimeInstanceId: string,
+    commandId: string,
+    result:
+      | {
+          succeeded: true;
+          result: DeviceFileListResult | DeviceFilePreviewResult;
+        }
+      | { succeeded: false; error: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request<FileCommandResponse>(
+      `/api/ai/file-commands/${commandId}/complete`,
+      {
+        method: "POST",
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          succeeded: result.succeeded,
+          result: result.succeeded ? result.result : null,
           error: result.succeeded ? null : result.error,
         },
       },
@@ -2993,6 +3056,24 @@ class DeviceBridge {
           );
         }
       }
+      if (this.inventoryReady) {
+        try {
+          await this.processFileCommands();
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `处理 Web 文件浏览指令失败：${errorMessage(error)}\n`,
+          );
+        }
+      }
       if (this.stopping) break;
       const untilInventorySync = Math.max(1_000, nextInventorySyncAt - Date.now());
       const sleepMilliseconds = Math.min(
@@ -3754,6 +3835,53 @@ class DeviceBridge {
     }
     this.managedThreadIds.delete(threadId);
     return threadId;
+  }
+
+  private async processFileCommands(): Promise<void> {
+    for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
+      const command = await this.board.claimFileCommand(
+        this.runtimeInstanceId,
+        this.stopController.signal,
+      );
+      if (!command) break;
+
+      try {
+        const result = await this.executeFileCommand(command);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: true, result },
+          this.stopController.signal,
+        );
+      } catch (error) {
+        if (this.stopping) throw error;
+        const message = redactHarnessText(errorMessage(error), 2_000);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: false, error: message },
+          this.stopController.signal,
+        );
+        process.stderr.write(
+          `Web 文件指令 ${command.action} 失败：${message}\n`,
+        );
+      }
+    }
+  }
+
+  private async executeFileCommand(
+    command: FileCommand,
+  ): Promise<DeviceFileListResult | DeviceFilePreviewResult> {
+    if (command.action === "list") {
+      return listDeviceDirectory(
+        this.configuration.workingDirectories,
+        command.path,
+      );
+    }
+    return readDeviceFilePreview(
+      this.configuration.workingDirectories,
+      command.path,
+    );
   }
 
   private async listThreads(): Promise<ThreadRecord[]> {
