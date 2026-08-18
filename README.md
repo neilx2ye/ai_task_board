@@ -196,6 +196,9 @@ Turn 通过 `--conversation` 续接同一上下文，并从 `agy models` 动态�
 low/medium/high 思考强度；Board 令牌不会传入 `agy` 子进程。Web 可新建和删除
 Thread。agy headless 没有公开的改名与历史读取接口，因此网页会隐藏 Antigravity Thread
 改名入口、删除只移除 Bridge 绑定（保留本机会话文件），也不会导入 TUI 中既有会话。
+Web 会话上传的图片（PNG/JPEG/WebP/GIF，单张 10 MiB、合计 20 MiB）会被下载到 Thread
+工作目录下的临时 `.ai-task-board` 目录，并在 prompt 中按绝对路径要求 agy 读取，任务
+结束后即删除；含图 turn 需要 agy 1.1.11+。
 `ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept` 会传入
 `--dangerously-skip-permissions`，自动批准全部工具调用，属于高风险配置；可用
 `ANTIGRAVITY_BRIDGE_SANDBOX=true` 额外启用 agy 终端沙箱。完整变量、安全策略和

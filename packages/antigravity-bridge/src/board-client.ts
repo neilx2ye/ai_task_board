@@ -22,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.6.0-antigravity.1";
+export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.6.0-antigravity.2";
 
 export type BoardSession = {
   id: string;
@@ -269,6 +269,7 @@ export class BoardClient {
         idempotencyKey: idempotencyKey("sync-sessions"),
         body: {
           bridge_version: ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION,
+          platform: "antigravity",
           device_id: this.deviceIdentity.deviceId,
           device_label: this.deviceIdentity.deviceLabel,
           ...(quota === undefined ? {} : { quota }),
@@ -414,6 +415,27 @@ export class BoardClient {
       throw error;
     });
     return response.artifacts ?? [];
+  }
+
+  async downloadImage(
+    sessionId: string,
+    artifact: TaskImageArtifact,
+    signal: AbortSignal,
+  ): Promise<{ data: string; mimeType: string }> {
+    const location = await this.request<{ url: string }>(
+      `/api/ai/artifacts/${artifact.id}/download`,
+      { sessionId, signal, maxAttempts: 3 },
+    );
+    const response = await fetch(location.url, { signal });
+    if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (
+      bytes.byteLength !== artifact.size ||
+      bytes.byteLength > 10 * 1024 * 1024
+    ) {
+      throw new Error(`图片大小校验失败：${artifact.name}`);
+    }
+    return { data: bytes.toString("base64"), mimeType: artifact.mime_type };
   }
 
   reportProgress(

@@ -1,6 +1,7 @@
 export {
   AGY_STREAM_PROTOCOL,
   ANTIGRAVITY_FALLBACK_MODEL_CATALOG,
+  ANTIGRAVITY_IMAGE_MINIMUM_VERSION,
   ANTIGRAVITY_MINIMUM_VERSION,
   AgyClient,
   initialAgyStreamState,
@@ -40,7 +41,9 @@ export {
 export { BridgeRegistry, type RegistryBinding } from "./registry.js";
 export {
   AntigravityBridge,
+  imagePromptSection,
   resolveRemoteConfiguration,
+  stagedImageFilename,
   TurnLimiter,
   type ManagedThread,
   type ResolvedAntigravityRemoteConfiguration,

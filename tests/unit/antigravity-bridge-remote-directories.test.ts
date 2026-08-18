@@ -183,9 +183,89 @@ describe("Antigravity Bridge session sync device identity", () => {
       | { body?: string }
       | undefined;
     const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
-    expect(body.bridge_version).toBe("1.6.0-antigravity.1");
-    expect(ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION).toBe("1.6.0-antigravity.1");
+    expect(body.bridge_version).toBe("1.6.0-antigravity.2");
+    expect(ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION).toBe("1.6.0-antigravity.2");
     expect(body.device_id).toBe("7a1ce240-1111-4000-8000-0000000000cd");
     expect(body.device_label).toBe("antigravity-host");
+  });
+});
+
+describe("Antigravity Bridge task image download", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves the private download endpoint and returns verified base64 bytes", async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const fetchMock: ReturnType<typeof vi.fn> = vi.fn(
+      async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/artifacts/1/download")) {
+          return new Response(
+            JSON.stringify({ data: { url: "https://storage.example/signed" } }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        return new Response(bytes, {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new BoardClient(baseConfiguration(), () => false, {
+      deviceId: "7a1ce240-1111-4000-8000-0000000000cd",
+      deviceLabel: "antigravity-host",
+    });
+    const image = await client.downloadImage(
+      "session-1",
+      {
+        id: "1",
+        name: "screen.png",
+        mime_type: "image/png",
+        size: bytes.byteLength,
+      },
+      new AbortController().signal,
+    );
+    expect(image).toEqual({
+      data: Buffer.from(bytes).toString("base64"),
+      mimeType: "image/png",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects bytes that do not match the declared artifact size", async () => {
+    const fetchMock: ReturnType<typeof vi.fn> = vi.fn(
+      async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/artifacts/2/download")) {
+          return new Response(
+            JSON.stringify({ data: { url: "https://storage.example/signed" } }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new BoardClient(baseConfiguration(), () => false);
+    await expect(
+      client.downloadImage(
+        "session-1",
+        {
+          id: "2",
+          name: "mismatch.png",
+          mime_type: "image/png",
+          size: 10,
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("图片大小校验失败：mismatch.png");
   });
 });

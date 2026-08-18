@@ -9,6 +9,8 @@ import {
 } from "./utils.js";
 
 export const ANTIGRAVITY_MINIMUM_VERSION = "1.1.8";
+/** Headless image reads through the agent's file tool are reliable from 1.1.11. */
+export const ANTIGRAVITY_IMAGE_MINIMUM_VERSION = "1.1.11";
 export const AGY_STREAM_PROTOCOL = "agy-stream-json/v1";
 
 export type InventoryModel = {
@@ -37,7 +39,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: true,
   },
   {
@@ -49,7 +51,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: false,
   },
   {
@@ -61,7 +63,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: false,
   },
   {
@@ -73,7 +75,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: false,
   },
   {
@@ -85,7 +87,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: false,
   },
   {
@@ -97,7 +99,7 @@ export const ANTIGRAVITY_FALLBACK_MODEL_CATALOG: readonly InventoryModel[] = [
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: false,
   },
 ];
@@ -380,7 +382,7 @@ export function inventoryModelFromListItem(
     supported_reasoning_efforts: AGY_REASONING_EFFORTS.map(
       (reasoning_effort) => ({ reasoning_effort, description: null }),
     ),
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     is_default: item.isDefault === true || index === 0,
   };
 }
@@ -417,6 +419,11 @@ export class AgyClient {
         `Antigravity CLI ${version} 过旧：Antigravity Bridge 需要 >= ${ANTIGRAVITY_MINIMUM_VERSION}（stream-json 输出）。请运行 agy update 升级后重试。`,
       );
     }
+  }
+
+  async supportsImageInput(): Promise<boolean> {
+    // Kept in sync with ANTIGRAVITY_IMAGE_MINIMUM_VERSION above.
+    return compareSemver(await this.version(), 1, 1, 11);
   }
 
   async modelCatalog(): Promise<InventoryModel[]> {

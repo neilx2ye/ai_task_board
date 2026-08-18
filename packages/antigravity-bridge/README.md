@@ -16,7 +16,8 @@ returns the final AI reply to the matching Board conversation.
 
 - Node.js 18 or newer
 - Google Antigravity CLI 1.1.8 or newer with an active login (`agy update` to
-  upgrade; `agy` logs in on first interactive run)
+  upgrade; `agy` logs in on first interactive run). Web turns that carry images
+  require 1.1.11 or newer.
 - AI Task Board schema/API with Bridge inventory and Web Thread management
 - A dedicated Board connection whose platform is `Antigravity`
 
@@ -193,5 +194,21 @@ The CLI has no public headless rename or transcript-read API, so:
   decoding Google's private SQLite/protobuf storage, which is undocumented,
   fragile across CLI updates, and against Google's stated terms for third-party
   tools. Only runs the Bridge itself drives are synced.
+
+## Web 会话图片
+
+Web Console 的会话 turn 最多附带 4 张 PNG、JPEG、WebP 或 GIF（单张 10 MiB、
+合计 20 MiB）。Antigravity headless 没有内联图片 flag，所以 Bridge 采用
+官方支持的 workspace 文件读取路径：通过私有下载端点取回图片并校验字节数，
+写入 Thread 工作目录下的临时目录 `.ai-task-board/turn-images/<task-id>/`
+（文件名经过清洗，扩展名与 MIME 对齐），然后在 `agy -p` 的 prompt 中按绝对
+路径要求 agent 先用文件读取工具读取这些图片。CLI 1.1.10 的媒体内联存在
+崩溃缺陷，因此含图 turn 需要 Antigravity CLI 1.1.11+，版本不足时本轮会
+失败并提示 `agy update`。
+
+图片字节只在任务执行期间短暂落盘于受管工作目录，任务结束后即删除；只有
+最终回复和受限元数据会上报看板。上传图片可能携带提示注入，prompt 会明确
+指示 agent 将图片只当作视觉数据、不执行图中指令。最终是否读取由 agent
+决定，必要时可在 Web 消息里写明“先查看附带的图片”。
 
 Use `ai-task-board-bridge --help` for every environment variable.
