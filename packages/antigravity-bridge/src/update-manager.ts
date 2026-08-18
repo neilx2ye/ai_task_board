@@ -278,8 +278,6 @@ export type DesiredBridgeUpdateOptions = {
   desiredVersion: string | null;
   /** Version constant of the running Bridge. */
   currentVersion: string;
-  /** Local opt-in parsed from AI_TASK_BOARD_ALLOW_REMOTE_UPDATE. */
-  allowRemoteUpdate: boolean;
   environment?: Record<string, string | undefined>;
   homeDirectory?: string;
   log?: (message: string) => void;
@@ -310,12 +308,12 @@ export async function maybeApplyDesiredBridgeUpdate(
   if (!isUpdateVersionNewer(desired, options.currentVersion)) return null;
 
   const environment = options.environment ?? process.env;
-  if (!options.allowRemoteUpdate || !environment.INVOCATION_ID?.trim()) {
+  if (!environment.INVOCATION_ID?.trim()) {
     if (noticedSkipTarget !== desired) {
       noticedSkipTarget = desired;
       log(
-        `看板请求将 Antigravity Bridge 升级到 ${desired}，但本机未启用自动升级` +
-          "（需要 AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true 且 Bridge 由 systemd 运行）；已跳过，请手动升级",
+        `看板请求将 Antigravity Bridge 升级到 ${desired}，但当前进程不在 systemd 下运行` +
+          "；已跳过，请手动升级",
       );
     }
     return null;

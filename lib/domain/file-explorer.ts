@@ -31,6 +31,13 @@ export const MAX_DIRECTORY_ENTRIES = 1000;
 export const MAX_PROJECT_SUGGESTIONS = 200;
 /** 二进制嗅探读取的头部字节数。 */
 const BINARY_SNIFF_BYTES = 8192;
+/** 目录条目排序器：复用同一个 Collator，避免每次排序都重新构造。 */
+const entryCollator = new Intl.Collator("zh-CN", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+let allowedRootsPromise: Promise<string[]> | null = null;
 
 function fsErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message
@@ -58,7 +65,7 @@ function mapFileSystemError(error: unknown): AppError {
   );
 }
 
-async function allowedRoots(): Promise<string[]> {
+async function resolveAllowedRoots(): Promise<string[]> {
   const candidates = (process.env.FILE_EXPLORER_ROOTS ?? "")
     .split(",")
     .map((entry) => entry.trim())
@@ -82,6 +89,20 @@ async function allowedRoots(): Promise<string[]> {
     );
   }
   return roots;
+}
+
+/**
+ * 允许浏览的根目录只在进程生命周期内解析一次；配置变更需要重启服务。
+ * 解析失败时清空缓存，让下一次请求可以重试。
+ */
+async function allowedRoots(): Promise<string[]> {
+  if (!allowedRootsPromise) {
+    allowedRootsPromise = resolveAllowedRoots().catch((error) => {
+      allowedRootsPromise = null;
+      throw error;
+    });
+  }
+  return allowedRootsPromise;
 }
 
 /**
@@ -152,10 +173,7 @@ export async function pathExistsWithinRoots(rawPath: string): Promise<boolean> {
 function sortEntries(entries: FileExplorerEntry[]): void {
   entries.sort((left, right) => {
     if (left.type !== right.type) return left.type === "directory" ? -1 : 1;
-    return left.name.localeCompare(right.name, "zh-CN", {
-      numeric: true,
-      sensitivity: "base",
-    });
+    return entryCollator.compare(left.name, right.name);
   });
 }
 
@@ -182,20 +200,29 @@ export async function listDirectoryContents(
   const entries = await Promise.all(
     selected.map(async (entry): Promise<FileExplorerEntry> => {
       const entryPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        return {
+          name: entry.name,
+          path: entryPath,
+          type: "directory",
+          size: null,
+          modifiedAt: null,
+        };
+      }
       try {
         const info = await stat(entryPath);
         return {
           name: entry.name,
           path: entryPath,
-          type: entry.isDirectory() ? "directory" : "file",
-          size: entry.isDirectory() ? null : info.size,
+          type: "file",
+          size: info.size,
           modifiedAt: info.mtime.toISOString(),
         };
       } catch {
         return {
           name: entry.name,
           path: entryPath,
-          type: entry.isDirectory() ? "directory" : "file",
+          type: "file",
           size: null,
           modifiedAt: null,
         };

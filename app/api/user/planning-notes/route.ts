@@ -12,9 +12,7 @@ export async function GET(request: Request) {
       Object.fromEntries(new URL(request.url).searchParams),
     );
     const context = await userContextForRequest(request);
-    return apiSuccess(
-      await getPlanningNote(context, query.connection_id, query.directory_ref),
-    );
+    return apiSuccess(await getPlanningNote(context, query.project_ref));
   });
 }
 

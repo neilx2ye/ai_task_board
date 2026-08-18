@@ -46,9 +46,6 @@ type Props = {
   task?: TaskRow | null;
   /** 被编辑任务是否已有子任务（聚合父任务指派规则）。新建恒为 false。 */
   hasChildren?: boolean;
-  /** 从某张会话卡片发起时预选并锁定该会话。 */
-  initialSessionId?: string | null;
-  lockInitialSession?: boolean;
 };
 
 function parseCapabilities(raw: string): string[] {
@@ -64,8 +61,6 @@ export function TaskFormDialog({
   onOpenChange,
   task,
   hasChildren = false,
-  initialSessionId = null,
-  lockInitialSession = false,
 }: Props) {
   const isEdit = Boolean(task);
 
@@ -82,11 +77,9 @@ export function TaskFormDialog({
         </DialogHeader>
         {/* 表单随 DialogContent 一起卸载，每次打开都以 task 重新初始化 */}
         <TaskForm
-          key={task?.id ?? `new:${initialSessionId ?? "unselected"}`}
+          key={task?.id ?? "new"}
           task={task ?? null}
           hasChildren={hasChildren}
-          initialSessionId={initialSessionId}
-          lockInitialSession={lockInitialSession}
           onDone={() => onOpenChange(false)}
           onCancel={() => onOpenChange(false)}
         />
@@ -98,15 +91,11 @@ export function TaskFormDialog({
 function TaskForm({
   task,
   hasChildren,
-  initialSessionId,
-  lockInitialSession,
   onDone,
   onCancel,
 }: {
   task: TaskRow | null;
   hasChildren: boolean;
-  initialSessionId: string | null;
-  lockInitialSession: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -123,7 +112,7 @@ function TaskForm({
     (task?.required_capabilities ?? []).join(", "),
   );
   const [assignedSessionId, setAssignedSessionId] = useState(
-    task?.assigned_session_id ?? initialSessionId ?? UNASSIGNED,
+    task?.assigned_session_id ?? UNASSIGNED,
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -137,8 +126,7 @@ function TaskForm({
     hasChildren,
     original: originalSessionId,
   };
-  const sessionLocked =
-    isSessionSelectLocked(assignmentContext) || (!isEdit && lockInitialSession);
+  const sessionLocked = isSessionSelectLocked(assignmentContext);
   const restrictedOptions = sessionOptionsForStatus(assignmentContext);
   const candidateSessions = (sessions ?? []).filter(
     (session) =>
@@ -271,9 +259,7 @@ function TaskForm({
           </Select>
           {sessionLocked ? (
             <p className="text-xs text-muted-foreground">
-              {!isEdit && lockInitialSession
-                ? "任务将预留给你刚才选择的会话。"
-                : hasChildren
+              {hasChildren
                 ? "包含子任务的聚合任务不能指定 AI 会话。"
                 : "任务正在由 AI 执行，会话指派已锁定。"}
             </p>

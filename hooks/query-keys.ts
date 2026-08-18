@@ -9,9 +9,8 @@ export const sessionQueryKey = (sessionId: string) =>
 export const BRIDGE_DIRECTORIES_QUERY_KEY = ["bridge-directories"] as const;
 
 export const planningNotesQueryKey = (
-  connectionId: string,
-  directoryRef: string,
-) => ["planning-notes", connectionId, directoryRef] as const;
+  projectRef: string,
+) => ["planning-notes", projectRef] as const;
 
 export const turnPlansQueryKey = (sessionId: string) =>
   ["turn-plans", sessionId] as const;

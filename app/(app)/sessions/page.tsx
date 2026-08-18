@@ -5,10 +5,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
 import { ProjectTabBar } from "@/components/project-tab-bar";
+import { ProjectBridgeNavigation } from "@/components/project-bridge-navigation";
 import { ResizableSessionPanel } from "@/components/resizable-session-panel";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
-import { TaskFormDialog } from "@/components/task-form-dialog";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
 import {
   CreateThreadDialog,
@@ -36,6 +36,7 @@ import { agentDisplayName } from "@/lib/agent-platforms";
 import {
   excludeHiddenProjects,
   filterConnectionGroupsByProject,
+  groupBridgesByProject,
   groupSessionsByConnection,
   listSessionProjects,
   type SessionConnectionGroup,
@@ -63,7 +64,6 @@ export default function SessionsPage() {
   const workspaceQuery = useWorkspace();
   const isOwner = workspaceQuery.data?.role === "owner";
   const connectionsQuery = useConnections(isOwner);
-  const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
   // 按点选顺序保存选中的 Thread；只有选中的才会挂载面板并同步历史。
   const { selectedSessionIds, setSelectedSessionIds } =
     useSelectedSessionIds();
@@ -136,6 +136,10 @@ export default function SessionsPage() {
   const visibleGroups = useMemo(
     () =>
       filterConnectionGroupsByProject(visibleProjectGroups, selectedProjectId),
+    [visibleProjectGroups, selectedProjectId],
+  );
+  const projectBridgeGroups = useMemo(
+    () => groupBridgesByProject(visibleProjectGroups, selectedProjectId),
     [visibleProjectGroups, selectedProjectId],
   );
   const allVisibleSessionCount = useMemo(
@@ -395,7 +399,9 @@ export default function SessionsPage() {
                 {isSidebarCollapsed ? null : (
                   <div>
                     <h2 className="text-sm font-semibold">
-                      设备、目录与 Threads
+                      {selectedProjectId === null
+                        ? "设备、目录与 Threads"
+                        : "项目、Bridge 与 Threads"}
                     </h2>
                     <p className="text-xs text-muted-foreground">
                       点击选中，可多选并排查看
@@ -436,18 +442,31 @@ export default function SessionsPage() {
                 id="session-directory-navigation"
                 hidden={isSidebarCollapsed}
               >
-                <SessionDirectoryNavigation
-                  groups={visibleGroups}
-                  visibleIds={visibleIds}
-                  selectedSessionIds={selectedSessionIds}
-                  isOwner={Boolean(isOwner)}
-                  onToggleSession={toggleSessionSelected}
-                  onReserve={setTargetSessionId}
-                  onManage={(connectionId, directoryId) =>
-                    setPickerTarget({ connectionId, directoryId })
-                  }
-                  onCreate={openCreateDialog}
-                />
+                {selectedProjectId === null ? (
+                  <SessionDirectoryNavigation
+                    groups={visibleGroups}
+                    visibleIds={visibleIds}
+                    selectedSessionIds={selectedSessionIds}
+                    isOwner={Boolean(isOwner)}
+                    onToggleSession={toggleSessionSelected}
+                    onManage={(connectionId, directoryId) =>
+                      setPickerTarget({ connectionId, directoryId })
+                    }
+                    onCreate={openCreateDialog}
+                  />
+                ) : (
+                  <ProjectBridgeNavigation
+                    projects={projectBridgeGroups}
+                    visibleIds={visibleIds}
+                    selectedSessionIds={selectedSessionIds}
+                    isOwner={Boolean(isOwner)}
+                    onToggleSession={toggleSessionSelected}
+                    onManage={(connectionId, directoryId) =>
+                      setPickerTarget({ connectionId, directoryId })
+                    }
+                    onCreate={openCreateDialog}
+                  />
+                )}
               </div>
             </aside>
 
@@ -476,15 +495,6 @@ export default function SessionsPage() {
           </div>
         </>
       )}
-
-      <TaskFormDialog
-        open={targetSessionId !== null}
-        onOpenChange={(open) => {
-          if (!open) setTargetSessionId(null);
-        }}
-        initialSessionId={targetSessionId}
-        lockInitialSession
-      />
 
       <ThreadPickerDialog
         open={pickerContext !== null}

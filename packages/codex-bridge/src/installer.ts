@@ -1,6 +1,13 @@
 import { createInterface } from "node:readline/promises";
 import type { ReadStream, WriteStream } from "node:tty";
 
+import {
+  applyDefaultBoardUrl,
+  hasConnectionEnvironment,
+  promptForConnectionBasics,
+  TerminalPrompter,
+} from "./interactive.js";
+
 export type BridgeSetupTarget =
   | "codex"
   | "kimi"
@@ -8,7 +15,6 @@ export type BridgeSetupTarget =
   | "both"
   | "all";
 export type BridgeRunTarget = Exclude<BridgeSetupTarget, "both" | "all">;
-export type BridgeSetupExecution = "interactive" | "noninteractive";
 
 export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
   value: BridgeSetupTarget;
@@ -16,10 +22,18 @@ export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
 }> = [
   { value: "codex", label: "Codex Bridge" },
   { value: "kimi", label: "Kimi Bridge（Kimi Code ACP）" },
-  { value: "antigravity", label: "Antigravity Bridge（Google Antigravity CLI）" },
+  {
+    value: "antigravity",
+    label: "Antigravity Bridge（Google Antigravity CLI）",
+  },
   { value: "both", label: "Codex Bridge 和 Kimi Bridge" },
   { value: "all", label: "Codex、Kimi 和 Antigravity Bridge" },
 ];
+
+const BRIDGE_RUN_CHOICES = BRIDGE_SETUP_CHOICES.filter(
+  (choice): choice is { value: BridgeRunTarget; label: string } =>
+    choice.value !== "both" && choice.value !== "all",
+);
 
 export function parseBridgeSetupTarget(
   value: string | undefined,
@@ -28,7 +42,9 @@ export function parseBridgeSetupTarget(
   if (!normalized) return null;
   if (normalized === "codex") return "codex";
   if (normalized === "kimi" || normalized === "kimi-code") return "kimi";
-  if (normalized === "antigravity" || normalized === "agy") return "antigravity";
+  if (normalized === "antigravity" || normalized === "agy") {
+    return "antigravity";
+  }
   if (normalized === "both") return "both";
   if (normalized === "all") return "all";
   return null;
@@ -45,20 +61,23 @@ export function parseBridgeRunTarget(
     : null;
 }
 
-export async function promptForBridgeSetupTarget(
-  input: ReadStream = process.stdin,
-  output: WriteStream = process.stdout,
-): Promise<BridgeSetupTarget> {
+async function promptForTarget(
+  choices: ReadonlyArray<{ value: string; label: string }>,
+  fallback: string,
+  header: string,
+  input: ReadStream,
+  output: WriteStream,
+): Promise<string> {
   if (!input.isTTY || !output.isTTY) {
     throw new Error(
-      "setup 需要交互式终端；非交互安装请使用 setup codex、setup kimi 或 setup antigravity 并提供环境变量",
+      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
     );
   }
 
   const readline = createInterface({ input, output, terminal: true });
   try {
-    output.write("\nAI Task Board Bridge 安装器\n\n要安装什么？\n");
-    BRIDGE_SETUP_CHOICES.forEach((choice, index) => {
+    output.write(`\nAI Task Board Bridge\n\n${header}\n`);
+    choices.forEach((choice, index) => {
       output.write(`  ${index + 1}) ${choice.label}\n`);
     });
 
@@ -66,115 +85,197 @@ export async function promptForBridgeSetupTarget(
       const answer = (await readline.question("请选择 [1]: "))
         .trim()
         .toLowerCase();
-      if (!answer) return "codex";
+      if (!answer) return fallback;
       const numericChoice = Number(answer) - 1;
-      if (Number.isInteger(numericChoice) && BRIDGE_SETUP_CHOICES[numericChoice]) {
-        return BRIDGE_SETUP_CHOICES[numericChoice].value;
+      if (Number.isInteger(numericChoice) && choices[numericChoice]) {
+        return choices[numericChoice].value;
       }
-      const namedChoice = parseBridgeSetupTarget(answer);
-      if (namedChoice) return namedChoice;
-      output.write("  请输入 1 到 5，或 codex、kimi、antigravity、both、all。\n");
+      const namedChoice = choices.find((choice) => choice.value === answer);
+      if (namedChoice) return namedChoice.value;
+      output.write(
+        `  请输入 1 到 ${choices.length}，或 ${choices
+          .map((choice) => choice.value)
+          .join("、")}。\n`,
+      );
     }
   } finally {
     readline.close();
   }
 }
 
-async function setupCodex(
+export function promptForBridgeSetupTarget(
+  input: ReadStream = process.stdin,
+  output: WriteStream = process.stdout,
+): Promise<BridgeSetupTarget> {
+  return promptForTarget(
+    BRIDGE_SETUP_CHOICES,
+    "codex",
+    "要安装什么？",
+    input,
+    output,
+  ) as Promise<BridgeSetupTarget>;
+}
+
+export function promptForBridgeRunTarget(
+  input: ReadStream = process.stdin,
+  output: WriteStream = process.stdout,
+): Promise<BridgeRunTarget> {
+  return promptForTarget(
+    BRIDGE_RUN_CHOICES,
+    "codex",
+    "要运行哪个 Bridge？",
+    input,
+    output,
+  ) as Promise<BridgeRunTarget>;
+}
+
+type InteractiveSetupRunner = (options: {
+  packageVersion: string;
+}) => Promise<void>;
+
+async function setupCodexInteractive(
   packageVersion: string,
-  execution: BridgeSetupExecution,
 ): Promise<void> {
-  const { runInteractiveSetup, runNonInteractiveSetup } = await import(
-    "./setup.js"
-  );
-  if (execution === "noninteractive") {
-    await runNonInteractiveSetup({ packageVersion });
-    return;
-  }
+  const { runInteractiveSetup } = await import("./setup.js");
   await runInteractiveSetup({ packageVersion });
+}
+
+async function setupCodexNonInteractive(
+  packageVersion: string,
+): Promise<void> {
+  const { runNonInteractiveSetup } = await import("./setup.js");
+  await runNonInteractiveSetup({ packageVersion });
 }
 
 async function setupKimi(
   packageVersion: string,
-  execution: BridgeSetupExecution,
+  interactive: boolean,
 ): Promise<void> {
   const runtimeModule = "./kimi-runtime/index.js";
   const { runKimiInteractiveSetup, runKimiNonInteractiveSetup } =
     (await import(runtimeModule)) as {
-      runKimiInteractiveSetup: (options: {
-        packageVersion: string;
-      }) => Promise<void>;
-      runKimiNonInteractiveSetup: (options: {
-        packageVersion: string;
-      }) => Promise<void>;
+      runKimiInteractiveSetup: InteractiveSetupRunner;
+      runKimiNonInteractiveSetup: InteractiveSetupRunner;
     };
-  if (execution === "noninteractive") {
-    await runKimiNonInteractiveSetup({ packageVersion });
+  if (interactive) {
+    await runKimiInteractiveSetup({ packageVersion });
     return;
   }
-  await runKimiInteractiveSetup({ packageVersion });
+  await runKimiNonInteractiveSetup({ packageVersion });
 }
 
 async function setupAntigravity(
   packageVersion: string,
-  execution: BridgeSetupExecution,
+  interactive: boolean,
 ): Promise<void> {
   const runtimeModule = "./antigravity-runtime/index.js";
   const { runAntigravityInteractiveSetup, runAntigravityNonInteractiveSetup } =
     (await import(runtimeModule)) as {
-      runAntigravityInteractiveSetup: (options: {
-        packageVersion: string;
-      }) => Promise<void>;
-      runAntigravityNonInteractiveSetup: (options: {
-        packageVersion: string;
-      }) => Promise<void>;
+      runAntigravityInteractiveSetup: InteractiveSetupRunner;
+      runAntigravityNonInteractiveSetup: InteractiveSetupRunner;
     };
-  if (execution === "noninteractive") {
-    await runAntigravityNonInteractiveSetup({ packageVersion });
+  if (interactive) {
+    await runAntigravityInteractiveSetup({ packageVersion });
     return;
   }
-  await runAntigravityInteractiveSetup({ packageVersion });
+  await runAntigravityNonInteractiveSetup({ packageVersion });
 }
 
-export async function runBridgeSetup(
-  target: BridgeSetupTarget,
+async function runSingleTargetSetup(
+  target: BridgeRunTarget,
   packageVersion: string,
-  execution: BridgeSetupExecution = "interactive",
+  interactive: boolean,
 ): Promise<void> {
   if (target === "codex") {
-    await setupCodex(packageVersion, execution);
+    if (interactive) {
+      await setupCodexInteractive(packageVersion);
+    } else {
+      await setupCodexNonInteractive(packageVersion);
+    }
     return;
   }
   if (target === "kimi") {
-    await setupKimi(packageVersion, execution);
+    await setupKimi(packageVersion, interactive);
     return;
   }
-  if (target === "antigravity") {
-    await setupAntigravity(packageVersion, execution);
+  await setupAntigravity(packageVersion, interactive);
+}
+
+/**
+ * Unified setup entrypoint. A single explicit target runs interactively only
+ * when no Connection Token is configured; with a token it installs directly
+ * from the environment. both/all always run interactively because each
+ * platform has its own token.
+ */
+export async function runBridgeSetup(
+  target: BridgeSetupTarget,
+  packageVersion: string,
+): Promise<void> {
+  applyDefaultBoardUrl();
+
+  if (target === "codex" || target === "kimi" || target === "antigravity") {
+    const interactive = !hasConnectionEnvironment(process.env);
+    if (!interactive) {
+      await runSingleTargetSetup(target, packageVersion, false);
+      return;
+    }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error(
+        "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
+      );
+    }
+    await runSingleTargetSetup(target, packageVersion, true);
     return;
   }
 
-  if (execution === "noninteractive") {
+  // both/all need one token per platform, so non-interactive installation is
+  // ambiguous and interactive prompting is always required.
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
-      "非交互安装 both/all 无法区分各平台的 Connection Token；请分别运行 setup codex、setup kimi 或 setup antigravity",
+      "setup 需要交互式终端；非交互安装请分别运行 setup codex、setup kimi 或 setup antigravity 并提供 AI_TASK_BOARD_CONNECTION_TOKEN",
     );
   }
-
-  if (target === "both") {
-    process.stdout.write(
-      "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n",
-    );
-    await setupCodex(packageVersion, execution);
-    await setupKimi(packageVersion, execution);
-    return;
-  }
-
+  const targets: readonly BridgeRunTarget[] =
+    target === "both"
+      ? (["codex", "kimi"] as const)
+      : (["codex", "kimi", "antigravity"] as const);
   process.stdout.write(
-    "\n将依次安装三个独立服务。Codex、Kimi 与 Antigravity 需要各自在看板中创建的 Connection Token。\n",
+    target === "both"
+      ? "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n"
+      : "\n将依次安装三个独立服务。Codex、Kimi 与 Antigravity 需要各自在看板中创建的 Connection Token。\n",
   );
-  await setupCodex(packageVersion, execution);
-  await setupKimi(packageVersion, execution);
-  await setupAntigravity(packageVersion, execution);
+  for (const singleTarget of targets) {
+    await runSingleTargetSetup(singleTarget, packageVersion, true);
+  }
+}
+
+/**
+ * Run a Bridge in the foreground. With a Connection Token configured the
+ * process starts immediately; without one and with a terminal attached it
+ * asks the same minimal questions as setup, then starts in the foreground.
+ */
+export async function runAgentBridgeConfigured(
+  target: BridgeRunTarget,
+): Promise<void> {
+  applyDefaultBoardUrl();
+  if (!hasConnectionEnvironment(process.env)) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error(
+        "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；请通过环境变量提供，或在交互式终端中运行以输入 Board 地址与 Token",
+      );
+    }
+    const prompt = new TerminalPrompter(process.stdin, process.stdout);
+    try {
+      const basics = await promptForConnectionBasics(prompt, {
+        environment: process.env,
+      });
+      process.env.AI_TASK_BOARD_URL = basics.boardUrl;
+      process.env.AI_TASK_BOARD_CONNECTION_TOKEN = basics.connectionToken;
+    } finally {
+      prompt.close();
+    }
+  }
+  await runAgentBridge(target);
 }
 
 export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {

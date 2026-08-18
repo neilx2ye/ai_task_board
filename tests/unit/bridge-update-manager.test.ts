@@ -204,7 +204,6 @@ function baseOptions(
   return {
     desiredVersion: "1.4.0",
     currentVersion: "1.3.0",
-    allowRemoteUpdate: true,
     environment,
     homeDirectory: environment.HOME,
     log: vi.fn(),
@@ -281,23 +280,6 @@ describe("Codex Bridge update manager skip conditions", () => {
       ).resolves.toBeNull();
     }
     expect(h.events).toEqual([]);
-  });
-
-  it("skips with a single stderr notice when remote update is not opted in", async () => {
-    const manager = await importCodexManager();
-    const log = vi.fn();
-    const options = baseOptions({ allowRemoteUpdate: false, log });
-    await expect(
-      manager.maybeApplyDesiredBridgeUpdate(options),
-    ).resolves.toBeNull();
-    await expect(
-      manager.maybeApplyDesiredBridgeUpdate(options),
-    ).resolves.toBeNull();
-    expect(h.events).toEqual([]);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls[0]?.[0]).toContain(
-      "AI_TASK_BOARD_ALLOW_REMOTE_UPDATE",
-    );
   });
 
   it("skips when the Bridge is not running under systemd", async () => {

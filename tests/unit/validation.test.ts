@@ -374,32 +374,25 @@ describe("user command validation", () => {
 describe("planning workspace validation", () => {
   it("accepts planning note upserts within limits", () => {
     const parsed = upsertPlanningNotesSchema.parse({
-      connection_id: sessionId,
-      directory_ref: " configured:main ",
+      project_ref: " path:/repo ",
       content: "一些想法",
     });
 
-    expect(parsed.directory_ref).toBe("configured:main");
+    expect(parsed.project_ref).toBe("path:/repo");
     expect(
       upsertPlanningNotesSchema.safeParse({
-        connection_id: sessionId,
-        directory_ref: " ",
+        project_ref: " ",
         content: "",
       }).success,
     ).toBe(false);
   });
 
-  it("requires connection and directory in planning note queries", () => {
+  it("requires a project ref in planning note queries", () => {
     expect(
-      planningNotesQuerySchema.safeParse({
-        connection_id: sessionId,
-        directory_ref: "path:/repo",
-      }).success,
-    ).toBe(true);
-    expect(
-      planningNotesQuerySchema.safeParse({ directory_ref: "path:/repo" })
+      planningNotesQuerySchema.safeParse({ project_ref: "path:/repo" })
         .success,
-    ).toBe(false);
+    ).toBe(true);
+    expect(planningNotesQuerySchema.safeParse({}).success).toBe(false);
   });
 
   it("validates turn plan step drafts", () => {

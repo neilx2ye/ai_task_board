@@ -15,9 +15,14 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { userInfo } from "node:os";
 import path from "node:path";
-import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises";
-import type { ReadStream, WriteStream } from "node:tty";
 import { fileURLToPath } from "node:url";
+
+import {
+  DEFAULT_BOARD_URL,
+  normalizeBoardUrl,
+  promptForConnectionBasics,
+  TerminalPrompter,
+} from "./interactive.js";
 
 export const BRIDGE_SYSTEMD_SERVICE = "ai-task-board-bridge.service";
 export const LEGACY_BRIDGE_SYSTEMD_SERVICE =
@@ -43,15 +48,6 @@ export interface SystemdUnitOptions {
   homeDirectory: string;
   codexHome: string;
   environmentFile: string;
-}
-
-interface Choice<T extends string> {
-  value: T;
-  label: string;
-}
-
-interface ReadlineWithOutputOverride extends ReadlineInterface {
-  _writeToOutput?: (value: string) => void;
 }
 
 function xdgDirectory(
@@ -334,23 +330,6 @@ export async function resolveExecutable(
   return null;
 }
 
-function normalizeBoardUrl(value: string): string {
-  const normalized = value.trim().replace(/\/+$/, "");
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error("请输入完整的 http:// 或 https:// 地址");
-  }
-  if (!(["http:", "https:"] as string[]).includes(parsed.protocol)) {
-    throw new Error("Board 地址只支持 http:// 或 https://");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("Board 地址不能包含用户名或密码");
-  }
-  return normalized;
-}
-
 async function readExistingEnvironment(
   environmentFile: string,
 ): Promise<Record<string, string>> {
@@ -496,119 +475,6 @@ function captureCommand(
   });
 }
 
-class TerminalPrompter {
-  private readonly readline: ReadlineWithOutputOverride;
-  private readonly originalWriteToOutput?: (value: string) => void;
-  private muted = false;
-
-  constructor(
-    private readonly input: ReadStream,
-    private readonly output: WriteStream,
-  ) {
-    this.readline = createInterface({
-      input,
-      output,
-      terminal: Boolean(input.isTTY && output.isTTY),
-    }) as ReadlineWithOutputOverride;
-    this.originalWriteToOutput = this.readline._writeToOutput?.bind(this.readline);
-    if (this.originalWriteToOutput) {
-      this.readline._writeToOutput = (value: string) => {
-        if (!this.muted) this.originalWriteToOutput?.(value);
-      };
-    }
-  }
-
-  write(value: string): void {
-    this.output.write(value);
-  }
-
-  async text(
-    label: string,
-    options: {
-      defaultValue?: string;
-      required?: boolean;
-      validate?: (value: string) => string;
-    } = {},
-  ): Promise<string> {
-    while (true) {
-      const defaultHint =
-        options.defaultValue === undefined ? "" : ` [${options.defaultValue}]`;
-      const answer = (await this.readline.question(`${label}${defaultHint}: `)).trim();
-      const value = answer || options.defaultValue || "";
-      if (options.required && !value) {
-        this.write("  该项不能为空。\n");
-        continue;
-      }
-      try {
-        return options.validate ? options.validate(value) : value;
-      } catch (error) {
-        this.write(`  ${error instanceof Error ? error.message : String(error)}\n`);
-      }
-    }
-  }
-
-  async secret(label: string, existingValue?: string): Promise<string> {
-    while (true) {
-      const suffix = existingValue ? "（回车保留现有值）" : "";
-      this.write(`${label}${suffix}: `);
-      this.muted = Boolean(this.input.isTTY && this.output.isTTY);
-      let answer: string;
-      try {
-        answer = (await this.readline.question("")).trim();
-      } finally {
-        if (this.muted) this.write("\n");
-        this.muted = false;
-      }
-      if (answer) return answer;
-      if (existingValue) return existingValue;
-      this.write("  该项不能为空。\n");
-    }
-  }
-
-  async confirm(label: string, defaultValue: boolean): Promise<boolean> {
-    const hint = defaultValue ? "Y/n" : "y/N";
-    while (true) {
-      const answer = (await this.readline.question(`${label} [${hint}]: `))
-        .trim()
-        .toLowerCase();
-      if (!answer) return defaultValue;
-      if (["y", "yes", "是"].includes(answer)) return true;
-      if (["n", "no", "否"].includes(answer)) return false;
-      this.write("  请输入 y 或 n。\n");
-    }
-  }
-
-  async choice<T extends string>(
-    label: string,
-    choices: readonly Choice<T>[],
-    defaultValue: T,
-  ): Promise<T> {
-    this.write(`${label}\n`);
-    choices.forEach((choice, index) => {
-      this.write(`  ${index + 1}) ${choice.label}\n`);
-    });
-    const defaultIndex = Math.max(
-      0,
-      choices.findIndex((choice) => choice.value === defaultValue),
-    );
-    while (true) {
-      const answer = (
-        await this.readline.question(`请选择 [${defaultIndex + 1}]: `)
-      ).trim();
-      if (!answer) return choices[defaultIndex].value;
-      const index = Number(answer) - 1;
-      if (Number.isInteger(index) && choices[index]) return choices[index].value;
-      const named = choices.find((choice) => choice.value === answer);
-      if (named) return named.value;
-      this.write(`  请输入 1 到 ${choices.length}。\n`);
-    }
-  }
-
-  close(): void {
-    this.readline.close();
-  }
-}
-
 function configuredValue(
   existing: Record<string, string>,
   environment: Record<string, string | undefined>,
@@ -652,34 +518,6 @@ function firstConfiguredWorkingDirectory(raw: string): string | null {
   } catch {
     return null;
   }
-}
-
-function parseEnvironmentNames(value: string): string[] {
-  if (!value || value === "-") return [];
-  const names = [...new Set(value.split(/[\s,]+/).filter(Boolean))];
-  const invalid = names.find((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
-  if (invalid) throw new Error(`无效的环境变量名：${invalid}`);
-  return names;
-}
-
-const SETUP_MANAGED_ENVIRONMENT_NAMES = new Set([
-  "AI_TASK_BOARD_URL",
-  "AI_TASK_BOARD_CONNECTION_TOKEN",
-  "CODEX_HOME",
-  "CODEX_BINARY",
-  "HOME",
-  "PATH",
-]);
-
-function parseProviderEnvironmentNames(value: string): string[] {
-  const names = parseEnvironmentNames(value);
-  const managed = names.find((name) =>
-    SETUP_MANAGED_ENVIRONMENT_NAMES.has(name),
-  );
-  if (managed) {
-    throw new Error(`${managed} 由安装器管理，不能作为 provider 环境变量`);
-  }
-  return names;
 }
 
 async function ownerUid(candidate: string): Promise<number | null> {
@@ -906,10 +744,7 @@ export async function runNonInteractiveSetup(
     environment,
     "AI_TASK_BOARD_URL",
   );
-  if (!boardUrlValue) {
-    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
-  }
-  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const boardUrl = normalizeBoardUrl(boardUrlValue ?? DEFAULT_BOARD_URL);
   const connectionToken = configuredValue(
     existing,
     environment,
@@ -1085,7 +920,7 @@ export async function runInteractiveSetup(
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
-      "setup 需要交互式终端；自动化运行请继续通过环境变量启动 Bridge",
+      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
     );
   }
 
@@ -1104,7 +939,7 @@ export async function runInteractiveSetup(
   const prompt = new TerminalPrompter(process.stdin, process.stdout);
 
   try {
-    prompt.write("\nAI Task Board Bridge 交互式安装\n\n");
+    prompt.write("\nAI Task Board Codex Bridge 交互式安装\n\n");
     prompt.write(
       `运行身份：${identity.username} (UID ${effectiveUid})\n用户目录：${homeDirectory}\n`,
     );
@@ -1130,322 +965,25 @@ export async function runInteractiveSetup(
       }
     }
 
-    const boardUrl = await prompt.text("Board 地址", {
-      defaultValue: configuredValue(existing, environment, "AI_TASK_BOARD_URL"),
-      required: true,
-      validate: normalizeBoardUrl,
-    });
-    const connectionToken = await prompt.secret(
-      "Connection Token（输入内容不会回显）",
-      configuredValue(
-        existing,
-        environment,
-        "AI_TASK_BOARD_CONNECTION_TOKEN",
-      ),
-    );
-
-    const rawMultipleDirectories = configuredValue(
+    // 三套 Bridge 的交互流程统一只问最少的问题：Board 地址（留空使用默认）
+    // 与 Connection Token。工作目录、数量/并发上限、权限与审批策略等
+    // 其余配置默认交给 Web 端管理。
+    const basics = await promptForConnectionBasics(prompt, {
       existing,
       environment,
-      "CODEX_WORKING_DIRECTORIES",
-    );
-    const hasExistingLocalDirectories = Boolean(
-      rawMultipleDirectories &&
-        firstConfiguredWorkingDirectory(rawMultipleDirectories),
-    );
-    const directoryManagement = await prompt.choice<WorkingDirectoryManagement>(
-      "工作目录管理",
-      [
-        {
-          value: "web",
-          label:
-            "Web 端管理（推荐）— 安装时不配置目录，之后在网页「AI 连接 → Bridge 设置 / 新建项目」中添加",
-        },
-        {
-          value: "local",
-          label: "本机固定目录 — 安装时配置一个固定工作目录白名单",
-        },
-      ],
-      hasExistingLocalDirectories ? "local" : "web",
-    );
-
-    let preserveMultipleDirectories = false;
-    let workingDirectory: string;
-    if (directoryManagement === "web") {
-      // The unit needs an existing WorkingDirectory, but the Bridge no longer
-      // treats it as a managed project directory. Web-side project management
-      // replaces the local allowlist after installation.
-      workingDirectory = homeDirectory;
-      if (hasExistingLocalDirectories) {
-        prompt.write(
-          "\n现有本机目录白名单将不再使用，改由 Web 端管理工作目录。\n",
-        );
-      }
-    } else if (rawMultipleDirectories) {
-      const firstDirectory = firstConfiguredWorkingDirectory(
-        rawMultipleDirectories,
-      );
-      if (firstDirectory) {
-        prompt.write(
-          `\n检测到现有多目录配置，首目录为 ${firstDirectory}。\n`,
-        );
-        preserveMultipleDirectories = await prompt.confirm(
-          "保留现有 CODEX_WORKING_DIRECTORIES",
-          true,
-        );
-        workingDirectory = firstDirectory;
-      } else {
-        prompt.write(
-          "\n现有 CODEX_WORKING_DIRECTORIES 无法解析，本次将改为单目录配置。\n",
-        );
-        workingDirectory = process.cwd();
-      }
-    } else {
-      workingDirectory = process.cwd();
-    }
-    if (directoryManagement === "local" && !preserveMultipleDirectories) {
-      workingDirectory = await prompt.text("Bridge 工作目录", {
-        defaultValue:
-          configuredValue(existing, environment, "CODEX_WORKING_DIRECTORY") ??
-          workingDirectory,
-        required: true,
-        validate: (value) => expandPath(value, homeDirectory, process.cwd()),
-      });
-    }
-    if (
-      directoryManagement === "local" &&
-      !(await pathIsDirectory(workingDirectory))
-    ) {
-      throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
-    }
-
-    const codexHome = await prompt.text("Codex 配置目录", {
-      defaultValue:
-        configuredValue(existing, environment, "CODEX_HOME") ??
-        path.join(homeDirectory, ".codex"),
-      required: true,
-      validate: (value) => expandPath(value, homeDirectory, process.cwd()),
     });
-    const codexHomeUid = await ownerUid(codexHome);
-    if (codexHomeUid === null) {
-      prompt.write(
-        `  提示：${codexHome} 尚不存在；启动服务前请以 ${identity.username} 运行 codex login。\n`,
-      );
-    } else if (codexHomeUid !== effectiveUid) {
-      prompt.write(
-        `  警告：Codex 配置目录属于 UID ${codexHomeUid}，不是当前 UID ${effectiveUid}。\n`,
-      );
-      if (!(await prompt.confirm("仍然使用这个 Codex 配置目录", false))) {
-        throw new Error("Codex 配置目录所有者不匹配");
-      }
-    }
+    environment.AI_TASK_BOARD_URL = basics.boardUrl;
+    environment.AI_TASK_BOARD_CONNECTION_TOKEN = basics.connectionToken;
 
-    const pathValue = environment.PATH || "/usr/local/bin:/usr/bin:/bin";
-    const existingCodexBinary = configuredValue(
-      existing,
-      environment,
-      "CODEX_BINARY",
-    );
-    const detectedCodexBinary = await resolveExecutable(
-      existingCodexBinary ?? "codex",
-      { cwd: process.cwd(), homeDirectory, pathValue },
-    );
-    const codexBinaryInput = await prompt.text("Codex 可执行文件", {
-      defaultValue: detectedCodexBinary ?? existingCodexBinary ?? "codex",
-      required: true,
-    });
-    const codexBinary = await resolveExecutable(codexBinaryInput, {
-      cwd: process.cwd(),
-      homeDirectory,
-      pathValue,
-    });
-    if (!codexBinary) {
-      throw new Error(
-        `找不到可执行的 Codex CLI：${codexBinaryInput}。请先以 ${identity.username} 安装 Codex。`,
-      );
-    }
-
-    let detectedProviderEnvironmentNames: string[] = [];
-    try {
-      detectedProviderEnvironmentNames = discoverCodexProviderEnvironmentVariables(
-        await readFile(path.join(codexHome, "config.toml"), "utf8"),
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        prompt.write(
-          `  提示：无法检查 ${path.join(codexHome, "config.toml")} 中的 provider 环境变量。\n`,
-        );
-      }
-    }
-    if (detectedProviderEnvironmentNames.length > 0) {
-      prompt.write(
-        `检测到 Codex provider 引用环境变量：${detectedProviderEnvironmentNames.join(", ")}\n`,
-      );
-    }
-    const providerEnvironmentNames = await prompt.text(
-      "传给 Codex provider 的环境变量名（逗号分隔；输入 - 表示无）",
-      {
-        defaultValue:
-          detectedProviderEnvironmentNames.length > 0
-            ? detectedProviderEnvironmentNames.join(",")
-            : undefined,
-        validate: (value) => parseProviderEnvironmentNames(value).join(","),
-      },
-    );
-    const providerEnvironment: Record<string, string> = {};
-    for (const name of parseProviderEnvironmentNames(providerEnvironmentNames)) {
-      providerEnvironment[name] = await prompt.secret(
-        `${name}（输入内容不会回显）`,
-        environment[name] ?? existing[name],
-      );
-    }
-
-    const threadScope = await prompt.choice<ThreadScope>(
-      "Thread 范围",
-      [
-        { value: "cwd", label: "cwd — 仅管理已配置工作目录（推荐）" },
-        { value: "all", label: "all — 管理当前用户的跨项目 Thread（高风险）" },
-      ],
-      validChoice(
-        configuredValue(existing, environment, "CODEX_THREAD_SCOPE"),
-        ["cwd", "all"],
-        "cwd",
-      ),
-    );
-    const maxThreads = await prompt.text("最多管理的 Thread 数", {
-      defaultValue:
-        configuredValue(existing, environment, "CODEX_MAX_THREADS") ?? "50",
-      required: true,
-      validate: (value) => {
-        const parsed = Number(value);
-        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) {
-          throw new Error("请输入 1 到 500 的整数");
-        }
-        return String(parsed);
-      },
-    });
-    const permissionMode = await prompt.choice<PermissionMode>(
-      "Codex 权限模式",
-      [
-        {
-          value: "safe",
-          label: "safe — 仅工作区可写且禁用网络（推荐）",
-        },
-        {
-          value: "danger-full-access",
-          label: "danger-full-access — 当前用户权限内完全访问（高风险）",
-        },
-        {
-          value: "inherit",
-          label: "inherit — 完全沿用本地 Codex/Thread 配置",
-        },
-      ],
-      validChoice(
-        configuredValue(existing, environment, "CODEX_BRIDGE_PERMISSION_MODE"),
-        ["safe", "danger-full-access", "inherit"],
-        "safe",
-      ),
-    );
-    const approvalMode = await prompt.choice<ApprovalMode>(
-      "设备端审批模式",
-      [
-        { value: "decline", label: "decline — 自动拒绝审批请求（推荐）" },
-        { value: "accept", label: "accept — 自动批准当前 Turn（高风险）" },
-        {
-          value: "accept-session",
-          label: "accept-session — 可批准整个 Session（更高风险）",
-        },
-      ],
-      validChoice(
-        configuredValue(existing, environment, "CODEX_BRIDGE_APPROVAL_MODE"),
-        ["decline", "accept", "accept-session"],
-        "decline",
-      ),
-    );
-    let webConfiguration: boolean;
-    if (directoryManagement === "web") {
-      // Web-side directory management requires the Web configuration gate, so
-      // both are enabled together when the user chooses Web management.
-      webConfiguration = true;
-      prompt.write(
-        "\n工作目录将由网页管理；已同时启用 Web 配置与远程目录授权。\n",
-      );
-    } else {
-      webConfiguration = await prompt.confirm(
-        "允许 Board 调整受本机边界限制的运行配置",
-        configuredValue(existing, environment, "CODEX_BRIDGE_WEB_CONFIG") ===
-          "true",
-      );
-    }
-
-    prompt.write("\n即将写入：\n");
-    prompt.write(`  环境文件：${paths.environmentFile} (0600)\n`);
-    prompt.write(`  用户服务：${paths.unitFile}\n`);
-    prompt.write(`  Bridge 运行副本：${paths.runtimeDirectory}\n`);
-    prompt.write(`  Codex 配置：${codexHome}\n`);
-    if (directoryManagement === "web") {
-      prompt.write("  工作目录：由 Web 端管理（未配置本机固定目录）\n");
-    } else {
-      prompt.write(
-        `  工作目录：${workingDirectory}${
-          preserveMultipleDirectories ? " 及现有多目录白名单" : ""
-        }\n`,
-      );
-    }
-    if (Object.keys(providerEnvironment).length > 0) {
-      prompt.write(
-        `  Provider 环境变量：${Object.keys(providerEnvironment).join(", ")}（值已隐藏）\n`,
-      );
-    }
-    prompt.write("  Connection Token：[已隐藏]\n\n");
+    prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
+    prompt.write(`systemd unit：${paths.unitFile}\n`);
+    prompt.write("其余配置（工作目录、并发上限、权限/审批等）由 Web 端管理。\n\n");
     if (!(await prompt.confirm("安装并立即启动 systemd 用户服务", true))) {
       prompt.write("已取消，未修改任何文件。\n");
       return;
     }
 
-    const allowRemoteWorkingDirectories =
-      directoryManagement === "web" ||
-      configuredValue(
-        existing,
-        environment,
-        "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES",
-      ) === "true";
-    const installedEnvironment = buildCodexInstallEnvironment({
-      existing,
-      providerEnvironment,
-      boardUrl,
-      connectionToken,
-      directoryManagement,
-      workingDirectory,
-      preserveMultipleDirectories,
-      rawMultipleDirectories,
-      threadScope,
-      maxThreads,
-      permissionMode,
-      approvalMode,
-      webConfiguration,
-      allowRemoteWorkingDirectories,
-      codexBinary,
-      codexHome,
-      homeDirectory,
-      pathValue,
-    });
-    await installCodexBridgeService(
-      {
-        paths,
-        environment: installedEnvironment,
-        unitOptions: {
-          nodeBinary: process.execPath,
-          runtimeCli: paths.runtimeCli,
-          workingDirectory,
-          homeDirectory,
-          codexHome,
-          environmentFile: paths.environmentFile,
-        },
-        identity: { username: identity.username, uid: effectiveUid },
-      },
-      (text) => prompt.write(text),
-    );
+    await runNonInteractiveSetup(options);
   } finally {
     prompt.close();
   }

@@ -7,11 +7,11 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 ## 功能概览
 
 - 会话优先工作台：先确认存活会话及其对话引用，再向指定会话预留任务。
-- 任务规划工作台：按「设备 → 项目目录 → Thread」组织规划页，每个项目目录一份自动保存的思考笔记；每个 Thread 可把任务拆成有序 Turn 草稿链，一键派发为依赖链任务——前一个 Turn 完成后下一个自动放行并被 Bridge 领取执行，也可随时追加；从这里新建的 Thread 同样出现在会话与上下文页。
+- 任务规划工作台：按「设备 → 项目目录 → Thread」组织规划页；项目级思考笔记按路径跨 Bridge 共享一份，与单个 Thread 的 Turn 规划链完全分开。每个 Thread 可把任务拆成有序 Turn 草稿链，一键派发为依赖链任务——前一个 Turn 完成后下一个自动放行并被 Bridge 领取执行，也可随时追加；从这里新建的 Thread 同样出现在会话与上下文页。
 - 项目 Tab 链：会话与规划两页顶部按「项目 → Bridges → Threads → Turns」过滤，同一工作目录跨 Bridge 自动合并为一个项目；Owner 可直接在 Web 新建项目——选定设备后该目录会下发到设备上所有支持托管目录的 Bridge（不存在时由设备自动创建），也可在「管理项目」里隐藏/恢复项目（浏览器本地）。
 - 会话目录展示当前任务状态与排队数量，对话面板集中呈现 AI 回复和执行记录。
 - 每个 Bridge 会把本机 Codex / Kimi Code / Antigravity 的套餐额度或模型配额快照回传看板，AI 连接页的对应卡片直接展示剩余百分比、窗口与重置时间。
-- AI 连接页展示每个 Bridge 的当前版本与 npm 最新版；Owner 可单个或批量下发目标版本，设备显式 opt-in（`AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true`）且运行在 systemd 下的 Bridge 1.5.0+ 会在下次配置交换后自动从 npm 下载、校验完整性并重启到该版本，下载前也可随时在网页取消。
+- AI 连接页展示每个 Bridge 的当前版本与 npm 最新版；Owner 可单个或批量下发目标版本，运行在 systemd 下的 Bridge 1.5.0+ 会在下次配置交换后自动从 npm 下载、校验完整性并重启到该版本（远程升级默认开启），下载前也可随时在网页取消。
 - 父子 Task 统一建模；AI 只能读取分配给自身且依赖已完成的叶子任务，父任务自动聚合状态和进度。
 - PostgreSQL RPC 原子处理领取、租约续期、拆分、完成并领取下一项，以及用户问答恢复。
 - AI Connection 令牌和领取令牌只保存带 Pepper 的哈希；原始值只在创建/领取时返回。
@@ -110,30 +110,35 @@ Content-Type: application/json
 
 ```bash
 npx --yes ai-task-board-bridge@1.5.1 setup
+npx --yes ai-task-board-bridge@1.5.1 run
 ```
 
-安装器会先询问安装 Codex、Kimi、Antigravity，还是组合；也可用 `setup codex`、
-`setup kimi`、`setup antigravity`、`setup both` 或 `setup all` 直接选择。三套运行时
-仍使用独立的 Board Connection、令牌、目录白名单和 systemd 服务。Kimi 与 Antigravity
-运行时已嵌入这个公开包，不需要再发布或安装第二个 npm 包。
+`setup` 与 `run` 是两个统一命令：`setup` 安装并启动**执行 npx 的当前有效用户**
+自己的 systemd 用户服务（后台常驻）；`run` 直接前台运行，`npx` 进程结束后 Bridge
+随之下线。两个命令都可显式指定平台 `codex`、`kimi`、`antigravity`（`setup` 还支持
+`both`、`all`），未指定时交互式询问。三种 Bridge 的交互流程完全一致：只询问 Board
+地址（留空使用 `https://task.neilx.online`）与 Connection Token，工作目录、
+thread/并发上限、权限与审批策略等其余配置都到「AI 连接 → Bridge 设置」中管理，
+新安装默认由 Web 端管理目录。不带子命令的旧式调用保持兼容：配置齐全时前台运行
+Codex，缺少配置且处于交互终端时进入 setup。
 
-Codex 的 Linux 交互流程会询问 Board、Connection Token、Codex 配置目录、provider
-凭据环境变量、权限与审批策略，并把 Bridge 安装为**执行 npx 的当前有效用户**自己的
-systemd user service。工作目录不再强制配置：新安装默认由 Web 端管理，安装后到
-「AI 连接 → Bridge 设置 / 新建项目」添加，同时自动启用 `CODEX_BRIDGE_WEB_CONFIG`
-与 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES`；也可以改选本机固定目录。安装器
-显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的 Codex 登录、
-`config.toml`、provider 和模型配置；新安装的其他交互默认值为 `safe` + `decline`。
-无参数且缺少必填环境变量时，交互终端也会自动进入 setup。
+只要环境变量里提供了 `AI_TASK_BOARD_CONNECTION_TOKEN`，两个命令就直接按环境变量
+非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时同样使用默认地址。非 TTY 环境
+（SSH 命令、CI 脚本）下需要提供 Token 并显式指定平台：
 
-非 TTY 环境（SSH 命令、CI 脚本）下 `setup codex` 会读取环境变量直接安装并启动同一
-systemd 用户服务，而不是回退到前台 npx；必填 Board URL 与 Connection Token，未提供
-目录变量时同样默认 Web 端管理。原有环境变量前台/自动化启动方式仍然兼容，但该模式
-不会常驻，`npx` 进程结束后 Bridge 随之下线。前台模式未显式配置时继续使用
-`CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、无沙箱）和
-`CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）。只应在工作区、Codex
-配置和 Connection 使用者都可信时采用此组合；需要限制写入与网络时，请显式设置
-`CODEX_BRIDGE_PERMISSION_MODE=safe`。
+```bash
+AI_TASK_BOARD_URL='https://task.neilx.online' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+npx --yes ai-task-board-bridge@1.5.1 setup codex
+```
+
+Codex 的安装器显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的
+Codex 登录、`config.toml`、provider 和模型配置；新安装使用 `safe` + `decline`
+等安全默认值。三套运行时仍使用独立的 Board Connection、令牌和 systemd 服务，Kimi
+与 Antigravity 运行时已嵌入这个公开包，不需要再发布或安装第二个 npm 包。前台模式
+未显式配置时继续使用 `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、
+无沙箱）和 `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）；需要限制写入与
+网络时请显式设置 `CODEX_BRIDGE_PERMISSION_MODE=safe`。
 
 仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。非 Linux 或无需 systemd
 时，可继续使用环境变量方式交给其他进程管理器。

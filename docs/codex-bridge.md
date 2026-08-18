@@ -141,7 +141,6 @@ npx --yes ai-task-board-bridge@1.5.1 run codex
 | `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES` | 否 | `false` | `true` 才允许 Web Console 开启标题上传；本机已设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` 时也视为已授权 |
 | `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | `false` | `true` 才允许 Web Console 开启旧历史同步；授权后仍需网页显式开启 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | `false` | `true` 才允许 Web Console 用项目 key、名称和绝对路径替换运行时目录清单；Bridge 会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
-| `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE` | 否 | `false` | `true` 才允许 Bridge 1.5.0+ 响应 Web 下发的目标版本：从 npm 下载该版本、完整性校验、重写 systemd 单元并自动重启；仅 systemd 托管下生效，前台运行只在 stderr 提示手动升级 |
 | `CODEX_BRIDGE_MAX_HISTORY_TURNS` | 否 | `50` | 每个 thread 可同步的最近完成 turn 本机上限，范围 `1..200` |
 | `CODEX_MODEL` | 否 | 空 | thread 未报告模型时使用的 Board 展示标签，不覆盖实际模型 |
 | `CODEX_CAPABILITIES` | 否 | `coding,shell,file-edit,multi-thread,app-server` | 用于 Board 任务能力匹配的列表 |
@@ -166,7 +165,7 @@ npx --yes ai-task-board-bridge@1.5.1 run codex
 
 ## Web 触发 Bridge 自更新
 
-Bridge 1.5.0 起内置更新器。Owner 在“AI 连接”页为某个连接（或“全部升级”批量）选择目标版本后，看板把该版本写入这条连接的期望状态；Bridge 在下次配置交换（默认约 10 秒）读到目标版本，仅当设备显式设置 `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true` 且进程运行在 systemd 下时才执行更新：用 `npm pack` 从 npm registry 下载 `ai-task-board-bridge@<目标版本>`（npm 自动校验 registry 完整性），原子装入本地 `versions/<版本>/` 目录，冒烟检查新版本可启动后重写 systemd 用户单元并以非零码退出，由 `Restart=on-failure` 拉起新版本。上报版本达到目标后，看板自动清除期望标记；下载完成前可随时在网页取消。看板只传版本号、从不托管代码包，网页被攻破的最坏结果与首次 `npx` 安装同级；目标版本必须严格大于当前上报版本且真实存在于 npm。任一更新步骤失败时旧版本继续运行，错误随下一次配置交换回报并展示在“Bridge 设置”对话框；同一目标版本失败后不会立即重试。旧版本目录保留，手动回滚只需把 systemd 单元的 `ExecStart` 指回旧版本路径后 `systemctl --user daemon-reload && systemctl --user restart ai-task-board-bridge`。前台（非 systemd）运行的 Bridge 不执行自更新，只在 stderr 提示手动升级；1.5.0 之前的版本没有更新器，需要先在设备上手动升级一次。
+Bridge 1.5.0 起内置更新器。Owner 在“AI 连接”页为某个连接（或“全部升级”批量）选择目标版本后，看板把该版本写入这条连接的期望状态；Bridge 在下次配置交换（默认约 10 秒）读到目标版本即执行更新（远程升级默认开启，不再需要本机开关；进程必须运行在 systemd 下，因为更新要重写 systemd 单元并由 `Restart=on-failure` 拉起新版本）：用 `npm pack` 从 npm registry 下载 `ai-task-board-bridge@<目标版本>`（npm 自动校验 registry 完整性），原子装入本地 `versions/<版本>/` 目录，冒烟检查新版本可启动后重写 systemd 用户单元并以非零码退出。上报版本达到目标后，看板自动清除期望标记；下载完成前可随时在网页取消。看板只传版本号、从不托管代码包，网页被攻破的最坏结果与首次 `npx` 安装同级；目标版本必须严格大于当前上报版本且真实存在于 npm。任一更新步骤失败时旧版本继续运行，错误随下一次配置交换回报并展示在“Bridge 设置”对话框；同一目标版本失败后不会立即重试。旧版本目录保留，手动回滚只需把 systemd 单元的 `ExecStart` 指回旧版本路径后 `systemctl --user daemon-reload && systemctl --user restart ai-task-board-bridge`。前台（非 systemd）运行的 Bridge 不执行自更新，只在 stderr 提示手动升级；1.5.0 之前的版本没有更新器，需要先在设备上手动升级一次。
 
 ## Web Console 管理 Threads
 

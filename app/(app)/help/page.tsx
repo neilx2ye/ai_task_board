@@ -195,10 +195,11 @@ export default function HelpPage() {
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
           <Step index={3} title="准备工作目录和权限边界">
-            三个 Bridge 的工作目录都可以在安装完成后到「AI 连接 → Bridge
-            设置 / 新建项目」用网页添加，安装时无需预先准备（默认由 Web 管理）；
-            需要本机固定白名单时再填写绝对路径（*_WORKING_DIRECTORY(S)）。Codex
-            Bridge 默认的
+            三个 Bridge 的工作目录都可以在安装完成后到「AI 连接 → Bridge 设置 /
+            新建项目」用网页添加，交互安装不再询问目录（默认由 Web 管理）；自动化或
+            前台部署需要本机固定白名单时，再通过各自前缀的
+            <code>*_WORKING_DIRECTORY(S)</code> 环境变量填写绝对路径。Codex Bridge
+            默认的
             <code className="mx-1 rounded bg-muted px-1 text-xs">
               CODEX_THREAD_SCOPE=cwd
             </code>
@@ -215,20 +216,24 @@ export default function HelpPage() {
               href="#codex-bridge"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
             >
-              下方交互式安装命令
+              下方统一的安装命令
             </a>
-            ，按提示选择要安装的 Bridge 并填写看板地址和一次性连接令牌；工作目录
-            都可以稍后在网页添加。SSH 命令或 CI 脚本（无交互终端）也可以直接提供环境变量
-            运行 <code>setup</code>，同样会安装 systemd 服务。
+            。<code>setup</code> 安装并启动 systemd 服务（后台常驻），
+            <code>run</code> 直接前台运行；没有显式指定平台时交互式询问，三种 Bridge
+            只问同样两个问题：Board 地址（留空使用
+            <code>https://task.neilx.online</code>）和一次性连接令牌。只要环境变量里
+            提供了 <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，两个命令就直接按
+            环境变量非交互执行，不再提问，因此 SSH 命令或 CI 脚本同样可用
+            <code>setup</code> 安装 systemd 服务。
             命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
             同一台设备和 Connection 只运行一个 Bridge。
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
-            Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置。Kimi /
-            Antigravity 需要本机设置
-            <code className="mx-1">KIMI_BRIDGE_WEB_CONFIG=true</code>（Antigravity
-            为 <code>ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>）才会应用 Web 期望值
-            （选择 Web 管理目录的新安装已自动写入），再到
+            Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置。交互安装默认
+            已写入各自的 Web 配置开关（Codex 为
+            <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，Kimi / Antigravity 为各自前缀
+            的 <code>*_BRIDGE_WEB_CONFIG=true</code>），所以安装后可以直接在网页管理；
+            纯环境变量或前台方式启动时才需要显式设置这些开关。再到
             <Link
               href="/sessions"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
@@ -241,7 +246,15 @@ export default function HelpPage() {
           <Step index={6} title="确认可用后配置常驻运行">
             Linux 交互式安装会创建并启动当前用户的 systemd user service；确认服务状态
             和日志正常，并按需启用 linger，确保用户未登录时仍能运行。连接令牌会保存到
-            权限受限的环境文件中，不要把它写入仓库、截图或共享日志。
+            权限受限的环境文件中，不要把它写入仓库、截图或共享日志。systemd 托管的
+            Bridge 默认开启自动升级（见
+            <a
+              href="#bridge-updates"
+              className="mx-1 font-medium text-foreground underline underline-offset-4"
+            >
+              Bridge 升级与回滚
+            </a>
+            ）。
           </Step>
         </ol>
       </Section>
@@ -254,16 +267,25 @@ export default function HelpPage() {
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
           Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi、Antigravity，
-          还是组合，再以执行命令的当前用户创建对应的 systemd user service。选择
-          Codex 后会继续收集 Codex 配置。工作目录不再强制填写，默认由 Web 端管理
-          （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）：
+          还是组合，再以执行命令的当前用户创建对应的 systemd user service。三种
+          Bridge 的交互问题完全一致：只询问 Board 地址（留空使用
+          <code>https://task.neilx.online</code>）与 Connection Token；工作目录、
+          thread/并发上限、权限与审批策略等其余配置默认由 Web 端管理（安装后到
+          「AI 连接 → Bridge 设置 / 新建项目」添加）。只要提供了
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，<code>setup</code> 和
+          <code>run</code> 就直接按环境变量非交互运行，不再提问；<code>setup</code>
+          写入 systemd 服务并立即启动，<code>run</code> 只在前台运行、npx 进程结束
+          后 Bridge 随之下线：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          SSH 命令或 CI 脚本没有交互终端时，<code>setup codex</code> 会读取环境变量
-          直接安装并启动同一个 systemd 服务，不会在前台 npx 里运行：
+          SSH 命令或 CI 脚本没有交互终端时，<code>setup codex</code> 同样读取环境变量
+          直接安装并启动同一个 systemd 服务，不会在前台 npx 里运行；只有
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code> 是必填的，
+          <code>AI_TASK_BOARD_URL</code> 可省略（默认
+          <code>https://task.neilx.online</code>）：
         </p>
         <CopyableCodeBlock copyLabel="复制非交互式安装命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -299,16 +321,16 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
             查看状态；其他系统请使用对应的本机进程管理器。
           </li>
           <li>
-            本机显式允许 Web 配置后，Workspace Owner 可以在“AI 连接 → Bridge 设置”
-            动态启停、切换标题与历史同步，并调整 thread/并发/历史上限；这套远程配置
-            在 Codex、Kimi 与 Antigravity 连接上均可使用（Kimi / Antigravity 分别用
-            <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code> /
-            <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code> 开启，
-            历史同步仅 Codex 支持）。设备额外设置
+            交互安装默认写入 <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，因此
+            Workspace Owner 安装后就能在“AI 连接 → Bridge 设置”动态启停、切换标题
+            与历史同步，并调整 thread/并发/历史上限；这套远程配置在 Codex、Kimi 与
+            Antigravity 连接上均可使用（历史同步仅 Codex 支持）。纯环境变量或前台
+            方式启动时，需要显式设置各自前缀的 <code>*_BRIDGE_WEB_CONFIG=true</code>。
+            交互安装同时写入
             <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
             （Kimi / Antigravity 为各自前缀的
             <code className="ml-1">*_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>）
-            后，还可在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
+            ，因此还可以在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
           </li>
           <li>
             未授权 Web 路径管理时，仍用各自前缀的 <code>*_WORKING_DIRECTORIES</code>
@@ -336,6 +358,18 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
             需要限制为 thread cwd、禁止网络时请选 <code>safe</code>；
             <code>inherit</code> 不发送覆盖并沿用本机 Codex 设置，边界未知时也应视为高风险。
           </li>
+          <li>
+            「AI 连接」页可以看到每个 Bridge 的当前版本与 npm 最新版，并下发目标版本；
+            systemd 托管的 Bridge 默认会自动升级，前台运行需手动重跑
+            <code>setup</code>。详见
+            <a
+              href="#bridge-updates"
+              className="mx-1 font-medium text-foreground underline underline-offset-4"
+            >
+              Bridge 升级与回滚
+            </a>
+            。
+          </li>
         </ul>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -355,10 +389,13 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup kimi`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          无交互终端时，提供以下变量运行 <code>setup kimi</code> 同样会安装并启动
-          systemd 服务；未提供 <code>KIMI_WORKING_DIRECTORY</code> 时默认由 Web 端管理
-          工作目录（安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）；也可以显式使用
-          <code>run kimi</code> 在前台运行。令牌必须来自独立的 Kimi Code 连接：
+          交互安装只询问 Board 地址与 Token；提供了
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code> 时，<code>setup kimi</code>
+          直接非交互安装并启动 systemd 服务（SSH / CI 同样适用），
+          <code>run kimi</code> 在前台运行。未提供
+          <code>KIMI_WORKING_DIRECTORY</code> 时默认由 Web 端管理工作目录（安装后到
+          「AI 连接 → Bridge 设置 / 新建项目」添加）。令牌必须来自独立的 Kimi Code
+          连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -376,7 +413,7 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
             只发送稳定目录 key，不能注入任意本机路径。Kimi ACP 只能按目录发现本机
             Session，等价于固定的工作目录范围。设备设置
             <code className="ml-1">KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
-            （交互安装选择 Web 管理目录时自动写入）后，目录清单也可以直接在「Bridge
+            （交互安装默认写入）后，目录清单也可以直接在「Bridge
             设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
             由设备自动创建。
           </li>
@@ -389,9 +426,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
             <code className="ml-1">KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true</code>
             后才会同步，或设置
             <code className="ml-1">KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true</code>
-            让 Web 控制。设置
+            让 Web 控制。交互安装默认写入
             <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code>
-            后，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
+            ，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
             <code className="ml-1">KIMI_MAX_THREADS</code>
             仍是设备本机上限，Web 不能超过它。
           </li>
@@ -421,10 +458,12 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup antigravity`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          无交互终端时，提供以下变量运行 <code>setup antigravity</code> 同样会安装并
-          启动 systemd 服务；未提供 <code>ANTIGRAVITY_WORKING_DIRECTORY</code> 时默认由
-          Web 端管理工作目录（安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）；
-          也可以显式使用 <code>run antigravity</code> 在前台运行。令牌必须来自独立的
+          交互安装只询问 Board 地址与 Token；提供了
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code> 时，<code>setup antigravity</code>
+          直接非交互安装并启动 systemd 服务（SSH / CI 同样适用），
+          <code>run antigravity</code> 在前台运行。未提供
+          <code>ANTIGRAVITY_WORKING_DIRECTORY</code> 时默认由 Web 端管理工作目录
+          （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）。令牌必须来自独立的
           Antigravity 连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
@@ -447,7 +486,7 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
             可用 <code>ANTIGRAVITY_WORKING_DIRECTORIES</code> 配置多个精确 cwd
             白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。设备设置
             <code className="ml-1">ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
-            （交互安装选择 Web 管理目录时自动写入）后，目录清单也可以直接在「Bridge
+            （交互安装默认写入）后，目录清单也可以直接在「Bridge
             设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
             由设备自动创建。
           </li>
@@ -458,9 +497,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
             （可用 <code>ANTIGRAVITY_REGISTRY_FILE</code> 换路径）。
           </li>
           <li>
-            本机设置
+            交互安装默认写入
             <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>
-            后，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
+            ，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
             <code className="ml-1">ANTIGRAVITY_MAX_THREADS</code>
             仍是设备本机上限，Web 不能超过它。单次执行时长可用
             <code className="ml-1">ANTIGRAVITY_PRINT_TIMEOUT</code>
@@ -478,6 +517,47 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
             <code className="mx-1">ai-task-board-antigravity-bridge.service</code>。
             Board Connection Token 会从 <code>agy</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
+          </li>
+        </ul>
+      </Section>
+
+      <Section id="bridge-updates" title="Bridge 升级与回滚">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          「AI 连接」页会展示每个 Bridge 当前上报的版本与 npm 上的最新版。Workspace
+          Owner 可以为单个连接下发目标版本，也可以批量「全部升级」。远程升级默认开启：
+          systemd 托管的 Bridge（<code>setup</code> 安装）在下次配置交换后自动从 npm
+          下载目标版本、校验完整性、冒烟检查新版本可启动，再重写 systemd 单元并自动
+          重启到新版本。看板只传递版本号、从不托管代码包，目标版本必须真实存在于 npm
+          且高于当前版本。
+        </p>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          升级失败时旧版本继续运行，错误会显示在「AI 连接 → Bridge 设置」；同一目标
+          版本失败后不会立即重试。前台 <code>run</code> 的进程无法自动重启，因此不执行
+          自更新，需要手动重跑安装命令（Codex 为例，Kimi / Antigravity 替换平台名）：
+        </p>
+        <CopyableCodeBlock copyLabel="复制手动升级命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+npx --yes ${BRIDGE_INSTALL_PACKAGE} setup codex`}</CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          旧版本目录会保留在
+          <code>~/.local/share/ai-task-board/*-bridge/versions/&lt;版本&gt;/</code>，
+          可随时回滚：编辑对应 systemd 单元的 <code>ExecStart</code>，把它指回旧版本的
+          <code>dist/cli.js</code>，然后执行：
+        </p>
+        <CopyableCodeBlock copyLabel="复制回滚命令">{`systemctl --user daemon-reload
+systemctl --user restart ai-task-board-bridge.service`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            1.5.0 之前的版本没有内置更新器，那部分设备需要先手动升级一次；之后即可
+            使用网页下发版本。
+          </li>
+          <li>
+            升级只替换本机运行的 Bridge 代码，不改变 Board 端 schema/API；目标版本
+            过旧或不存在时，网页会在下发前拒绝。
+          </li>
+          <li>
+            自动升级依赖设备能访问 npm registry；设备配置了滞后镜像时，请等待镜像同步
+            或改用官方 registry 后再重试。
           </li>
         </ul>
       </Section>
@@ -626,6 +706,19 @@ Idempotency-Key: <唯一键>
             会话，没有可接管的本机清单，也就不需要这些变量。权限类变量则直接映射各自 CLI
             的原生模型：Codex 用沙箱加审批组合，Kimi 用 ACP mode，Antigravity 用
             --mode、--dangerously-skip-permissions 和 --sandbox。
+          </FaqItem>
+          <FaqItem question="交互式安装会问哪些问题？">
+            三种 Bridge 完全一致，只问两个问题：Board 地址（留空使用
+            https://task.neilx.online）和 Connection Token（输入不回显、必填）。
+            工作目录、thread/并发上限、权限与审批策略等其余配置都在安装后到
+            「AI 连接 → Bridge 设置 / 新建项目」管理；环境变量里已有 Token 时，
+            setup 和 run 都不再提问，直接按环境变量执行。
+          </FaqItem>
+          <FaqItem question="Bridge 会自动升级吗？">
+            会。systemd 托管的 Bridge（setup 安装）默认自动响应网页下发的目标版本：
+            从 npm 下载、校验完整性、冒烟测试后重写单元并重启，失败则保留旧版并回报
+            错误。前台 run 的进程无法自动重启，需要手动重跑 setup 升级。详见
+            「Bridge 升级与回滚」章节。
           </FaqItem>
           <FaqItem question="密钥和令牌应该如何保管？">
             SUPABASE_SECRET_KEY 只存在于服务端环境，浏览器永远不会接触；

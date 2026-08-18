@@ -21,6 +21,8 @@ import { createRequire } from "node:module";
 
 import type { KimiAgentMode, KimiApprovalMode } from "./config.js";
 
+const DEFAULT_BOARD_URL = "https://task.neilx.online";
+
 export const KIMI_BRIDGE_SYSTEMD_SERVICE =
   "ai-task-board-kimi-bridge.service";
 
@@ -676,7 +678,9 @@ export async function runInteractiveSetup(options: {
     throw new Error("交互式 systemd 安装目前只支持 Linux");
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error("setup 需要交互式终端；自动化部署请使用环境变量运行");
+    throw new Error(
+      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
+    );
   }
   if ((await captureCommand("systemctl", ["--user", "show-environment"])) === null) {
     throw new Error("无法连接当前用户的 systemd user manager");
@@ -696,205 +700,34 @@ export async function runInteractiveSetup(options: {
     prompt.write(
       `运行身份：${identity.username} (UID ${process.geteuid?.() ?? identity.uid})\n`,
     );
-    const boardUrl = await prompt.text("Board 地址", {
+    // 与 Codex / Antigravity 完全一致的最少问题：Board 地址（留空使用默认）
+    // 与 Connection Token；其余配置默认由 Web 端管理。
+    const boardUrl = await prompt.text("Board 地址（留空使用默认）", {
       defaultValue:
-        configuredValue(existing, process.env, "AI_TASK_BOARD_URL") ??
-        "https://task.neilx.online",
-      required: true,
+        process.env.AI_TASK_BOARD_URL?.trim() ||
+        existing.AI_TASK_BOARD_URL?.trim() ||
+        DEFAULT_BOARD_URL,
+      required: false,
       validate: normalizeBoardUrl,
     });
     const token = await prompt.secret(
-      "Kimi Code Connection Token（输入不回显）",
-      configuredValue(
-        existing,
-        process.env,
-        "AI_TASK_BOARD_CONNECTION_TOKEN",
-      ),
+      "Connection Token（输入内容不会回显）",
+      process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+        existing.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+        undefined,
     );
-    const rawMultipleDirectories = configuredValue(
-      existing,
-      process.env,
-      "KIMI_WORKING_DIRECTORIES",
-    );
-    const existingWorkingDirectory = configuredValue(
-      existing,
-      process.env,
-      "KIMI_WORKING_DIRECTORY",
-    );
-    // 重跑安装时延续既有选择：已有目录变量（单目录或多目录）默认维持 local
-    const hasExistingLocalDirectories = Boolean(
-      existingWorkingDirectory ||
-        (rawMultipleDirectories &&
-          firstConfiguredWorkingDirectory(rawMultipleDirectories)),
-    );
-    const directoryManagement = await prompt.choice<WorkingDirectoryManagement>(
-      "工作目录管理",
-      [
-        {
-          value: "web",
-          label:
-            "Web 端管理（推荐）— 安装时不配置目录，之后在网页「AI 连接 → Bridge 设置 / 新建项目」中添加",
-        },
-        {
-          value: "local",
-          label: "本机固定目录 — 安装时配置一个固定工作目录白名单",
-        },
-      ],
-      hasExistingLocalDirectories ? "local" : "web",
-    );
-
-    let preserveMultipleDirectories = false;
-    let workingDirectory: string;
-    if (directoryManagement === "web") {
-      // unit 需要一个存在的 WorkingDirectory，但 Web 模式下 Bridge 不再把它
-      // 当作受管项目目录；安装后改由 Web 端管理工作目录
-      workingDirectory = homeDirectory;
-      if (hasExistingLocalDirectories) {
-        prompt.write(
-          "\n现有本机目录白名单将不再使用，改由 Web 端管理工作目录。\n",
-        );
-      }
-    } else if (rawMultipleDirectories) {
-      const firstDirectory = firstConfiguredWorkingDirectory(
-        rawMultipleDirectories,
-      );
-      if (firstDirectory) {
-        prompt.write(`\n检测到现有多目录配置，首目录为 ${firstDirectory}。\n`);
-        preserveMultipleDirectories = await prompt.confirm(
-          "保留现有 KIMI_WORKING_DIRECTORIES",
-          true,
-        );
-        workingDirectory = firstDirectory;
-      } else {
-        prompt.write(
-          "\n现有 KIMI_WORKING_DIRECTORIES 无法解析，本次将改为单目录配置。\n",
-        );
-        workingDirectory = process.cwd();
-      }
-    } else {
-      workingDirectory = process.cwd();
-    }
-    if (directoryManagement === "local" && !preserveMultipleDirectories) {
-      workingDirectory = await prompt.text("工作目录", {
-        defaultValue: existingWorkingDirectory ?? workingDirectory,
-        required: true,
-        validate: (value) => path.resolve(value),
-      });
-    }
-    if (
-      directoryManagement === "local" &&
-      !(await stat(workingDirectory).catch(() => null))?.isDirectory()
-    ) {
-      throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
-    }
-    const requestedBinary = await prompt.text("Kimi Code 可执行文件", {
-      defaultValue:
-        configuredValue(existing, process.env, "KIMI_BINARY") ?? "kimi",
-      required: true,
-    });
-    const kimiBinary = await resolveExecutable(requestedBinary);
-    if (!kimiBinary) throw new Error(`找不到 Kimi Code 可执行文件：${requestedBinary}`);
-    const kimiVersion = await captureCommand(kimiBinary, ["--version"]);
-    if (!kimiVersion) throw new Error("Kimi Code --version 执行失败");
-    prompt.write(`已检测：${kimiVersion}\n`);
-
-    const maxThreads = await prompt.text("最多管理的 Kimi Sessions", {
-      defaultValue:
-        configuredValue(existing, process.env, "KIMI_MAX_THREADS") ?? "50",
-      required: true,
-      validate: (value) => positiveInteger(value, 500),
-    });
-    const maxConcurrentTurns = await prompt.text("最大并行 turn 数", {
-      defaultValue:
-        configuredValue(existing, process.env, "KIMI_MAX_CONCURRENT_TURNS") ??
-        "2",
-      required: true,
-      validate: (value) => positiveInteger(value, 32),
-    });
-    const agentMode = await prompt.choice<KimiAgentMode>(
-      "Kimi 执行模式",
-      [
-        { value: "auto", label: "auto：由 Kimi 自动判断工具操作（推荐）" },
-        { value: "default", label: "default：按 Kimi 默认策略" },
-        { value: "plan", label: "plan：只规划，不直接执行" },
-        { value: "yolo", label: "yolo：自动执行所有操作（高风险）" },
-      ],
-      "auto",
-    );
-    const approvalMode = await prompt.choice<KimiApprovalMode>(
-      "ACP 权限请求处理",
-      [
-        { value: "decline", label: "decline：拒绝额外权限（更安全）" },
-        { value: "accept", label: "accept：自动批准当前任务权限（高风险）" },
-      ],
-      "decline",
-    );
-    const includeTitles = await prompt.confirm(
-      "向看板上传本机 Kimi Session 标题",
-      false,
-    );
-    let webConfiguration: boolean;
-    if (directoryManagement === "web") {
-      // Web 端管理目录依赖 Web 配置开关，两者同时开启
-      webConfiguration = true;
-      prompt.write(
-        "\n工作目录将由网页管理；已同时启用 Web 配置与远程目录授权。\n",
-      );
-    } else {
-      webConfiguration = await prompt.confirm(
-        "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
-        configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") ===
-          "true",
-      );
-    }
+    process.env.AI_TASK_BOARD_URL = boardUrl;
+    process.env.AI_TASK_BOARD_CONNECTION_TOKEN = token;
 
     prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`systemd unit：${paths.unitFile}\n`);
-    if (directoryManagement === "web") {
-      prompt.write("工作目录：由 Web 端管理（未配置本机固定目录）\n");
-    } else {
-      prompt.write(
-        `工作目录：${workingDirectory}${
-          preserveMultipleDirectories ? " 及现有多目录白名单" : ""
-        }\n`,
-      );
-    }
+    prompt.write("其余配置（工作目录、并发上限、权限/审批等）由 Web 端管理。\n\n");
     if (!(await prompt.confirm("写入配置并启动 Kimi Bridge", true))) {
       prompt.write("已取消，未修改任何文件。\n");
       return;
     }
 
-    await installKimiBridgeService(
-      {
-        paths,
-        environment: buildKimiInstallEnvironment({
-          existing,
-          boardUrl,
-          connectionToken: token,
-          directoryManagement,
-          workingDirectory,
-          preserveMultipleDirectories,
-          rawMultipleDirectories,
-          agentMode,
-          approvalMode,
-          includeTitles,
-          maxThreads,
-          maxConcurrentTurns,
-          webConfiguration,
-          kimiBinary,
-          pathValue: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-        }),
-        unitOptions: {
-          nodeBinary: process.execPath,
-          runtimeCli: paths.runtimeCli,
-          workingDirectory,
-          homeDirectory,
-          environmentFile: paths.environmentFile,
-        },
-        packageVersion: options.packageVersion,
-      },
-      (text) => prompt.write(text),
-    );
+    await runKimiNonInteractiveSetup(options);
   } finally {
     prompt.close();
   }
@@ -928,10 +761,7 @@ export async function runKimiNonInteractiveSetup(options: {
     process.env,
     "AI_TASK_BOARD_URL",
   );
-  if (!boardUrlValue) {
-    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
-  }
-  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const boardUrl = normalizeBoardUrl(boardUrlValue ?? DEFAULT_BOARD_URL);
   const token = configuredValue(
     existing,
     process.env,

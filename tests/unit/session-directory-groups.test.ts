@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   excludeHiddenProjects,
   filterConnectionGroupsByProject,
+  groupBridgesByProject,
   groupSessionsByConnection,
   listSessionProjects,
 } from "@/lib/domain/session-directory-groups";
@@ -275,5 +276,86 @@ describe("Session project tabs", () => {
     expect(filtered[0]?.connection.id).toBe(secondConnection.id);
     expect(filtered[0]?.directories.map((item) => item.name)).toEqual(["beta"]);
     expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
+  });
+});
+
+describe("Project-first bridge grouping", () => {
+  const secondConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "connection-2",
+    name: "Desktop",
+  };
+
+  function sharedProjectGroups() {
+    return groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/alpha", "alpha"),
+        session("thread-b", "/workspace/alpha", "alpha", secondConnection),
+        session("thread-c", "/workspace/beta", null, secondConnection),
+      ],
+      [connection, secondConnection],
+      [
+        directory("alpha", "Alpha app", "/workspace/alpha"),
+        directory("alpha", "Alpha app", "/workspace/alpha", secondConnection.id),
+      ],
+    );
+  }
+
+  it("nests every Bridge with access to the selected project under it", () => {
+    const projects = groupBridgesByProject(
+      sharedProjectGroups(),
+      "path:/workspace/alpha",
+    );
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toEqual(
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        name: "Alpha app",
+        workingDirectory: "/workspace/alpha",
+        sessionCount: 2,
+      }),
+    );
+    expect(
+      projects[0].bridges.map((bridge) => bridge.connection.id),
+    ).toEqual([connection.id, secondConnection.id]);
+    expect(
+      projects[0].bridges.map(
+        (bridge) => bridge.directory.workingDirectory,
+      ),
+    ).toEqual(["/workspace/alpha", "/workspace/alpha"]);
+  });
+
+  it("keeps a configured directory with no Threads as an access Bridge", () => {
+    const groups = groupSessionsByConnection(
+      [],
+      [connection],
+      [directory("docs", "Docs", "/workspace/docs")],
+    );
+
+    const projects = groupBridgesByProject(groups, "path:/workspace/docs");
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]?.bridges).toHaveLength(1);
+    expect(projects[0]?.bridges[0]).toEqual(
+      expect.objectContaining({
+        connection,
+        directory: expect.objectContaining({
+          directoryKey: "docs",
+          sessions: [],
+        }),
+      }),
+    );
+  });
+
+  it("returns every project with its Bridges when no project is selected", () => {
+    const projects = groupBridgesByProject(sharedProjectGroups(), null);
+
+    expect(projects.map((project) => project.id)).toEqual([
+      "path:/workspace/alpha",
+      "path:/workspace/beta",
+    ]);
+    expect(projects[0]?.bridges).toHaveLength(2);
+    expect(projects[1]?.bridges).toHaveLength(1);
   });
 });

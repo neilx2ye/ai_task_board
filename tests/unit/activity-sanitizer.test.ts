@@ -30,7 +30,7 @@ describe("Harness activity sanitization", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("AI_TASK_BOARD_URL is required");
+    expect(result.stderr).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
     expect(result.stderr).not.toContain("ERR_PACKAGE_PATH_NOT_EXPORTED");
   });
 

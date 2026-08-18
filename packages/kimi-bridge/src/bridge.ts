@@ -898,7 +898,6 @@ export class KimiBridge {
       const updateError = await maybeApplyDesiredBridgeUpdate({
         desiredVersion: response.configuration.desired_bridge_version ?? null,
         currentVersion: KIMI_BRIDGE_CAPABILITY_VERSION,
-        allowRemoteUpdate: this.configuration.allowRemoteUpdate,
       });
       if (updateError) this.updateError = updateError;
     }

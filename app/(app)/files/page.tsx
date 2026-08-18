@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import dynamic from "next/dynamic";
 import {
   ArrowLeftIcon,
   FolderTreeIcon,
@@ -9,17 +10,30 @@ import {
   SearchIcon,
 } from "lucide-react";
 
-import { FilePreview } from "@/components/file-explorer/file-preview";
 import { FileTree, ProjectFileTrees } from "@/components/file-explorer/file-tree";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ApiError, apiFetch } from "@/hooks/api-client";
-import { useFileExplorerProjects } from "@/hooks/use-file-explorer";
-import type {
-  FileExplorerDirectory,
-  FileSource,
-} from "@/lib/types/domain";
+import { ApiError } from "@/hooks/api-client";
+import {
+  fileExplorerDirectoryQueryOptions,
+  useFileExplorerProjects,
+} from "@/hooks/use-file-explorer";
+import type { FileSource } from "@/lib/types/domain";
+
+const FilePreview = dynamic(
+  () =>
+    import("@/components/file-explorer/file-preview").then(
+      (module) => module.FilePreview,
+    ),
+  {
+    loading: () => (
+      <div className="p-4 lg:p-6">
+        <LoadingBlock label="加载文件预览…" />
+      </div>
+    ),
+  },
+);
 
 function ProjectsExplorer({
   selectedPath,
@@ -32,6 +46,7 @@ function ProjectsExplorer({
   onSelectFile: (path: string, source: FileSource) => void;
   onRefresh: () => void;
 }) {
+  const queryClient = useQueryClient();
   const projects = useFileExplorerProjects();
   const [pathInput, setPathInput] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
@@ -51,9 +66,9 @@ function ProjectsExplorer({
     setOpening(rawPath);
     setPathError(null);
     try {
-      await apiFetch<FileExplorerDirectory>(
-        `/api/user/file-explorer/directory?${new URLSearchParams({ path: rawPath }).toString()}`,
-      );
+      // 直接写入 React Query 缓存：既完成路径校验，又让随后挂载的文件树
+      // 立即拿到刚拉取的目录内容，避免同一个目录连续请求两次。
+      await queryClient.fetchQuery(fileExplorerDirectoryQueryOptions(rawPath));
       onOpen(rawPath);
     } catch (error) {
       setPathError(

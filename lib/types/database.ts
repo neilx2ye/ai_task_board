@@ -762,8 +762,7 @@ export type IdempotencyRecordInsert = {
 
 export type PlanningNoteRow = {
   workspace_id: string;
-  connection_id: string;
-  directory_ref: string;
+  project_ref: string;
   content: string;
   updated_by: string | null;
   created_at: string;
@@ -772,8 +771,7 @@ export type PlanningNoteRow = {
 
 export type PlanningNoteInsert = {
   workspace_id: string;
-  connection_id: string;
-  directory_ref: string;
+  project_ref: string;
   content?: string;
   updated_by?: string | null;
   created_at?: string;
@@ -1445,13 +1443,6 @@ export interface Database {
             columns: ["workspace_id"];
             isOneToOne: false;
             referencedRelation: "workspaces";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "planning_notes_connection_id_fkey";
-            columns: ["connection_id"];
-            isOneToOne: false;
-            referencedRelation: "ai_connections";
             referencedColumns: ["id"];
           },
         ]

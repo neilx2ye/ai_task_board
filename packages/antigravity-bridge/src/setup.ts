@@ -31,6 +31,8 @@ import type {
 } from "./config.js";
 import { compareSemver, errorMessage } from "./utils.js";
 
+const DEFAULT_BOARD_URL = "https://task.neilx.online";
+
 export const ANTIGRAVITY_BRIDGE_SYSTEMD_SERVICE =
   "ai-task-board-antigravity-bridge.service";
 
@@ -652,7 +654,9 @@ export async function runInteractiveSetup(options: {
     throw new Error("交互式 systemd 安装目前只支持 Linux");
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error("setup 需要交互式终端；自动化部署请使用环境变量运行");
+    throw new Error(
+      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
+    );
   }
   const systemctlReady = await new Promise<boolean>((resolve) => {
     const probe = spawn("systemctl", ["--user", "show-environment"], {
@@ -679,234 +683,34 @@ export async function runInteractiveSetup(options: {
     prompt.write(
       `运行身份：${identity.username} (UID ${process.geteuid?.() ?? identity.uid})\n`,
     );
-    const boardUrl = await prompt.text("Board 地址", {
+    // 与 Codex / Kimi 完全一致的最少问题：Board 地址（留空使用默认）
+    // 与 Connection Token；其余配置默认由 Web 端管理。
+    const boardUrl = await prompt.text("Board 地址（留空使用默认）", {
       defaultValue:
-        configuredValue(existing, process.env, "AI_TASK_BOARD_URL") ??
-        "https://task.neilx.online",
-      required: true,
+        process.env.AI_TASK_BOARD_URL?.trim() ||
+        existing.AI_TASK_BOARD_URL?.trim() ||
+        DEFAULT_BOARD_URL,
+      required: false,
       validate: normalizeBoardUrl,
     });
     const token = await prompt.secret(
-      "Antigravity Connection Token（输入不回显）",
-      configuredValue(
-        existing,
-        process.env,
-        "AI_TASK_BOARD_CONNECTION_TOKEN",
-      ),
+      "Connection Token（输入内容不会回显）",
+      process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+        existing.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+        undefined,
     );
-    const rawMultipleDirectories = configuredValue(
-      existing,
-      process.env,
-      "ANTIGRAVITY_WORKING_DIRECTORIES",
-    );
-    const existingWorkingDirectory = configuredValue(
-      existing,
-      process.env,
-      "ANTIGRAVITY_WORKING_DIRECTORY",
-    );
-    // 重跑安装时延续既有选择：已有目录变量（单目录或多目录）默认维持 local
-    const hasExistingLocalDirectories = Boolean(
-      existingWorkingDirectory ||
-        (rawMultipleDirectories &&
-          firstConfiguredWorkingDirectory(rawMultipleDirectories)),
-    );
-    const directoryManagement = await prompt.choice<WorkingDirectoryManagement>(
-      "工作目录管理",
-      [
-        {
-          value: "web",
-          label:
-            "Web 端管理（推荐）— 安装时不配置目录，之后在网页「AI 连接 → Bridge 设置 / 新建项目」中添加",
-        },
-        {
-          value: "local",
-          label: "本机固定目录 — 安装时配置一个固定工作目录白名单",
-        },
-      ],
-      hasExistingLocalDirectories ? "local" : "web",
-    );
-
-    let preserveMultipleDirectories = false;
-    let workingDirectory: string;
-    if (directoryManagement === "web") {
-      // unit 需要一个存在的 WorkingDirectory，但 Web 模式下 Bridge 不再把它
-      // 当作受管项目目录；安装后改由 Web 端管理工作目录
-      workingDirectory = homeDirectory;
-      if (hasExistingLocalDirectories) {
-        prompt.write(
-          "\n现有本机目录白名单将不再使用，改由 Web 端管理工作目录。\n",
-        );
-      }
-    } else if (rawMultipleDirectories) {
-      const firstDirectory = firstConfiguredWorkingDirectory(
-        rawMultipleDirectories,
-      );
-      if (firstDirectory) {
-        prompt.write(`\n检测到现有多目录配置，首目录为 ${firstDirectory}。\n`);
-        preserveMultipleDirectories = await prompt.confirm(
-          "保留现有 ANTIGRAVITY_WORKING_DIRECTORIES",
-          true,
-        );
-        workingDirectory = firstDirectory;
-      } else {
-        prompt.write(
-          "\n现有 ANTIGRAVITY_WORKING_DIRECTORIES 无法解析，本次将改为单目录配置。\n",
-        );
-        workingDirectory = process.cwd();
-      }
-    } else {
-      workingDirectory = process.cwd();
-    }
-    if (directoryManagement === "local" && !preserveMultipleDirectories) {
-      workingDirectory = await prompt.text("工作目录", {
-        defaultValue: existingWorkingDirectory ?? workingDirectory,
-        required: true,
-        validate: (value) => path.resolve(value),
-      });
-    }
-    if (
-      directoryManagement === "local" &&
-      !(await stat(workingDirectory).catch(() => null))?.isDirectory()
-    ) {
-      throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
-    }
-    const requestedBinary = await prompt.text("Antigravity CLI 可执行文件", {
-      defaultValue:
-        configuredValue(existing, process.env, "ANTIGRAVITY_BINARY") ?? "agy",
-      required: true,
-    });
-    const agyBinary = await resolveExecutable(requestedBinary);
-    if (!agyBinary) {
-      throw new Error(`找不到 Antigravity CLI 可执行文件：${requestedBinary}`);
-    }
-    const probeClient = new AgyClient({
-      agyBinary,
-      agentMode: "auto",
-      approvalMode: "decline",
-      sandbox: false,
-      printTimeoutMs: 300_000,
-    });
-    let version: string;
-    try {
-      version = await probeClient.version();
-    } catch (error) {
-      throw new Error(
-        `无法运行 Antigravity CLI --version：${errorMessage(error)}`,
-      );
-    }
-    prompt.write(`已检测：Antigravity CLI ${version}\n`);
-    if (!compareSemver(version, 1, 1, 8)) {
-      throw new Error(
-        `Antigravity CLI ${version} 过旧，需要 >= ${ANTIGRAVITY_MINIMUM_VERSION}。请运行 agy update 升级后重试。`,
-      );
-    }
-
-    const maxThreads = await prompt.text("最多管理的 Antigravity Threads", {
-      defaultValue:
-        configuredValue(existing, process.env, "ANTIGRAVITY_MAX_THREADS") ?? "50",
-      required: true,
-      validate: (value) => positiveInteger(value, 500),
-    });
-    const maxConcurrentTurns = await prompt.text("最大并行 turn 数", {
-      defaultValue:
-        configuredValue(
-          existing,
-          process.env,
-          "ANTIGRAVITY_MAX_CONCURRENT_TURNS",
-        ) ?? "2",
-      required: true,
-      validate: (value) => positiveInteger(value, 32),
-    });
-    const agentMode = await prompt.choice<AntigravityAgentMode>(
-      "Antigravity 执行模式",
-      [
-        { value: "auto", label: "auto：遵循本机 settings.json 策略（推荐）" },
-        { value: "default", label: "default：headless 默认策略" },
-        {
-          value: "accept-edits",
-          label: "accept-edits：自动批准文件编辑",
-        },
-        { value: "plan", label: "plan：先规划，不直接执行" },
-      ],
-      "auto",
-    );
-    const approvalMode = await prompt.choice<AntigravityApprovalMode>(
-      "工具权限处理",
-      [
-        {
-          value: "decline",
-          label: "decline：依赖 permissions.allow 规则（更安全）",
-        },
-        {
-          value: "accept",
-          label: "accept：--dangerously-skip-permissions 自动批准（高风险）",
-        },
-      ],
-      "decline",
-    );
-    const sandbox = await prompt.confirm("启用 agy 终端沙箱（--sandbox）", false);
-    let webConfiguration: boolean;
-    if (directoryManagement === "web") {
-      // Web 端管理目录依赖 Web 配置开关，两者同时开启
-      webConfiguration = true;
-      prompt.write(
-        "\n工作目录将由网页管理；已同时启用 Web 配置与远程目录授权。\n",
-      );
-    } else {
-      webConfiguration = await prompt.confirm(
-        "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
-        configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_WEB_CONFIG") ===
-          "true",
-      );
-    }
+    process.env.AI_TASK_BOARD_URL = boardUrl;
+    process.env.AI_TASK_BOARD_CONNECTION_TOKEN = token;
 
     prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`systemd unit：${paths.unitFile}\n`);
-    if (directoryManagement === "web") {
-      prompt.write("工作目录：由 Web 端管理（未配置本机固定目录）\n");
-    } else {
-      prompt.write(
-        `工作目录：${workingDirectory}${
-          preserveMultipleDirectories ? " 及现有多目录白名单" : ""
-        }\n`,
-      );
-    }
+    prompt.write("其余配置（工作目录、并发上限、权限/审批等）由 Web 端管理。\n\n");
     if (!(await prompt.confirm("写入配置并启动 Antigravity Bridge", true))) {
       prompt.write("已取消，未修改任何文件。\n");
       return;
     }
 
-    await installAntigravityBridgeService(
-      {
-        paths,
-        environment: buildAntigravityInstallEnvironment({
-          existing,
-          boardUrl,
-          connectionToken: token,
-          directoryManagement,
-          workingDirectory,
-          preserveMultipleDirectories,
-          rawMultipleDirectories,
-          agentMode,
-          approvalMode,
-          sandbox,
-          maxThreads,
-          maxConcurrentTurns,
-          webConfiguration,
-          agyBinary,
-          pathValue: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-        }),
-        unitOptions: {
-          nodeBinary: process.execPath,
-          runtimeCli: paths.runtimeCli,
-          workingDirectory,
-          homeDirectory,
-          environmentFile: paths.environmentFile,
-        },
-        packageVersion: options.packageVersion,
-      },
-      (text) => prompt.write(text),
-    );
+    await runAntigravityNonInteractiveSetup(options);
   } finally {
     prompt.close();
   }
@@ -945,10 +749,7 @@ export async function runAntigravityNonInteractiveSetup(options: {
     process.env,
     "AI_TASK_BOARD_URL",
   );
-  if (!boardUrlValue) {
-    throw new Error("缺少 AI_TASK_BOARD_URL；非交互安装需要 Board 地址");
-  }
-  const boardUrl = normalizeBoardUrl(boardUrlValue);
+  const boardUrl = normalizeBoardUrl(boardUrlValue ?? DEFAULT_BOARD_URL);
   const token = configuredValue(
     existing,
     process.env,

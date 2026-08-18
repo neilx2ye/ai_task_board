@@ -11,10 +11,11 @@ import type {
 } from "@/lib/types/domain";
 
 const FILE_EXPLORER_PROJECTS_KEY = ["file-explorer", "projects"] as const;
+const FILE_EXPLORER_DIRECTORY_STALE_TIME_MS = 30_000;
 const DEVICE_COMMAND_POLL_INTERVAL_MS = 1_500;
 const DEVICE_COMMAND_TIMEOUT_MS = 90_000;
 
-const fileExplorerDirectoryKey = (path: string) =>
+export const fileExplorerDirectoryKey = (path: string) =>
   ["file-explorer", "directory", path] as const;
 
 const fileExplorerFileKey = (path: string) =>
@@ -28,6 +29,23 @@ const fileDeviceFileKey = (connectionId: string, path: string) =>
 
 function queryPath(path: string): string {
   return `?${new URLSearchParams({ path }).toString()}`;
+}
+
+export function fetchFileExplorerDirectory(
+  path: string,
+): Promise<FileExplorerDirectory> {
+  return apiFetch<FileExplorerDirectory>(
+    `/api/user/file-explorer/directory${queryPath(path)}`,
+  );
+}
+
+/** 目录查询的 key 与 queryFn，页面预取时复用，避免挂载后重复请求。 */
+export function fileExplorerDirectoryQueryOptions(path: string) {
+  return {
+    queryKey: fileExplorerDirectoryKey(path),
+    queryFn: () => fetchFileExplorerDirectory(path),
+    staleTime: FILE_EXPLORER_DIRECTORY_STALE_TIME_MS,
+  };
 }
 
 async function abortableDelay(
@@ -106,13 +124,8 @@ export function useFileExplorerDirectory(
   enabled = true,
 ) {
   return useQuery({
-    queryKey: fileExplorerDirectoryKey(path ?? ""),
+    ...fileExplorerDirectoryQueryOptions(path ?? ""),
     enabled: Boolean(path) && enabled,
-    queryFn: async () =>
-      apiFetch<FileExplorerDirectory>(
-        `/api/user/file-explorer/directory${queryPath(path ?? "")}`,
-      ),
-    staleTime: 30_000,
   });
 }
 

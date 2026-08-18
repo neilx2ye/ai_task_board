@@ -131,10 +131,9 @@ export function realtimeInvalidations(
     exact(BRIDGE_DIRECTORIES_QUERY_KEY);
   } else if (table === "planning_notes") {
     for (const row of rows) {
-      const connectionId = nonEmptyString(row, "connection_id");
-      const directoryRef = nonEmptyString(row, "directory_ref");
-      if (connectionId && directoryRef) {
-        exact(planningNotesQueryKey(connectionId, directoryRef));
+      const projectRef = nonEmptyString(row, "project_ref");
+      if (projectRef) {
+        exact(planningNotesQueryKey(projectRef));
       }
     }
   } else if (table === "session_turn_plans") {

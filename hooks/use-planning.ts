@@ -18,16 +18,14 @@ import type {
 } from "@/lib/types/database";
 
 export function usePlanningNote(
-  connectionId: string | null,
-  directoryRef: string | null,
+  projectRef: string | null,
 ) {
   return useQuery({
-    queryKey: planningNotesQueryKey(connectionId ?? "", directoryRef ?? ""),
-    enabled: Boolean(connectionId && directoryRef),
+    queryKey: planningNotesQueryKey(projectRef ?? ""),
+    enabled: Boolean(projectRef),
     queryFn: async () => {
       const query = new URLSearchParams({
-        connection_id: connectionId!,
-        directory_ref: directoryRef!,
+        project_ref: projectRef!,
       });
       const data = await apiFetch<{ note: PlanningNoteRow | null }>(
         `/api/user/planning-notes?${query.toString()}`,
@@ -40,18 +38,14 @@ export function usePlanningNote(
 export function useSavePlanningNote() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
-      connection_id: string;
-      directory_ref: string;
-      content: string;
-    }) =>
+    mutationFn: (input: { project_ref: string; content: string }) =>
       apiFetch<{ note: PlanningNoteRow }>(`/api/user/planning-notes`, {
         method: "PUT",
         json: input,
       }),
     onSuccess: (data, input) => {
       queryClient.setQueryData(
-        planningNotesQueryKey(input.connection_id, input.directory_ref),
+        planningNotesQueryKey(input.project_ref),
         data.note,
       );
     },

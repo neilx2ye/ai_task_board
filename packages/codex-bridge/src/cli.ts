@@ -2,46 +2,56 @@
 
 import { readFile } from "node:fs/promises";
 
+import {
+  applyDefaultBoardUrl,
+  hasConnectionEnvironment,
+} from "./interactive.js";
+import {
+  parseBridgeRunTarget,
+  parseBridgeSetupTarget,
+  promptForBridgeRunTarget,
+  promptForBridgeSetupTarget,
+  runAgentBridge,
+  runAgentBridgeConfigured,
+  runBridgeSetup,
+} from "./installer.js";
+
 const HELP = `AI Task Board Bridge
 
 Usage:
   ai-task-board-bridge setup [codex|kimi|antigravity|both|all]
   ai-task-board-bridge run [codex|kimi|antigravity]
-  ai-task-board-bridge
 
 Commands:
-  setup  Interactively choose and install Codex, Kimi, Antigravity, or several
-         With no TTY, setup installs the systemd service from environment
-         variables instead of prompting (Codex, Kimi, or Antigravity).
+  setup  Interactively choose and install Codex, Kimi, Antigravity, or several.
+         On Linux, setup installs and starts the current user's systemd service
+         or services; it does not leave a Bridge running inside the npx process.
   run    Run one Bridge in the foreground using environment variables
          (default: codex)
 
-With no command, an interactive terminal opens the unified installer when required
-configuration is missing. Existing Codex environment launches remain compatible.
-On Linux, setup always installs and starts the current user's systemd service or
-services; it does not leave a Bridge running inside the npx process.
+Interactive vs non-interactive:
+  未提供 AI_TASK_BOARD_CONNECTION_TOKEN 时进入交互式配置：先询问要安装/运行的
+  Bridge（已通过参数指定则跳过），再询问 Board 地址（留空使用
+  https://task.neilx.online）与 Connection Token。三种 Bridge 的交互问题完全
+  一致，其余配置（工作目录、thread/并发上限、权限与审批策略等）在网页
+  「AI 连接 → Bridge 设置」中管理。
+  提供 AI_TASK_BOARD_CONNECTION_TOKEN 后直接按环境变量非交互安装/运行，不再
+  提问；未提供 Board 地址时同样使用默认地址。run 直接前台运行，npx 进程结束后
+  Bridge 随之下线；setup 写入当前用户的 systemd 用户服务并立即启动。
 
 Examples:
   ai-task-board-bridge setup
   ai-task-board-bridge setup kimi
-  ai-task-board-bridge setup antigravity
-  ai-task-board-bridge setup both
-  ai-task-board-bridge setup all
-  ai-task-board-bridge run kimi
   ai-task-board-bridge run antigravity
-
-Non-interactive Codex setup (service is installed and started by systemd):
-  AI_TASK_BOARD_URL='https://board.example.com' \
-  AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-  ai-task-board-bridge setup codex
-Working directories are left to the Board's Web console by default; pass
-CODEX_WORKING_DIRECTORY or CODEX_WORKING_DIRECTORIES to fix a local allowlist.
+  AI_TASK_BOARD_URL='https://board.example.com' \\
+    AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+    ai-task-board-bridge setup codex
 
 Required environment variables:
-  AI_TASK_BOARD_URL               Board HTTPS base URL
   AI_TASK_BOARD_CONNECTION_TOKEN  AI Connection token created in the Board
 
 Optional environment variables:
+  AI_TASK_BOARD_URL               Board HTTPS base URL (default: https://task.neilx.online)
   CODEX_THREAD_ID                 Manage only this thread (legacy compatibility)
   CODEX_WORKING_DIRECTORY         Legacy single working directory (default: cwd)
   CODEX_WORKING_DIRECTORIES       JSON allowlist of {key,name,path} directories
@@ -84,6 +94,7 @@ Antigravity variables:
   ANTIGRAVITY_BRIDGE_MODE         auto, default, accept-edits, or plan
   ANTIGRAVITY_BRIDGE_SANDBOX      true enables agy terminal sandbox
   ANTIGRAVITY_PRINT_TIMEOUT       Go duration, e.g. 5m, 90s, or 1h
+  ANTIGRAVITY_REGISTRY_FILE       Local thread registry JSON path
   ANTIGRAVITY_BINARY              Antigravity CLI executable (default: agy)
 
 Options:
@@ -106,75 +117,76 @@ async function run(): Promise<void> {
     process.stdout.write(`${await packageVersion()}\n`);
     return;
   }
-  if (args[0] === "setup") {
-    const {
-      parseBridgeSetupTarget,
-      promptForBridgeSetupTarget,
-      runBridgeSetup,
-    } = await import("./installer.js");
+
+  const command = args[0];
+  const option = args[1];
+
+  if (command === "setup") {
     if (args.length > 2) {
       process.stderr.write(`Unknown option: ${args[2]}\n\n${HELP}`);
       process.exitCode = 1;
       return;
     }
-    const requestedTarget = parseBridgeSetupTarget(args[1]);
-    if (args[1] && !requestedTarget) {
-      process.stderr.write(`Unknown setup target: ${args[1]}\n\n${HELP}`);
+    let target = parseBridgeSetupTarget(option);
+    if (option && !target) {
+      process.stderr.write(`Unknown setup target: ${option}\n\n${HELP}`);
       process.exitCode = 1;
       return;
     }
-    const target = requestedTarget ?? (await promptForBridgeSetupTarget());
-    const execution =
-      process.stdin.isTTY && process.stdout.isTTY
-        ? "interactive"
-        : "noninteractive";
-    await runBridgeSetup(target, await packageVersion(), execution);
-    return;
-  }
-  if (args[0] === "run") {
-    const { parseBridgeRunTarget, runAgentBridge } = await import(
-      "./installer.js"
-    );
-    if (args.length > 2) {
-      process.stderr.write(`Unknown option: ${args[2]}\n\n${HELP}`);
-      process.exitCode = 1;
-      return;
-    }
-    const target = args[1] ? parseBridgeRunTarget(args[1]) : "codex";
     if (!target) {
-      process.stderr.write(`Unknown run target: ${args[1]}\n\n${HELP}`);
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        throw new Error(
+          "setup 需要交互式终端；未指定 Bridge 类型。请运行 ai-task-board-bridge setup codex|kimi|antigravity|both|all",
+        );
+      }
+      target = await promptForBridgeSetupTarget();
+    }
+    await runBridgeSetup(target, await packageVersion());
+    return;
+  }
+
+  if (command === "run") {
+    if (args.length > 2) {
+      process.stderr.write(`Unknown option: ${args[2]}\n\n${HELP}`);
       process.exitCode = 1;
       return;
     }
-    await runAgentBridge(target);
+    let target = parseBridgeRunTarget(option);
+    if (option && !target) {
+      process.stderr.write(`Unknown run target: ${option}\n\n${HELP}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!target) {
+      target =
+        process.stdin.isTTY && process.stdout.isTTY
+          ? await promptForBridgeRunTarget()
+          : "codex";
+    }
+    await runAgentBridgeConfigured(target);
     return;
   }
+
   if (args.length > 0) {
     process.stderr.write(`Unknown option: ${args[0]}\n\n${HELP}`);
     process.exitCode = 1;
     return;
   }
 
-  const missingRequiredConfiguration =
-    !process.env.AI_TASK_BOARD_URL?.trim() ||
-    !process.env.AI_TASK_BOARD_CONNECTION_TOKEN?.trim();
-  if (
-    missingRequiredConfiguration &&
-    process.stdin.isTTY &&
-    process.stdout.isTTY
-  ) {
-    const { promptForBridgeSetupTarget, runBridgeSetup } = await import(
-      "./installer.js"
-    );
-    await runBridgeSetup(
-      await promptForBridgeSetupTarget(),
-      await packageVersion(),
-    );
+  // Legacy bare invocation: foreground Codex when configured, otherwise the
+  // interactive installer. New deployments should use setup/run explicitly.
+  applyDefaultBoardUrl();
+  if (hasConnectionEnvironment(process.env)) {
+    await runAgentBridge("codex");
     return;
   }
-
-  const { runAgentBridge } = await import("./installer.js");
-  await runAgentBridge("codex");
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    await runBridgeSetup(await promptForBridgeSetupTarget(), await packageVersion());
+    return;
+  }
+  throw new Error(
+    "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；请运行 ai-task-board-bridge setup 交互安装，或通过 AI_TASK_BOARD_URL / AI_TASK_BOARD_CONNECTION_TOKEN 环境变量启动",
+  );
 }
 
 void run().catch((error) => {

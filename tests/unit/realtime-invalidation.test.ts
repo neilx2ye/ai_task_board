@@ -160,12 +160,11 @@ describe("Planning workspace Realtime invalidation", () => {
       labels(
         realtimeInvalidations("planning_notes", {
           new: {
-            connection_id: "connection-1",
-            directory_ref: "configured:main",
+            project_ref: "path:/workspace/main",
           },
         }),
       ),
-    ).toEqual(["exact:planning-notes/connection-1/configured:main"]);
+    ).toEqual(["exact:planning-notes/path:/workspace/main"]);
   });
 
   it("targets the turn plan of the affected session", () => {

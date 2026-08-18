@@ -19,16 +19,14 @@ import type {
 
 export async function getPlanningNote(
   context: UserWorkspaceContext,
-  connectionId: string,
-  directoryRef: string,
+  projectRef: string,
 ) {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("planning_notes")
     .select("*")
     .eq("workspace_id", context.workspaceId)
-    .eq("connection_id", connectionId)
-    .eq("directory_ref", directoryRef)
+    .eq("project_ref", projectRef)
     .maybeSingle();
   if (error) throw mapDatabaseError(error);
   return { note: data };
@@ -44,12 +42,11 @@ export async function upsertPlanningNote(
     .upsert(
       {
         workspace_id: context.workspaceId,
-        connection_id: input.connection_id,
-        directory_ref: input.directory_ref,
+        project_ref: input.project_ref,
         content: input.content,
         updated_by: context.userId,
       },
-      { onConflict: "workspace_id,connection_id,directory_ref" },
+      { onConflict: "workspace_id,project_ref" },
     )
     .select("*")
     .single();

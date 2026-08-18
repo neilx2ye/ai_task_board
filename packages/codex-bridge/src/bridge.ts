@@ -244,7 +244,6 @@ export type BridgeConfiguration = {
   localMaxThreads: number;
   localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
-  allowRemoteUpdate: boolean;
   codexBinary: string;
 };
 
@@ -794,9 +793,6 @@ export function loadConfiguration(
     localMaxHistoryTurns,
     webConfigurationEnabled: parseBoolean(
       environment.CODEX_BRIDGE_WEB_CONFIG,
-    ),
-    allowRemoteUpdate: parseBoolean(
-      environment.AI_TASK_BOARD_ALLOW_REMOTE_UPDATE,
     ),
     codexBinary: environment.CODEX_BINARY?.trim() || "codex",
   };
@@ -3320,7 +3316,6 @@ class DeviceBridge {
       const updateError = await maybeApplyDesiredBridgeUpdate({
         desiredVersion: response.configuration.desired_bridge_version,
         currentVersion: BRIDGE_VERSION,
-        allowRemoteUpdate: this.configuration.allowRemoteUpdate,
       });
       if (updateError) this.updateError = updateError;
     }

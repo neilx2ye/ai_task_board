@@ -25,21 +25,24 @@ Run setup as the same OS user that owns the Kimi login and target workspaces:
 npx --yes ai-task-board-bridge@1.5.1 setup kimi
 ```
 
-The wizard asks for the Board URL, the hidden Connection Token, and how
-working directories are managed. The default Web mode writes
+The wizard asks only for the Board URL (leave it empty to use
+`https://task.neilx.online`) and the hidden Connection Token. Working
+directories default to Web-side management, which writes
 `KIMI_BRIDGE_WEB_CONFIG=true` and
 `KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`, leaving the
-directory list to the Board's "AI 连接 → Bridge 设置 / 新建项目"; the local
-mode pins a `KIMI_WORKING_DIRECTORY` allowlist at install time instead. The
-installer writes a `0600` environment file, stages the CLI and its ACP SDK
-dependency under the user's XDG data directory, and starts
+directory list to the Board's "AI 连接 → Bridge 设置 / 新建项目"; passing
+`KIMI_WORKING_DIRECTORY(S)` pins a local allowlist at install time instead.
+With `AI_TASK_BOARD_CONNECTION_TOKEN` configured, `setup` runs non-interactively
+even in a terminal. The installer writes a `0600` environment file, stages the
+CLI and its ACP SDK dependency under the user's XDG data directory, and starts
 `ai-task-board-kimi-bridge.service` in that user's systemd manager. It never
 puts the Board token on the command line.
 
 The same service can be installed from an SSH command or CI script without a
 terminal. Without `KIMI_WORKING_DIRECTORY(S)` the non-interactive install also
 defaults to Web directory management; pass either variable to pin a local
-allowlist instead:
+allowlist instead. `AI_TASK_BOARD_URL` is optional and defaults to
+`https://task.neilx.online`:
 
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
@@ -114,17 +117,14 @@ transports the version string; the code is always downloaded from the npm
 registry with `npm pack`, which verifies the registry integrity metadata
 before anything is installed.
 
-Remote upgrades are disabled by default and require two local gates:
+Remote upgrades are enabled by default. The only local requirement is that
+the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
+update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
+to start the new version. A foreground Bridge logs a one-time stderr hint per
+target version and keeps running the old code; upgrade it manually by
+rerunning `npx --yes ai-task-board-bridge@1.5.1 setup kimi`.
 
-- `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true` in the Bridge environment (for a
-  systemd install, add it to the `0600` environment file and restart the
-  service), and
-- the Bridge process must run under systemd (`INVOCATION_ID` is set). A
-  foreground Bridge logs a one-time stderr hint per target version and keeps
-  running the old code; upgrade it manually by rerunning
-  `npx --yes ai-task-board-bridge@1.5.1 setup kimi`.
-
-With both gates satisfied, the Bridge downloads
+With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Kimi runtime into
 `versions/<version>/` next to the current one, smoke-tests
 `node versions/<version>/dist/cli.js --version`, rewrites the systemd unit

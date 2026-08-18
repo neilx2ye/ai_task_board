@@ -3,12 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
-import { DirectoryPlanningView } from "@/components/directory-planning-view";
-import { PlanningNotesEditor } from "@/components/planning-notes-editor";
+import { ProjectBridgeNavigation } from "@/components/project-bridge-navigation";
+import { ProjectPlanningView } from "@/components/project-planning-view";
 import { ProjectTabBar } from "@/components/project-tab-bar";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
-import { TaskFormDialog } from "@/components/task-form-dialog";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
 import {
   CreateThreadDialog,
@@ -35,10 +34,14 @@ import { agentDisplayName } from "@/lib/agent-platforms";
 import {
   excludeHiddenProjects,
   filterConnectionGroupsByProject,
+  groupBridgesByProject,
   groupSessionsByConnection,
   listSessionProjects,
+  sessionProjectIdForDirectory,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
+  type SessionProjectBridge,
+  type SessionProjectGroup,
 } from "@/lib/domain/session-directory-groups";
 import {
   findCreatedWebThread,
@@ -57,8 +60,8 @@ type ThreadPickerTarget = {
 };
 
 /**
- * 任务规划工作台：与会话页共用「设备 → 项目目录 → Thread」导航，
- * 但主区域留给思考笔记与 Turn 规划链，而不是对话面板。
+ * 任务规划工作台：与会话页共用「设备 → 项目目录 → Thread」导航。
+ * 项目级规划按路径跨 Bridge 共享，与单个 Thread 的 Turn 规划链完全分开。
  */
 export default function PlanningPage() {
   const sessionsQuery = useSessions();
@@ -66,16 +69,14 @@ export default function PlanningPage() {
   const workspaceQuery = useWorkspace();
   const isOwner = workspaceQuery.data?.role === "owner";
   const connectionsQuery = useConnections(isOwner);
-  const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
   // 规划是单线程工作台：一次只打开一个 Thread 的规划面板。
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
-  // 或者直接选中一个项目目录，查看项目级的思考与规划。
-  const [selectedDirectory, setSelectedDirectory] = useState<{
-    connectionId: string;
-    directoryId: string;
-  } | null>(null);
+  // 或者直接选中一个项目，查看跨 Bridge 的项目级思考与规划。
+  const [selectedPlanningProjectId, setSelectedPlanningProjectId] = useState<
+    string | null
+  >(null);
   const { visibleIds, setSessionVisible } = useVisibleSessionIds();
   // 项目 Tab 过滤：与会话页共享并用 localStorage 记忆，null 表示「全部」。
   const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
@@ -148,6 +149,10 @@ export default function PlanningPage() {
       filterConnectionGroupsByProject(visibleProjectGroups, selectedProjectId),
     [visibleProjectGroups, selectedProjectId],
   );
+  const projectBridgeGroups = useMemo(
+    () => groupBridgesByProject(visibleProjectGroups, selectedProjectId),
+    [visibleProjectGroups, selectedProjectId],
+  );
   const allVisibleSessionCount = useMemo(
     () =>
       visibleProjectGroups.reduce(
@@ -189,16 +194,31 @@ export default function PlanningPage() {
       null,
     [selectedSessionId, visibleSessions],
   );
-  const selectedDirectoryContext = useMemo(() => {
-    if (!selectedDirectory) return null;
-    const group = visibleGroups.find(
-      (candidate) => candidate.connection.id === selectedDirectory.connectionId,
+  const projectPlanningContext = useMemo<{
+    project: SessionProjectGroup;
+    bridges: SessionProjectBridge[];
+  } | null>(() => {
+    if (!selectedPlanningProjectId) return null;
+    const project = allProjects.find(
+      (candidate) => candidate.id === selectedPlanningProjectId,
     );
-    const directory = group?.directories.find(
-      (candidate) => candidate.id === selectedDirectory.directoryId,
-    );
-    return group && directory ? { group, directory } : null;
-  }, [visibleGroups, selectedDirectory]);
+    // 项目暂时从 Bridge 清单消失时回落到空状态；id 保留，项目回来后原地恢复。
+    if (!project) return null;
+
+    // 跨 Bridge 汇总：同一项目路径下的所有 Bridge 都纳入项目级规划。
+    const bridges: SessionProjectBridge[] = [];
+    for (const group of connectionGroups) {
+      for (const directory of group.directories) {
+        if (
+          sessionProjectIdForDirectory(directory) ===
+          selectedPlanningProjectId
+        ) {
+          bridges.push({ connection: group.connection, directory });
+        }
+      }
+    }
+    return { project, bridges };
+  }, [allProjects, connectionGroups, selectedPlanningProjectId]);
   const selectedContext = useMemo(() => {
     if (!selectedSession) return null;
     const group = visibleGroups.find(
@@ -232,18 +252,15 @@ export default function PlanningPage() {
   // Thread 被删除或离开清单时，selectedSession 派生为 null 并回到空状态；
   // 这里不手动清理 id，Thread 因清单抖动短暂消失再回来时面板可以原地恢复。
   const toggleSessionSelected = (sessionId: string) => {
-    setSelectedDirectory(null);
+    setSelectedPlanningProjectId(null);
     setSelectedSessionId((previous) =>
       previous === sessionId ? null : sessionId,
     );
   };
-  const toggleDirectorySelected = (connectionId: string, directoryId: string) => {
+  const toggleProjectPlanning = (projectId: string) => {
     setSelectedSessionId(null);
-    setSelectedDirectory((previous) =>
-      previous?.connectionId === connectionId &&
-        previous.directoryId === directoryId
-        ? null
-        : { connectionId, directoryId },
+    setSelectedPlanningProjectId((previous) =>
+      previous === projectId ? null : projectId,
     );
   };
 
@@ -301,7 +318,7 @@ export default function PlanningPage() {
 
     const timeout = window.setTimeout(() => {
       setSessionVisible(createdSession.id, true);
-      setSelectedDirectory(null);
+      setSelectedPlanningProjectId(null);
       setSelectedSessionId(createdSession.id);
       setPendingThreadCreation(null);
       setNotice(`Thread「${createdSession.name}」已创建并打开。`);
@@ -381,7 +398,9 @@ export default function PlanningPage() {
                 {isSidebarCollapsed ? null : (
                   <div>
                     <h2 className="text-sm font-semibold">
-                      设备、目录与 Threads
+                      {selectedProjectId === null
+                        ? "设备、目录与 Threads"
+                        : "项目、Bridge 与 Threads"}
                     </h2>
                     <p className="text-xs text-muted-foreground">
                       选中项目看共享规划，选中 Thread 编排 Turn 链
@@ -422,22 +441,39 @@ export default function PlanningPage() {
                 id="planning-directory-navigation"
                 hidden={isSidebarCollapsed}
               >
-                <SessionDirectoryNavigation
-                  groups={visibleGroups}
-                  visibleIds={visibleIds}
-                  selectedSessionIds={
-                    selectedSessionId ? [selectedSessionId] : []
-                  }
-                  isOwner={Boolean(isOwner)}
-                  onToggleSession={toggleSessionSelected}
-                  onReserve={setTargetSessionId}
-                  onManage={(connectionId, directoryId) =>
-                    setPickerTarget({ connectionId, directoryId })
-                  }
-                  onCreate={openCreateDialog}
-                  selectedDirectory={selectedDirectory}
-                  onToggleDirectory={toggleDirectorySelected}
-                />
+                {selectedProjectId === null ? (
+                  <SessionDirectoryNavigation
+                    groups={visibleGroups}
+                    visibleIds={visibleIds}
+                    selectedSessionIds={
+                      selectedSessionId ? [selectedSessionId] : []
+                    }
+                    isOwner={Boolean(isOwner)}
+                    onToggleSession={toggleSessionSelected}
+                    onManage={(connectionId, directoryId) =>
+                      setPickerTarget({ connectionId, directoryId })
+                    }
+                    onCreate={openCreateDialog}
+                    selectedProjectId={selectedPlanningProjectId}
+                    onSelectProject={toggleProjectPlanning}
+                  />
+                ) : (
+                  <ProjectBridgeNavigation
+                    projects={projectBridgeGroups}
+                    visibleIds={visibleIds}
+                    selectedSessionIds={
+                      selectedSessionId ? [selectedSessionId] : []
+                    }
+                    isOwner={Boolean(isOwner)}
+                    onToggleSession={toggleSessionSelected}
+                    onManage={(connectionId, directoryId) =>
+                      setPickerTarget({ connectionId, directoryId })
+                    }
+                    onCreate={openCreateDialog}
+                    selectedProjectId={selectedPlanningProjectId}
+                    onSelectProject={toggleProjectPlanning}
+                  />
+                )}
               </div>
             </aside>
 
@@ -461,26 +497,14 @@ export default function PlanningPage() {
                     </Badge>
                   </header>
 
-                  {selectedContext ? (
-                    <PlanningNotesEditor
-                      key={`${selectedContext.group.connection.id}:${selectedContext.directory.id}`}
-                      connectionId={selectedContext.group.connection.id}
-                      directoryRef={selectedContext.directory.id}
-                      directoryName={selectedContext.directory.name}
-                      workingDirectory={
-                        selectedContext.directory.workingDirectory
-                      }
-                    />
-                  ) : null}
-
                   <TurnPlanPanel session={selectedSession} />
                 </div>
-              ) : selectedDirectoryContext ? (
-                <DirectoryPlanningView
-                  group={selectedDirectoryContext.group}
-                  directory={selectedDirectoryContext.directory}
+              ) : projectPlanningContext ? (
+                <ProjectPlanningView
+                  project={projectPlanningContext.project}
+                  bridges={projectPlanningContext.bridges}
                   onOpenThread={(sessionId) => {
-                    setSelectedDirectory(null);
+                    setSelectedPlanningProjectId(null);
                     setSelectedSessionId(sessionId);
                   }}
                 />
@@ -489,7 +513,7 @@ export default function PlanningPage() {
                   <EmptyState
                     icon={<BotIcon className="size-6" />}
                     title="没有选中的项目或 Thread"
-                    description="在左侧点击项目目录，可以记录整个项目的思考与规划；点击一个 Thread，则可以把任务拆成 Turn 链交给它自动依次执行。"
+                    description="在左侧点击项目，可以记录整个项目跨 Bridge 共享的思考与规划；点击一个 Thread，则为它编排独立的 Turn 规划链。"
                     className="w-full max-w-md"
                   />
                 </div>
@@ -498,15 +522,6 @@ export default function PlanningPage() {
           </div>
         </>
       )}
-
-      <TaskFormDialog
-        open={targetSessionId !== null}
-        onOpenChange={(open) => {
-          if (!open) setTargetSessionId(null);
-        }}
-        initialSessionId={targetSessionId}
-        lockInitialSession
-      />
 
       <ThreadPickerDialog
         open={pickerContext !== null}
@@ -557,7 +572,7 @@ export default function PlanningPage() {
           );
         }}
         onOpen={(sessionId) => {
-          setSelectedDirectory(null);
+          setSelectedPlanningProjectId(null);
           setSelectedSessionId(sessionId);
           setPickerTarget(null);
         }}

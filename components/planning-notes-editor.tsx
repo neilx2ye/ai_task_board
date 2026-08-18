@@ -8,22 +8,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePlanningNote, useSavePlanningNote } from "@/hooks/use-planning";
 
 /**
- * 项目目录级的思考/规划笔记：加载后本地编辑，1 秒防抖自动保存。
- * 父组件用 key={`${connectionId}:${directoryRef}`} 在切换目录时强制重挂载，
- * 因此这里不需要处理目录切换的状态重置。
+ * 项目级的思考/规划笔记：按项目路径跨 Bridge 共享，加载后本地编辑，
+ * 1 秒防抖自动保存。父组件用 key={projectRef} 在切换项目时强制重挂载，
+ * 因此这里不需要处理项目切换的状态重置。
  */
 export function PlanningNotesEditor({
-  connectionId,
-  directoryRef,
-  directoryName,
+  projectRef,
+  projectName,
   workingDirectory,
 }: {
-  connectionId: string;
-  directoryRef: string;
-  directoryName: string;
+  projectRef: string;
+  projectName: string;
   workingDirectory: string | null;
 }) {
-  const noteQuery = usePlanningNote(connectionId, directoryRef);
+  const noteQuery = usePlanningNote(projectRef);
   const saveNote = useSavePlanningNote();
   const serverContent = noteQuery.isSuccess
     ? (noteQuery.data?.content ?? "")
@@ -41,13 +39,12 @@ export function PlanningNotesEditor({
       // onSuccess 会把保存结果写回查询缓存；若草稿未再变化，dirty 自动消除，
       // 若用户又输入了新内容，draft !== serverContent 仍会触发下一轮保存。
       saveNote.mutate({
-        connection_id: connectionId,
-        directory_ref: directoryRef,
+        project_ref: projectRef,
         content: snapshot,
       });
     }, 1000);
     return () => window.clearTimeout(timer);
-  }, [connectionId, directoryRef, dirty, draft, saveNote]);
+  }, [projectRef, dirty, draft, saveNote]);
 
   const savedAt = noteQuery.data?.updated_at
     ? new Date(noteQuery.data.updated_at)
@@ -64,14 +61,14 @@ export function PlanningNotesEditor({
 
   return (
     <section
-      aria-label={`项目「${directoryName}」的规划笔记`}
+      aria-label={`项目「${projectName}」的规划笔记`}
       className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4 shadow-sm"
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">思考与规划</h3>
           <p className="truncate text-xs text-muted-foreground">
-            {workingDirectory ?? directoryName} · 只保存在这个项目目录下
+            {workingDirectory ?? projectName} · 跨 Bridge 共享
           </p>
         </div>
         {statusLabel ? (

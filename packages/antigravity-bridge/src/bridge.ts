@@ -799,7 +799,6 @@ export class AntigravityBridge {
         desiredVersion:
           response.configuration.desired_bridge_version ?? null,
         currentVersion: ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION,
-        allowRemoteUpdate: this.configuration.allowRemoteUpdate,
       });
       if (updateError) this.updateError = updateError;
     }

@@ -16,7 +16,8 @@ export type BridgeUpdateTargetResponse = {
 
 /**
  * Owner 设置/取消某个 Bridge 的自更新目标版本。Bridge 在配置交换响应里
- * 读到该版本后，仅在设备 opt-in 时从 npm 下载并重启到该版本。
+ * 读到该版本后，会从 npm 下载并重启到该版本（远程升级默认开启，前台非
+ * systemd 进程除外）。
  */
 export async function setBridgeUpdateTarget(
   context: UserWorkspaceContext,

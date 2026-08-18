@@ -70,15 +70,13 @@ export const createSessionTurnSchema = z
 
 export const planningNotesQuerySchema = z
   .object({
-    connection_id: uuidSchema,
-    directory_ref: z.string().trim().min(1).max(1000),
+    project_ref: z.string().trim().min(1).max(1000),
   })
   .strict();
 
 export const upsertPlanningNotesSchema = z
   .object({
-    connection_id: uuidSchema,
-    directory_ref: z.string().trim().min(1).max(1000),
+    project_ref: z.string().trim().min(1).max(1000),
     content: z.string().max(100_000),
   })
   .strict();

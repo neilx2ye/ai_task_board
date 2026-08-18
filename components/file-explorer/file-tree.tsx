@@ -49,9 +49,8 @@ type DirectoryNodeProps = {
   entry: FileExplorerEntry;
   depth: number;
   source: FileSource;
-  expandedPaths: Set<string>;
+  defaultExpanded?: boolean;
   selectedPath: string | null;
-  onToggle: (path: string) => void;
   onSelectFile: (path: string) => void;
   trailing?: ReactNode;
 };
@@ -60,13 +59,12 @@ function DirectoryNode({
   entry,
   depth,
   source,
-  expandedPaths,
+  defaultExpanded = false,
   selectedPath,
-  onToggle,
   onSelectFile,
   trailing,
 }: DirectoryNodeProps) {
-  const isExpanded = expandedPaths.has(entry.path);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const localListing = useFileExplorerDirectory(
     entry.path,
     source.kind === "local" && isExpanded,
@@ -121,9 +119,7 @@ function DirectoryNode({
               entry={child}
               depth={depth + 1}
               source={source}
-              expandedPaths={expandedPaths}
               selectedPath={selectedPath}
-              onToggle={onToggle}
               onSelectFile={onSelectFile}
             />
           ) : (
@@ -156,7 +152,7 @@ function DirectoryNode({
     >
       <button
         type="button"
-        onClick={() => onToggle(entry.path)}
+        onClick={() => setIsExpanded((expanded) => !expanded)}
         title={entry.path}
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
         className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 pr-2 text-left text-sm text-foreground transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -226,10 +222,6 @@ export function FileTree({
   onSelectFile: (path: string) => void;
   onRefresh: () => void;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
-    () => new Set([rootPath]),
-  );
-
   const rootEntry: FileExplorerEntry = {
     name: rootPath === "/" ? "/" : rootPath.split("/").filter(Boolean).pop() ?? rootPath,
     path: rootPath,
@@ -238,15 +230,6 @@ export function FileTree({
     modifiedAt: null,
   };
   const source: FileSource = { kind: "local" };
-
-  const toggle = (path: string) => {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -274,9 +257,8 @@ export function FileTree({
           entry={rootEntry}
           depth={0}
           source={source}
-          expandedPaths={expandedPaths}
+          defaultExpanded
           selectedPath={selectedPath}
-          onToggle={toggle}
           onSelectFile={onSelectFile}
         />
       </ul>
@@ -299,19 +281,6 @@ export function FileRootsTree({
   onSelectFile: (path: string) => void;
   onRefresh: () => void;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
-    () => new Set(roots),
-  );
-
-  const toggle = (path: string) => {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
@@ -343,9 +312,8 @@ export function FileRootsTree({
             }}
             depth={0}
             source={{ kind: "local" }}
-            expandedPaths={expandedPaths}
+            defaultExpanded
             selectedPath={selectedPath}
-            onToggle={toggle}
             onSelectFile={onSelectFile}
           />
         ))}
@@ -387,19 +355,6 @@ export function ProjectFileTrees({
   onSelectFile: (path: string, source: FileSource) => void;
   onRefresh: () => void;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
-    () => new Set(),
-  );
-
-  const toggle = (path: string) => {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
-
   if (projects.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-4">
@@ -467,9 +422,7 @@ export function ProjectFileTrees({
               entry={entry}
               depth={0}
               source={source}
-              expandedPaths={expandedPaths}
               selectedPath={selectedPath}
-              onToggle={toggle}
               onSelectFile={(path) => onSelectFile(path, source)}
               trailing={
                 <span className="shrink-0 text-xs text-muted-foreground">

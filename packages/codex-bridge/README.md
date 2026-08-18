@@ -53,25 +53,25 @@ interactive because each runtime needs its own Connection Token.
 
 ### Codex setup
 
-The Codex setup wizard asks for the Board URL and hidden Connection Token.
-Working directories are optional: new installs default to Web-side management,
-so project directories are added later in the Board's "AI 连接 → Bridge
-设置 / 新建项目" instead of being typed during setup. Choosing the local mode
-instead fixes a device allowlist at install time. The wizard also collects the
-Codex home and executable, custom-provider credential environment variables,
-thread limits, and permission/approval modes. It then installs and starts
-`ai-task-board-bridge.service` in the effective user's systemd user manager.
-Running with no command also enters setup in a TTY when either required Board
-setting is missing.
+The Codex setup wizard asks the same two questions as every Bridge: the Board
+URL (leave it empty to use `https://task.neilx.online`) and the hidden
+Connection Token. Everything else is kept as a safe default or left to the
+Board's Web console: working directories default to Web-side management and are
+added later in "AI 连接 → Bridge 设置 / 新建项目", while the Codex home
+(`~/.codex` unless `CODEX_HOME` is set), the `codex` executable on `PATH`,
+thread limits, and permission/approval modes come from their defaults or the
+environment. It then installs and starts `ai-task-board-bridge.service` in the
+effective user's systemd user manager.
 
-Choosing Web-side directory management enables both
+Because Web-side directory management is the default, setup enables both
 `CODEX_BRIDGE_WEB_CONFIG=true` and
 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` in the installed
 environment file. The generated unit still needs an existing
 `WorkingDirectory=` for the App Server startup fallback, so setup uses the
 user's home directory for that unit field only; it is not registered as a
 managed project directory and no `CODEX_WORKING_DIRECTORY` or
-`CODEX_WORKING_DIRECTORIES` is written.
+`CODEX_WORKING_DIRECTORIES` is written. Passing either directory variable still
+fixes a local allowlist instead.
 
 Non-interactive Codex service install uses the same safe defaults as the
 wizard:
@@ -82,9 +82,12 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 npx --yes ai-task-board-bridge@1.5.1 setup codex
 ```
 
-Without `CODEX_WORKING_DIRECTORY` or `CODEX_WORKING_DIRECTORIES` the
-non-interactive install also defaults to Web-side directory management. Pass
-either variable to fix a local allowlist instead.
+Providing `AI_TASK_BOARD_CONNECTION_TOKEN` switches both `setup` and `run` to
+non-interactive mode even in a terminal; `AI_TASK_BOARD_URL` is optional and
+defaults to `https://task.neilx.online`. Without `CODEX_WORKING_DIRECTORY` or
+`CODEX_WORKING_DIRECTORIES` the non-interactive install also defaults to
+Web-side directory management. Pass either variable to fix a local allowlist
+instead.
 
 The generated unit has no `User=` directive: a systemd user manager already
 runs as its owning UID. Setup explicitly binds that user's `HOME` and
@@ -95,12 +98,12 @@ unless a root-owned service and root's Codex configuration are actually desired.
 Each Linux user can install an independent unit with the same name; use separate
 Board Connections unless only one of them should acquire the runtime lease.
 Provider variables referenced by `env_key` or `env_http_headers` in
-`config.toml` are detected by name and confirmed with hidden input; setup does
+`config.toml` are detected by name and copied from the environment; setup does
 not copy the user's entire shell environment.
 
-New interactive installs default to `safe` permissions and `decline` approvals.
-The wizard requires an explicit selection before installing, and rerunning it
-updates the configuration and restarts the service. Upgrades disable the legacy
+New installs default to `safe` permissions and `decline` approvals. The wizard
+requires a final confirmation before installing, and rerunning it updates the
+configuration and restarts the service. Upgrades disable the legacy
 `ai-task-board-codex-bridge.service` before starting
 `ai-task-board-bridge.service`, with rollback if the new service fails to start.
 
@@ -108,7 +111,12 @@ updates the configuration and restarts the service. Upgrades disable the legacy
 
 The original environment-variable interface remains available for other
 process managers and temporary runs. Unlike `setup`, it does not install a
-service, so a terminated `npx` process takes the Bridge down with it:
+service, so a terminated `npx` process takes the Bridge down with it. `run`
+follows the same mode rules as `setup`: with
+`AI_TASK_BOARD_CONNECTION_TOKEN` configured it starts immediately, and without
+it an attached terminal asks the same Board URL (default
+`https://task.neilx.online`) and Token questions before starting in the
+foreground:
 
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
@@ -132,7 +140,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.5.1
+npx --yes ai-task-board-bridge@1.5.1 run codex
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -140,7 +148,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.5.1
+npx --yes ai-task-board-bridge@1.5.1 run codex
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -223,17 +231,14 @@ transports the version string; the code is always downloaded from the npm
 registry with `npm pack`, which verifies the registry integrity metadata
 before anything is installed.
 
-Remote upgrades are disabled by default and require two local gates:
+Remote upgrades are enabled by default. The only local requirement is that
+the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
+update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
+to start the new version. A foreground Bridge logs a one-time stderr hint per
+target version and keeps running the old code; upgrade it manually by
+rerunning `npx --yes ai-task-board-bridge@1.5.1 setup` for the same runtime.
 
-- `AI_TASK_BOARD_ALLOW_REMOTE_UPDATE=true` in the Bridge environment (for a
-  systemd install, add it to the `0600` environment file and restart the
-  service), and
-- the Bridge process must run under systemd (`INVOCATION_ID` is set). A
-  foreground Bridge logs a one-time stderr hint per target version and keeps
-  running the old code; upgrade it manually by rerunning
-  `npx --yes ai-task-board-bridge@1.5.1 setup` for the same runtime.
-
-With both gates satisfied, the Bridge downloads
+With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>` (120-second timeout), extracts the tarball
 into a staging directory, installs this runtime's `dist` subtree into
 `versions/<version>/` next to the current one, smoke-tests

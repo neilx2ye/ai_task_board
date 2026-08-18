@@ -14,8 +14,8 @@ import {
 import {
   effectiveSessionStatus,
   isConnectionAlive,
-  isSessionAlive,
 } from "@/lib/domain/session-presence";
+import { sessionProjectIdForDirectory } from "@/lib/domain/session-directory-groups";
 import type {
   SessionConnectionGroup,
   SessionDirectoryGroup,
@@ -28,29 +28,28 @@ type SessionDirectoryNavigationProps = {
   selectedSessionIds: readonly string[];
   isOwner: boolean;
   onToggleSession: (sessionId: string) => void;
-  onReserve: (sessionId: string) => void;
   onManage: (connectionId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
-  /** 可选：提供后目录行本身变为可选中（规划页的项目级视图）。 */
-  selectedDirectory?: { connectionId: string; directoryId: string } | null;
-  onToggleDirectory?: (connectionId: string, directoryId: string) => void;
+  /**
+   * 可选（规划页）：提供后目录行本身变为可选中，按项目（路径）跨 Bridge
+   * 选中项目级规划；同一路径在不同 Bridge 下的目录行会同时高亮。
+   */
+  selectedProjectId?: string | null;
+  onSelectProject?: (projectId: string) => void;
 };
 
-function SessionListRow({
+export function SessionListRow({
   session,
   selected,
   onSelect,
-  onReserve,
 }: {
   session: SessionListItem;
   selected: boolean;
   onSelect: () => void;
-  onReserve: () => void;
 }) {
-  const alive = isSessionAlive(session);
   const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
   const task = session.current_task;
   const taskStatusMeta = task
@@ -113,21 +112,6 @@ function SessionListRow({
           已预留 {session.queued_task_count} 项
         </p>
       </button>
-
-      {alive ? (
-        <div className="flex shrink-0 items-start px-2 py-2.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onReserve}
-            aria-label={`给 ${session.name} 预留任务`}
-            title="预留任务"
-          >
-            <PlusIcon />
-          </Button>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -139,11 +123,10 @@ function DirectorySection({
   visibleIds,
   selectedSessionIds,
   onToggleSession,
-  onReserve,
   onManage,
   onCreate,
-  selectedDirectory,
-  onToggleDirectory,
+  selectedProjectId,
+  onSelectProject,
 }: {
   group: SessionConnectionGroup;
   directory: SessionDirectoryGroup;
@@ -151,14 +134,13 @@ function DirectorySection({
   visibleIds: ReadonlySet<string>;
   selectedSessionIds: readonly string[];
   onToggleSession: (sessionId: string) => void;
-  onReserve: (sessionId: string) => void;
   onManage: (connectionId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory: SessionDirectoryGroup,
   ) => void;
-  selectedDirectory?: { connectionId: string; directoryId: string } | null;
-  onToggleDirectory?: (connectionId: string, directoryId: string) => void;
+  selectedProjectId?: string | null;
+  onSelectProject?: (projectId: string) => void;
 }) {
   const visibleSessions = directory.sessions.filter((session) =>
     visibleIds.has(session.id),
@@ -166,9 +148,8 @@ function DirectorySection({
   const headingId = `directory-${group.connection.id}-${
     directory.directoryKey ?? directory.sessions[0]?.id ?? "unassigned"
   }`;
-  const directorySelected =
-    selectedDirectory?.connectionId === group.connection.id &&
-    selectedDirectory.directoryId === directory.id;
+  const projectId = sessionProjectIdForDirectory(directory);
+  const directorySelected = selectedProjectId === projectId;
 
   const directoryName = (
     <>
@@ -194,15 +175,13 @@ function DirectorySection({
         )}
       >
         <div className="flex items-center gap-2">
-          {onToggleDirectory ? (
+          {onSelectProject ? (
             <button
               type="button"
               aria-pressed={directorySelected}
               aria-label={`${directorySelected ? "取消选中" : "选中"}项目「${directory.name}」`}
               title={directorySelected ? "取消选中" : "打开项目级规划"}
-              onClick={() =>
-                onToggleDirectory(group.connection.id, directory.id)
-              }
+              onClick={() => onSelectProject(projectId)}
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               {directoryName}
@@ -253,7 +232,6 @@ function DirectorySection({
             session={session}
             selected={selectedSessionIds.includes(session.id)}
             onSelect={() => onToggleSession(session.id)}
-            onReserve={() => onReserve(session.id)}
           />
         ))}
         {directory.sessions.length === 0 ? (
@@ -276,11 +254,10 @@ function ConnectionSection({
   selectedSessionIds,
   isOwner,
   onToggleSession,
-  onReserve,
   onManage,
   onCreate,
-  selectedDirectory,
-  onToggleDirectory,
+  selectedProjectId,
+  onSelectProject,
 }: Omit<SessionDirectoryNavigationProps, "groups"> & {
   group: SessionConnectionGroup;
 }) {
@@ -369,11 +346,10 @@ function ConnectionSection({
             visibleIds={visibleIds}
             selectedSessionIds={selectedSessionIds}
             onToggleSession={onToggleSession}
-            onReserve={onReserve}
             onManage={onManage}
             onCreate={onCreate}
-            selectedDirectory={selectedDirectory}
-            onToggleDirectory={onToggleDirectory}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={onSelectProject}
           />
         ))}
         {visibleDirectories.length === 0 ? (

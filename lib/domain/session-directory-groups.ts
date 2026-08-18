@@ -31,6 +31,16 @@ export type SessionProjectGroup = {
   sessionCount: number;
 };
 
+export type SessionProjectBridge = {
+  connection: SessionConnectionSummary;
+  directory: SessionDirectoryGroup;
+};
+
+/** 项目优先视图：一个项目下对该地址有权限的所有 Bridge。 */
+export type SessionProjectBridgeGroup = SessionProjectGroup & {
+  bridges: SessionProjectBridge[];
+};
+
 const UNASSIGNED_PROJECT_ID = "unassigned";
 
 export function sessionProjectIdForDirectory(
@@ -266,6 +276,39 @@ export function filterConnectionGroupsByProject(
       },
     ];
   });
+}
+
+/**
+ * 项目优先视图：把「Bridge → 项目目录」重排为「项目 → Bridges」。
+ * 同一个 working directory 有权限的多个 Bridge 会归到同一个项目下，
+ * 项目名称与计数和顶部项目 Tab（listSessionProjects）保持一致。
+ */
+export function groupBridgesByProject(
+  groups: readonly SessionConnectionGroup[],
+  projectId: string | null,
+): SessionProjectBridgeGroup[] {
+  const filteredGroups = filterConnectionGroupsByProject(groups, projectId);
+  const summaries = new Map(
+    listSessionProjects(filteredGroups).map((project) => [project.id, project]),
+  );
+  const projects = new Map<string, SessionProjectBridgeGroup>();
+
+  for (const group of filteredGroups) {
+    for (const directory of group.directories) {
+      const projectIdForDirectory = sessionProjectIdForDirectory(directory);
+      const summary = summaries.get(projectIdForDirectory);
+      if (!summary) continue;
+
+      let project = projects.get(projectIdForDirectory);
+      if (!project) {
+        project = { ...summary, bridges: [] };
+        projects.set(projectIdForDirectory, project);
+      }
+      project.bridges.push({ connection: group.connection, directory });
+    }
+  }
+
+  return [...projects.values()].sort(compareProjects);
 }
 
 /** 「全部」视图：剔除被用户隐藏的项目目录；不含任何可见目录的 Bridge 整个隐藏。 */
