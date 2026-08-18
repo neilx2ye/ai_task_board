@@ -195,10 +195,10 @@ export default function HelpPage() {
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
           <Step index={3} title="准备工作目录和权限边界">
-            Codex Bridge 的工作目录可以在安装完成后到「AI 连接 → Bridge
-            设置 / 新建项目」用网页添加，安装时无需预先准备；需要本机固定白名单时再填写
-            绝对路径。Kimi / Antigravity 仍需要在设备上配置各自白名单
-            （*_WORKING_DIRECTORY(S)）。Codex Bridge 默认的
+            三个 Bridge 的工作目录都可以在安装完成后到「AI 连接 → Bridge
+            设置 / 新建项目」用网页添加，安装时无需预先准备（默认由 Web 管理）；
+            需要本机固定白名单时再填写绝对路径（*_WORKING_DIRECTORY(S)）。Codex
+            Bridge 默认的
             <code className="mx-1 rounded bg-muted px-1 text-xs">
               CODEX_THREAD_SCOPE=cwd
             </code>
@@ -217,18 +217,18 @@ export default function HelpPage() {
             >
               下方交互式安装命令
             </a>
-            ，按提示选择要安装的 Bridge 并填写看板地址和一次性连接令牌；Codex 的工作目录
-            可以稍后在网页添加。SSH 命令或 CI 脚本（无交互终端）也可以直接提供环境变量
+            ，按提示选择要安装的 Bridge 并填写看板地址和一次性连接令牌；工作目录
+            都可以稍后在网页添加。SSH 命令或 CI 脚本（无交互终端）也可以直接提供环境变量
             运行 <code>setup</code>，同样会安装 systemd 服务。
             命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
             同一台设备和 Connection 只运行一个 Bridge。
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
             Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置。Kimi /
-            Antigravity 需要先在本机设置
+            Antigravity 需要本机设置
             <code className="mx-1">KIMI_BRIDGE_WEB_CONFIG=true</code>（Antigravity
-            为 <code>ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>）才会应用 Web 期望值，
-            再到
+            为 <code>ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>）才会应用 Web 期望值
+            （选择 Web 管理目录的新安装已自动写入），再到
             <Link
               href="/sessions"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
@@ -304,14 +304,16 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
             在 Codex、Kimi 与 Antigravity 连接上均可使用（Kimi / Antigravity 分别用
             <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code> /
             <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code> 开启，
-            且暂不支持历史同步与 Web 工作目录管理）。设备额外设置
+            历史同步仅 Codex 支持）。设备额外设置
             <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
+            （Kimi / Antigravity 为各自前缀的
+            <code className="ml-1">*_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>）
             后，还可在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
           </li>
           <li>
-            未授权 Web 路径管理时，仍用 <code>CODEX_WORKING_DIRECTORIES</code> 在设备配置
-            多个精确 cwd。无论目录来自设备启动配置还是网页期望值，新建 Thread 都只把
-            Bridge 已验证并上报的目录 key 返回设备，不能在单条命令中注入任意路径。
+            未授权 Web 路径管理时，仍用各自前缀的 <code>*_WORKING_DIRECTORIES</code>
+            在设备配置多个精确 cwd。无论目录来自设备启动配置还是网页期望值，新建
+            Thread 都只把 Bridge 已验证并上报的目录 key 返回设备，不能在单条命令中注入任意路径。
           </li>
           <li>
             Bridge 通过认证 SSE 接收不含任务数据的近实时唤醒，再用 REST
@@ -616,10 +618,11 @@ Idempotency-Key: <唯一键>
             遗漏事件，另有 30 秒低频轮询兜底，不需要手动刷新。
           </FaqItem>
           <FaqItem question="为什么三个 Bridge 的环境变量数量差很多？">
-            三者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单。差异来自
+            三者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单，也都有
+            各自的 *_BRIDGE_WEB_CONFIG 远程配置开关。差异来自
             Agent 能力面：Codex Bridge 要发现并接管本机已存在的 Codex threads，因此多出
-            thread 范围（CODEX_THREAD_SCOPE / CODEX_THREAD_ID）、标题、历史同步和 Web
-            远程配置等开关；Kimi（ACP）和 Antigravity（agy headless）由 Bridge 按需创建
+            thread 范围（CODEX_THREAD_SCOPE / CODEX_THREAD_ID）、标题与历史同步
+            等开关；Kimi（ACP）和 Antigravity（agy headless）由 Bridge 按需创建
             会话，没有可接管的本机清单，也就不需要这些变量。权限类变量则直接映射各自 CLI
             的原生模型：Codex 用沙箱加审批组合，Kimi 用 ACP mode，Antigravity 用
             --mode、--dangerously-skip-permissions 和 --sandbox。
