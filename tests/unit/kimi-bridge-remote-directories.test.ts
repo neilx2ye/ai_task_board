@@ -198,7 +198,7 @@ describe("Kimi Bridge session sync device identity", () => {
     return JSON.parse(init.body) as Record<string, unknown>;
   }
 
-  it("sends flat device_id and device_label fields with the 1.5.1 capability version", async () => {
+  it("sends flat device_id and device_label fields with the 1.6.0 capability version", async () => {
     const fetchMock = stubBoardFetch();
     const client = new BoardClient(baseConfiguration(), () => false, {
       deviceId: "2f4b91c0-0000-4000-8000-0000000000ab",
@@ -206,8 +206,8 @@ describe("Kimi Bridge session sync device identity", () => {
     });
     await client.syncSessions([], baseConfiguration().workingDirectories, [], undefined);
     const body = syncBody(fetchMock);
-    expect(body.bridge_version).toBe("1.5.1-kimi.1");
-    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.5.1-kimi.1");
+    expect(body.bridge_version).toBe("1.6.0-kimi.1");
+    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.6.0-kimi.1");
     expect(body.device_id).toBe("2f4b91c0-0000-4000-8000-0000000000ab");
     expect(body.device_label).toBe("test-host");
     expect(body.directories).toEqual([

@@ -22,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.5.1-antigravity.1";
+export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.6.0-antigravity.1";
 
 export type BoardSession = {
   id: string;
