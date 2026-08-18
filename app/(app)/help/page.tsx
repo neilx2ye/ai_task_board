@@ -11,7 +11,11 @@ import {
 } from "lucide-react";
 
 import { CopyButton } from "@/components/copy-button";
-import { HELP_ACTIONS, HELP_SECTIONS } from "@/components/help-content";
+import {
+  BRIDGE_INSTALL_PACKAGE,
+  HELP_ACTIONS,
+  HELP_SECTIONS,
+} from "@/components/help-content";
 import { TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -255,7 +259,7 @@ export default function HelpPage() {
           （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.4.0 setup`}
+          {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           SSH 命令或 CI 脚本没有交互终端时，<code>setup codex</code> 会读取环境变量
@@ -263,7 +267,7 @@ export default function HelpPage() {
         </p>
         <CopyableCodeBlock copyLabel="复制非交互式安装命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
-npx --yes ai-task-board-bridge@1.4.0 setup codex`}</CopyableCodeBlock>
+npx --yes ${BRIDGE_INSTALL_PACKAGE} setup codex`}</CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           如需前台运行或自动化部署，也可以直接通过环境变量配置：
         </p>
@@ -278,7 +282,7 @@ CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
 CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
-npx --yes ai-task-board-bridge@1.4.0 run codex`}</CopyableCodeBlock>
+npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             必须在拥有该 Codex 登录、持久化 thread 和可写工作区的同一用户环境中运行；
@@ -346,19 +350,20 @@ npx --yes ai-task-board-bridge@1.4.0 run codex`}</CopyableCodeBlock>
           运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.4.0 setup kimi`}
+          {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup kimi`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           无交互终端时，提供以下变量运行 <code>setup kimi</code> 同样会安装并启动
-          systemd 服务（<code>KIMI_WORKING_DIRECTORY</code> 为必填）；也可以显式使用
+          systemd 服务；未提供 <code>KIMI_WORKING_DIRECTORY</code> 时默认由 Web 端管理
+          工作目录（安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）；也可以显式使用
           <code>run kimi</code> 在前台运行。令牌必须来自独立的 Kimi Code 连接：
         </p>
-        <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \
-AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
-KIMI_BRIDGE_MODE='auto' \
-KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.4.0 run kimi`}</CopyableCodeBlock>
+        <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \\
+KIMI_BRIDGE_MODE='auto' \\
+KIMI_BRIDGE_APPROVAL_MODE='accept' \\
+npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             Bridge 会动态上报 Kimi ACP 返回的模型和 low/high/max 等思考强度；新建
@@ -367,7 +372,11 @@ npx --yes ai-task-board-bridge@1.4.0 run kimi`}</CopyableCodeBlock>
           <li>
             可用 <code>KIMI_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；网页新建
             只发送稳定目录 key，不能注入任意本机路径。Kimi ACP 只能按目录发现本机
-            Session，等价于固定的工作目录范围。
+            Session，等价于固定的工作目录范围。设备设置
+            <code className="ml-1">KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
+            （交互安装选择 Web 管理目录时自动写入）后，目录清单也可以直接在「Bridge
+            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
+            由设备自动创建。
           </li>
           <li>
             Kimi ACP 支持新建和删除 Session，但当前没有可靠的改名方法，所以 Kimi
@@ -407,11 +416,12 @@ npx --yes ai-task-board-bridge@1.4.0 run kimi`}</CopyableCodeBlock>
           已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 安装命令">
-          {`npx --yes ai-task-board-bridge@1.4.0 setup antigravity`}
+          {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup antigravity`}
         </CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           无交互终端时，提供以下变量运行 <code>setup antigravity</code> 同样会安装并
-          启动 systemd 服务（<code>ANTIGRAVITY_WORKING_DIRECTORY</code> 为必填）；
+          启动 systemd 服务；未提供 <code>ANTIGRAVITY_WORKING_DIRECTORY</code> 时默认由
+          Web 端管理工作目录（安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）；
           也可以显式使用 <code>run antigravity</code> 在前台运行。令牌必须来自独立的
           Antigravity 连接：
         </p>
@@ -420,7 +430,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \\
 ANTIGRAVITY_BRIDGE_MODE='auto' \\
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \\
-npx --yes ai-task-board-bridge@1.4.0 run antigravity`}</CopyableCodeBlock>
+npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             需要 Antigravity CLI 1.1.8 或更新版本（<code>agy update</code> 升级）。
@@ -433,7 +443,11 @@ npx --yes ai-task-board-bridge@1.4.0 run antigravity`}</CopyableCodeBlock>
           </li>
           <li>
             可用 <code>ANTIGRAVITY_WORKING_DIRECTORIES</code> 配置多个精确 cwd
-            白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。
+            白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。设备设置
+            <code className="ml-1">ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
+            （交互安装选择 Web 管理目录时自动写入）后，目录清单也可以直接在「Bridge
+            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
+            由设备自动创建。
           </li>
           <li>
             agy headless 没有公开的改名与历史读取接口，因此 Antigravity 连接会隐藏

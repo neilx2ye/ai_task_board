@@ -41,6 +41,8 @@ export type KimiSystemdUnitOptions = {
 
 type Choice<T extends string> = { value: T; label: string };
 
+type WorkingDirectoryManagement = "web" | "local";
+
 interface ReadlineWithOutputOverride extends ReadlineInterface {
   _writeToOutput?: (value: string) => void;
 }
@@ -521,6 +523,113 @@ function validChoice<T extends string>(
     : fallback;
 }
 
+// 多目录白名单（KIMI_WORKING_DIRECTORIES JSON）中的首个目录，
+// 用作 local 模式下 unit 的 WorkingDirectory 与单目录兜底。
+function firstConfiguredWorkingDirectory(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const first = parsed[0] as { path?: unknown } | undefined;
+    return typeof first?.path === "string" && path.isAbsolute(first.path)
+      ? path.normalize(first.path)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface KimiDirectoryManagementResolution {
+  directoryManagement: WorkingDirectoryManagement;
+  workingDirectory: string;
+  preserveMultipleDirectories: boolean;
+}
+
+// 非交互安装的目录管理推断：已配置目录变量（单目录或多目录）则按本机固定
+// 目录安装，否则默认 Web 端管理；重跑安装时因此延续既有选择。
+export function resolveKimiDirectoryManagement(input: {
+  homeDirectory: string;
+  configuredDirectory: string | undefined;
+  rawMultipleDirectories: string | undefined;
+}): KimiDirectoryManagementResolution {
+  if (input.rawMultipleDirectories) {
+    const firstDirectory = firstConfiguredWorkingDirectory(
+      input.rawMultipleDirectories,
+    );
+    if (!firstDirectory) {
+      throw new Error("KIMI_WORKING_DIRECTORIES 无法解析");
+    }
+    return {
+      directoryManagement: "local",
+      workingDirectory: firstDirectory,
+      preserveMultipleDirectories: true,
+    };
+  }
+  if (input.configuredDirectory) {
+    return {
+      directoryManagement: "local",
+      workingDirectory: path.resolve(input.configuredDirectory),
+      preserveMultipleDirectories: false,
+    };
+  }
+  // Web 模式下 unit 的 WorkingDirectory 以用户主目录兜底；
+  // Bridge 不再把它当作受管项目目录。
+  return {
+    directoryManagement: "web",
+    workingDirectory: input.homeDirectory,
+    preserveMultipleDirectories: false,
+  };
+}
+
+interface KimiEnvironmentInput {
+  existing: Record<string, string>;
+  boardUrl: string;
+  connectionToken: string;
+  directoryManagement: WorkingDirectoryManagement;
+  workingDirectory: string;
+  preserveMultipleDirectories: boolean;
+  rawMultipleDirectories: string | undefined;
+  agentMode: KimiAgentMode;
+  approvalMode: KimiApprovalMode;
+  includeTitles: boolean;
+  maxThreads: string;
+  maxConcurrentTurns: string;
+  webConfiguration: boolean;
+  kimiBinary: string;
+  pathValue: string;
+}
+
+export function buildKimiInstallEnvironment(
+  input: KimiEnvironmentInput,
+): Record<string, string | undefined> {
+  const installed: Record<string, string | undefined> = {
+    ...input.existing,
+    AI_TASK_BOARD_URL: input.boardUrl,
+    AI_TASK_BOARD_CONNECTION_TOKEN: input.connectionToken,
+    KIMI_BINARY: input.kimiBinary,
+    KIMI_BRIDGE_APPROVAL_MODE: input.approvalMode,
+    KIMI_BRIDGE_INCLUDE_SESSION_TITLES: String(input.includeTitles),
+    KIMI_BRIDGE_MODE: input.agentMode,
+    KIMI_BRIDGE_WEB_CONFIG: input.webConfiguration ? "true" : "false",
+    KIMI_MAX_CONCURRENT_TURNS: input.maxConcurrentTurns,
+    KIMI_MAX_THREADS: input.maxThreads,
+    PATH: input.pathValue,
+  };
+  if (input.directoryManagement === "web") {
+    // Web 端管理目录需要同时放开远程目录授权，并移除本机固定目录配置
+    installed.KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION = "true";
+    delete installed.KIMI_WORKING_DIRECTORY;
+    delete installed.KIMI_WORKING_DIRECTORIES;
+  } else {
+    installed.KIMI_WORKING_DIRECTORY = input.workingDirectory;
+    if (input.preserveMultipleDirectories && input.rawMultipleDirectories) {
+      installed.KIMI_WORKING_DIRECTORIES = input.rawMultipleDirectories;
+    } else {
+      delete installed.KIMI_WORKING_DIRECTORIES;
+    }
+  }
+  return installed;
+}
+
 interface KimiInstallArtifacts {
   paths: KimiSetupPaths;
   environment: Record<string, string | undefined>;
@@ -602,14 +711,80 @@ export async function runInteractiveSetup(options: {
         "AI_TASK_BOARD_CONNECTION_TOKEN",
       ),
     );
-    const workingDirectory = await prompt.text("工作目录", {
-      defaultValue:
-        configuredValue(existing, process.env, "KIMI_WORKING_DIRECTORY") ??
-        process.cwd(),
-      required: true,
-      validate: (value) => path.resolve(value),
-    });
-    if (!(await stat(workingDirectory).catch(() => null))?.isDirectory()) {
+    const rawMultipleDirectories = configuredValue(
+      existing,
+      process.env,
+      "KIMI_WORKING_DIRECTORIES",
+    );
+    const existingWorkingDirectory = configuredValue(
+      existing,
+      process.env,
+      "KIMI_WORKING_DIRECTORY",
+    );
+    // 重跑安装时延续既有选择：已有目录变量（单目录或多目录）默认维持 local
+    const hasExistingLocalDirectories = Boolean(
+      existingWorkingDirectory ||
+        (rawMultipleDirectories &&
+          firstConfiguredWorkingDirectory(rawMultipleDirectories)),
+    );
+    const directoryManagement = await prompt.choice<WorkingDirectoryManagement>(
+      "工作目录管理",
+      [
+        {
+          value: "web",
+          label:
+            "Web 端管理（推荐）— 安装时不配置目录，之后在网页「AI 连接 → Bridge 设置 / 新建项目」中添加",
+        },
+        {
+          value: "local",
+          label: "本机固定目录 — 安装时配置一个固定工作目录白名单",
+        },
+      ],
+      hasExistingLocalDirectories ? "local" : "web",
+    );
+
+    let preserveMultipleDirectories = false;
+    let workingDirectory: string;
+    if (directoryManagement === "web") {
+      // unit 需要一个存在的 WorkingDirectory，但 Web 模式下 Bridge 不再把它
+      // 当作受管项目目录；安装后改由 Web 端管理工作目录
+      workingDirectory = homeDirectory;
+      if (hasExistingLocalDirectories) {
+        prompt.write(
+          "\n现有本机目录白名单将不再使用，改由 Web 端管理工作目录。\n",
+        );
+      }
+    } else if (rawMultipleDirectories) {
+      const firstDirectory = firstConfiguredWorkingDirectory(
+        rawMultipleDirectories,
+      );
+      if (firstDirectory) {
+        prompt.write(`\n检测到现有多目录配置，首目录为 ${firstDirectory}。\n`);
+        preserveMultipleDirectories = await prompt.confirm(
+          "保留现有 KIMI_WORKING_DIRECTORIES",
+          true,
+        );
+        workingDirectory = firstDirectory;
+      } else {
+        prompt.write(
+          "\n现有 KIMI_WORKING_DIRECTORIES 无法解析，本次将改为单目录配置。\n",
+        );
+        workingDirectory = process.cwd();
+      }
+    } else {
+      workingDirectory = process.cwd();
+    }
+    if (directoryManagement === "local" && !preserveMultipleDirectories) {
+      workingDirectory = await prompt.text("工作目录", {
+        defaultValue: existingWorkingDirectory ?? workingDirectory,
+        required: true,
+        validate: (value) => path.resolve(value),
+      });
+    }
+    if (
+      directoryManagement === "local" &&
+      !(await stat(workingDirectory).catch(() => null))?.isDirectory()
+    ) {
       throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
     }
     const requestedBinary = await prompt.text("Kimi Code 可执行文件", {
@@ -658,14 +833,32 @@ export async function runInteractiveSetup(options: {
       "向看板上传本机 Kimi Session 标题",
       false,
     );
-    const webConfiguration = await prompt.confirm(
-      "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
-      configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") ===
-        "true",
-    );
+    let webConfiguration: boolean;
+    if (directoryManagement === "web") {
+      // Web 端管理目录依赖 Web 配置开关，两者同时开启
+      webConfiguration = true;
+      prompt.write(
+        "\n工作目录将由网页管理；已同时启用 Web 配置与远程目录授权。\n",
+      );
+    } else {
+      webConfiguration = await prompt.confirm(
+        "允许 Board 调整启停、标题与 thread/并发上限（Web 配置）",
+        configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") ===
+          "true",
+      );
+    }
 
     prompt.write(`\n环境文件：${paths.environmentFile} (0600)\n`);
     prompt.write(`systemd unit：${paths.unitFile}\n`);
+    if (directoryManagement === "web") {
+      prompt.write("工作目录：由 Web 端管理（未配置本机固定目录）\n");
+    } else {
+      prompt.write(
+        `工作目录：${workingDirectory}${
+          preserveMultipleDirectories ? " 及现有多目录白名单" : ""
+        }\n`,
+      );
+    }
     if (!(await prompt.confirm("写入配置并启动 Kimi Bridge", true))) {
       prompt.write("已取消，未修改任何文件。\n");
       return;
@@ -674,19 +867,23 @@ export async function runInteractiveSetup(options: {
     await installKimiBridgeService(
       {
         paths,
-        environment: {
-          AI_TASK_BOARD_CONNECTION_TOKEN: token,
-          AI_TASK_BOARD_URL: boardUrl,
-          KIMI_BINARY: kimiBinary,
-          KIMI_BRIDGE_APPROVAL_MODE: approvalMode,
-          KIMI_BRIDGE_INCLUDE_SESSION_TITLES: String(includeTitles),
-          KIMI_BRIDGE_MODE: agentMode,
-          KIMI_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
-          KIMI_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
-          KIMI_MAX_THREADS: maxThreads,
-          KIMI_WORKING_DIRECTORY: workingDirectory,
-          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-        },
+        environment: buildKimiInstallEnvironment({
+          existing,
+          boardUrl,
+          connectionToken: token,
+          directoryManagement,
+          workingDirectory,
+          preserveMultipleDirectories,
+          rawMultipleDirectories,
+          agentMode,
+          approvalMode,
+          includeTitles,
+          maxThreads,
+          maxConcurrentTurns,
+          webConfiguration,
+          kimiBinary,
+          pathValue: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        }),
         unitOptions: {
           nodeBinary: process.execPath,
           runtimeCli: paths.runtimeCli,
@@ -746,16 +943,29 @@ export async function runKimiNonInteractiveSetup(options: {
     );
   }
 
-  const workingDirectoryValue = configuredValue(
+  // 未提供目录变量时默认 Web 端管理；提供了则按本机固定目录安装
+  const rawMultipleDirectories = configuredValue(
     existing,
     process.env,
-    "KIMI_WORKING_DIRECTORY",
+    "KIMI_WORKING_DIRECTORIES",
   );
-  if (!workingDirectoryValue) {
-    throw new Error("缺少 KIMI_WORKING_DIRECTORY；非交互安装需要工作目录");
-  }
-  const workingDirectory = path.resolve(workingDirectoryValue);
-  if (!(await stat(workingDirectory).catch(() => null))?.isDirectory()) {
+  const {
+    directoryManagement,
+    workingDirectory,
+    preserveMultipleDirectories,
+  } = resolveKimiDirectoryManagement({
+    homeDirectory,
+    configuredDirectory: configuredValue(
+      existing,
+      process.env,
+      "KIMI_WORKING_DIRECTORY",
+    ),
+    rawMultipleDirectories,
+  });
+  if (
+    directoryManagement === "local" &&
+    !(await stat(workingDirectory).catch(() => null))?.isDirectory()
+  ) {
     throw new Error(`工作目录不存在或不是目录：${workingDirectory}`);
   }
 
@@ -793,24 +1003,29 @@ export async function runKimiNonInteractiveSetup(options: {
       "KIMI_BRIDGE_INCLUDE_SESSION_TITLES",
     ) === "true";
   const webConfiguration =
+    directoryManagement === "web" ||
     configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") === "true";
 
   await installKimiBridgeService(
     {
       paths,
-      environment: {
-        AI_TASK_BOARD_CONNECTION_TOKEN: token,
-        AI_TASK_BOARD_URL: boardUrl,
-        KIMI_BINARY: kimiBinary,
-        KIMI_BRIDGE_APPROVAL_MODE: approvalMode,
-        KIMI_BRIDGE_INCLUDE_SESSION_TITLES: String(includeTitles),
-        KIMI_BRIDGE_MODE: agentMode,
-        KIMI_BRIDGE_WEB_CONFIG: webConfiguration ? "true" : "false",
-        KIMI_MAX_CONCURRENT_TURNS: maxConcurrentTurns,
-        KIMI_MAX_THREADS: maxThreads,
-        KIMI_WORKING_DIRECTORY: workingDirectory,
-        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      },
+      environment: buildKimiInstallEnvironment({
+        existing,
+        boardUrl,
+        connectionToken: token,
+        directoryManagement,
+        workingDirectory,
+        preserveMultipleDirectories,
+        rawMultipleDirectories,
+        agentMode,
+        approvalMode,
+        includeTitles,
+        maxThreads,
+        maxConcurrentTurns,
+        webConfiguration,
+        kimiBinary,
+        pathValue: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      }),
       unitOptions: {
         nodeBinary: process.execPath,
         runtimeCli: paths.runtimeCli,

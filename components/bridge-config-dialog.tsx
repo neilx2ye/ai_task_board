@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/hooks/api-client";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
+import { supportsManagedDirectoryCreation } from "@/hooks/use-connections";
 import {
   bridgeConfigSyncState,
   bridgeSupportsHistorySync,
@@ -236,12 +237,12 @@ function EffectiveValues({
   desired,
   effective,
   reported,
-  showCodexRows,
+  showHistoryRows,
 }: {
   desired: BridgeDesiredConfig;
   effective: BridgeDesiredConfig | null;
   reported: boolean;
-  showCodexRows: boolean;
+  showHistoryRows: boolean;
 }) {
   const desiredDirectorySummary = desired.working_directories
     ? `${desired.working_directories.length} 个 Web 项目`
@@ -273,7 +274,7 @@ function EffectiveValues({
       effective ? String(effective.max_concurrent_turns) : "等待上报",
     ],
   ];
-  if (showCodexRows) {
+  if (showHistoryRows) {
     rows.push(
       [
         "Codex 历史同步",
@@ -285,9 +286,9 @@ function EffectiveValues({
         String(desired.history_turn_limit ?? 50),
         effective ? String(effective.history_turn_limit ?? 50) : "等待上报",
       ],
-      ["工作目录", desiredDirectorySummary, effectiveDirectorySummary],
     );
   }
+  rows.push(["工作目录", desiredDirectorySummary, effectiveDirectorySummary]);
 
   return (
     <div className="overflow-hidden rounded-md border border-border text-xs">
@@ -468,11 +469,21 @@ function BridgeConfigForm({
   const [error, setError] = useState<string | null>(null);
 
   const constraints = configuration.applied?.constraints ?? null;
-  // Kimi and Antigravity do not implement history import or Web-managed
-  // working directories; hide those Codex-specific controls entirely.
-  const showCodexRows =
+  // 历史同步只有 Codex 运行时实现；Web 目录管理三个运行时都支持，
+  // 但 Kimi / Antigravity 需要 Bridge 1.3.0 起的能力版本。
+  const isCodexRuntime =
     !isKimiPlatform(connection.platform) &&
     !isAntigravityPlatform(connection.platform);
+  const allowWorkingDirectoriesEnvVar = isKimiPlatform(connection.platform)
+    ? "KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
+    : isAntigravityPlatform(connection.platform)
+      ? "ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
+      : "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES";
+  const localWorkingDirectoriesEnvVar = isKimiPlatform(connection.platform)
+    ? "KIMI_WORKING_DIRECTORIES"
+    : isAntigravityPlatform(connection.platform)
+      ? "ANTIGRAVITY_WORKING_DIRECTORIES"
+      : "CODEX_WORKING_DIRECTORIES";
   const titleUploadBlocked = constraints?.allow_thread_titles === false;
   // A locally blocked device must still let the Owner turn an already-saved
   // desired value off; only enabling the disclosure is forbidden.
@@ -483,8 +494,9 @@ function BridgeConfigForm({
   // local authorization or temporarily reports from an older Bridge.
   const historyToggleDisabled =
     (!historySupported || historySyncBlocked) && !syncHistory;
-  const workingDirectoriesSupported =
-    bridgeSupportsWorkingDirectoryConfiguration(connection.bridge_version);
+  const workingDirectoriesSupported = isCodexRuntime
+    ? bridgeSupportsWorkingDirectoryConfiguration(connection.bridge_version)
+    : supportsManagedDirectoryCreation(connection);
   const workingDirectoriesBlocked =
     constraints?.allow_working_directory_configuration !== true;
   // An already-saved Web list must remain reversible when the device removes
@@ -531,7 +543,7 @@ function BridgeConfigForm({
       name: directory.name.trim(),
       working_directory: directory.working_directory.trim(),
     }));
-    if (showCodexRows && manageWorkingDirectories) {
+    if (manageWorkingDirectories) {
       const directoryError = validateWorkingDirectories(
         normalizedWorkingDirectories,
       );
@@ -549,7 +561,7 @@ function BridgeConfigForm({
       return;
     }
     if (
-      showCodexRows &&
+      isCodexRuntime &&
       (!Number.isInteger(parsedHistoryTurnLimit) ||
         parsedHistoryTurnLimit < 1 ||
         parsedHistoryTurnLimit > 500)
@@ -573,12 +585,11 @@ function BridgeConfigForm({
         include_thread_titles: includeTitles,
         max_threads: parsedMaxThreads,
         max_concurrent_turns: parsedMaxConcurrentTurns,
-        sync_history: showCodexRows ? syncHistory : false,
-        history_turn_limit: showCodexRows ? parsedHistoryTurnLimit : 50,
-        working_directories:
-          showCodexRows && manageWorkingDirectories
-            ? normalizedWorkingDirectories
-            : null,
+        sync_history: isCodexRuntime ? syncHistory : false,
+        history_turn_limit: isCodexRuntime ? parsedHistoryTurnLimit : 50,
+        working_directories: manageWorkingDirectories
+          ? normalizedWorkingDirectories
+          : null,
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -608,7 +619,7 @@ function BridgeConfigForm({
         desired={configuration.desired}
         effective={configuration.applied?.effective ?? null}
         reported={bridgeSupportsRemoteConfiguration(connection.bridge_version)}
-        showCodexRows={showCodexRows}
+        showHistoryRows={isCodexRuntime}
       />
 
       <fieldset className="flex flex-col gap-3">
@@ -633,7 +644,7 @@ function BridgeConfigForm({
           />
         </label>
 
-        {showCodexRows ? (
+        {isCodexRuntime ? (
           <label
             htmlFor={`${fieldId}-history`}
             className={`flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5 ${
@@ -700,12 +711,11 @@ function BridgeConfigForm({
           />
         </label>
 
-        {showCodexRows ? (
-          <div
-            className={`rounded-md border border-border px-3 py-3 ${
-              workingDirectoriesToggleDisabled ? "opacity-60" : ""
-            }`}
-          >
+        <div
+          className={`rounded-md border border-border px-3 py-3 ${
+            workingDirectoriesToggleDisabled ? "opacity-60" : ""
+          }`}
+        >
           <label
             htmlFor={`${fieldId}-working-directories`}
             className={`flex items-start justify-between gap-4 ${
@@ -719,21 +729,24 @@ function BridgeConfigForm({
                 由 Web 管理项目工作目录
               </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
-                目录会成为 Codex 可工作的本机范围；只有设备显式授权后才会应用。
+                目录会成为 Bridge 可工作的本机范围；只有设备显式授权后才会应用。
               </span>
               {!workingDirectoriesSupported ? (
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  需要 Bridge 0.8.0 或更高版本。
+                  {isCodexRuntime
+                    ? "需要 Bridge 0.8.0 或更高版本。"
+                    : "需要 Bridge 1.3.0 或更高版本。"}
                 </span>
               ) : workingDirectoriesBlocked ? (
                 <span className="mt-1 block text-xs text-muted-foreground">
                   {constraints
-                    ? "本机尚未授权；需在设备设置 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true。"
-                    : "等待设备上报授权；需先设置 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true。"}
+                    ? `本机尚未授权；需在设备设置 ${allowWorkingDirectoriesEnvVar}=true。`
+                    : `等待设备上报授权；需先设置 ${allowWorkingDirectoriesEnvVar}=true。`}
                 </span>
               ) : (
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  关闭后恢复使用设备启动时的 CODEX_WORKING_DIRECTORIES 配置。
+                  关闭后恢复使用设备启动时的 {localWorkingDirectoriesEnvVar}{" "}
+                  配置。
                 </span>
               )}
             </span>
@@ -866,8 +879,7 @@ function BridgeConfigForm({
               </Button>
             </div>
           ) : null}
-          </div>
-        ) : null}
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
@@ -907,7 +919,7 @@ function BridgeConfigForm({
               {BRIDGE_CONCURRENCY_NOTICE}
             </p>
           </div>
-          {showCodexRows ? (
+          {isCodexRuntime ? (
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <Label htmlFor={`${fieldId}-history-turns`}>
                 同步最近 Turn 数
@@ -935,10 +947,10 @@ function BridgeConfigForm({
         </div>
       </fieldset>
 
-      {!showCodexRows ? (
+      {!isCodexRuntime ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Kimi / Antigravity 运行时暂不支持历史同步与 Web 工作目录管理；这两项
-          以设备本机配置为准。设备还需设置
+          Kimi / Antigravity 运行时暂不支持历史同步，该项以设备本机配置为准。
+          设备还需设置
           {isKimiPlatform(connection.platform)
             ? " KIMI_BRIDGE_WEB_CONFIG=true"
             : " ANTIGRAVITY_BRIDGE_WEB_CONFIG=true"}

@@ -20,11 +20,15 @@ Required environment variables:
   AI_TASK_BOARD_CONNECTION_TOKEN  Antigravity AI Connection token
 
 Optional environment variables:
-  ANTIGRAVITY_WORKING_DIRECTORY   Legacy single working directory (default: cwd)
+  ANTIGRAVITY_WORKING_DIRECTORY   Legacy single working directory (default: cwd);
+                                  omit at setup to manage directories from the Web
   ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
   ANTIGRAVITY_SESSION_NAME        Prefix for names shown in the Board
   ANTIGRAVITY_CAPABILITIES        Comma/space-separated Board capabilities
   ANTIGRAVITY_BRIDGE_WEB_CONFIG   true lets Web apply enabled/limits/titles
+  ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  true lets Web replace
+                                  the working directory list (written by setup
+                                  when Web directory management is chosen)
   ANTIGRAVITY_MAX_THREADS         Local Thread ceiling (1..500, default: 50)
   ANTIGRAVITY_MAX_CONCURRENT_TURNS Startup concurrency (1..32, default: 2)
   ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept (default) or decline

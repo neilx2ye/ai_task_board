@@ -347,9 +347,9 @@ function ConnectionCard({
                   </Button>
                 </>
               ) : (
-                <span title="Web 触发的自更新从 Bridge 1.4.0 开始提供">
+                <span title="Web 触发的自更新从 Bridge 1.5.0 开始提供">
                   新版 {newerRelease} 可用；需先在设备上手动升级一次至
-                  ≥1.4.0，之后即可在网页升级
+                  ≥1.5.0，之后即可在网页升级
                 </span>
               )
             ) : null}
@@ -468,7 +468,7 @@ export default function ConnectionsPage() {
   // 防御性过滤：即使缓存中残留已撤销连接也不渲染。
   const connections = activeConnections(connectionsQuery.data ?? []);
   const latestBridgeVersion = releaseQuery.data?.latest_version ?? null;
-  // 可批量升级：已支持远程更新（≥1.4.0）、无待升级目标、且落后于 npm 最新版。
+  // 可批量升级：已支持远程更新（≥1.5.0）、无待升级目标、且落后于 npm 最新版。
   const upgradableConnections =
     latestBridgeVersion === null
       ? []

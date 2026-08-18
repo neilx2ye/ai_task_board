@@ -26,23 +26,30 @@ Run setup as the same OS user that owns the Antigravity login and target
 workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.4.0 setup antigravity
+npx --yes ai-task-board-bridge@1.5.1 setup antigravity
 ```
 
-The installer writes a `0600` environment file, stages the runtime under the
-user's XDG data directory, and starts
+The wizard asks for the Board URL, the hidden Connection Token, and how
+working directories are managed. The default Web mode writes
+`ANTIGRAVITY_BRIDGE_WEB_CONFIG=true` and
+`ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`, leaving the
+directory list to the Board's "AI 连接 → Bridge 设置 / 新建项目"; the local
+mode pins an `ANTIGRAVITY_WORKING_DIRECTORY` allowlist at install time
+instead. The installer writes a `0600` environment file, stages the runtime
+under the user's XDG data directory, and starts
 `ai-task-board-antigravity-bridge.service` in that user's systemd manager. It
 never puts the Board token on the command line.
 
 The same service can be installed from an SSH command or CI script without a
-terminal. `ANTIGRAVITY_WORKING_DIRECTORY` is required because the Board Web
-console does not expose directory management for Antigravity connections yet:
+terminal. Without `ANTIGRAVITY_WORKING_DIRECTORY(S)` the non-interactive
+install also defaults to Web directory management; pass either variable to pin
+a local allowlist instead:
 
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.4.0 setup antigravity
+npx --yes ai-task-board-bridge@1.5.1 setup antigravity
 ```
 
 ## Foreground mode
@@ -53,7 +60,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.4.0 run antigravity
+npx --yes ai-task-board-bridge@1.5.1 run antigravity
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -118,7 +125,7 @@ Remote upgrades are disabled by default and require two local gates:
 - the Bridge process must run under systemd (`INVOCATION_ID` is set). A
   foreground Bridge logs a one-time stderr hint per target version and keeps
   running the old code; upgrade it manually by rerunning
-  `npx --yes ai-task-board-bridge@1.4.0 setup antigravity`.
+  `npx --yes ai-task-board-bridge@1.5.1 setup antigravity`.
 
 With both gates satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Antigravity runtime

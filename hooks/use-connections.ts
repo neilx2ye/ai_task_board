@@ -92,7 +92,7 @@ export function supportsManagedDirectoryCreation(
 }
 
 /**
- * Web 触发的 Bridge 自更新从 1.4.0 开始携带更新器；
+ * Web 触发的 Bridge 自更新从 1.5.0 开始携带更新器；
  * 更早的版本只能在设备上手动升级一次。
  */
 export function supportsRemoteBridgeUpdate(
@@ -102,7 +102,7 @@ export function supportsRemoteBridgeUpdate(
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  return major > 1 || (major === 1 && minor >= 4);
+  return major > 1 || (major === 1 && minor >= 5);
 }
 
 export function useConnections(enabled = true) {

@@ -117,10 +117,12 @@ describe("activeConnections", () => {
   });
 
   it.each([
-    ["1.4.0", true],
-    ["1.4.0-kimi.1", true],
-    ["1.4.0-antigravity.1", true],
+    ["1.5.0", true],
+    ["1.5.0-kimi.1", true],
+    ["1.5.1-kimi.1", true],
+    ["1.5.0-antigravity.1", true],
     ["2.0.0", true],
+    ["1.4.0", false],
     ["1.3.0", false],
     ["0.9.0", false],
     ["dev", false],

@@ -20,12 +20,16 @@ Required environment variables:
   AI_TASK_BOARD_CONNECTION_TOKEN  Kimi Code AI Connection token
 
 Optional environment variables:
-  KIMI_WORKING_DIRECTORY          Legacy single working directory (default: cwd)
+  KIMI_WORKING_DIRECTORY          Legacy single working directory (default: cwd);
+                                  omit at setup to manage directories from the Web
   KIMI_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
   KIMI_SESSION_NAME               Prefix for names shown in the Board
   KIMI_BRIDGE_INCLUDE_SESSION_TITLES  true uploads local Kimi session titles
   KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
   KIMI_BRIDGE_WEB_CONFIG          true lets Web apply enabled/limits/titles
+  KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  true lets Web replace the
+                                  working directory list (written by setup when
+                                  Web directory management is chosen)
   KIMI_CAPABILITIES               Comma/space-separated Board capabilities
   KIMI_MAX_THREADS                Local Session ceiling (1..500, default: 50)
   KIMI_MAX_CONCURRENT_TURNS       Startup concurrency (1..32, default: 2)

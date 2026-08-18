@@ -8,6 +8,12 @@ export type HelpSection = {
   label: string;
 };
 
+/**
+ * 帮助页安装命令固定的 Bridge npm 包名与版本。发布新版时只需修改这里，
+ * 并与 packages/codex-bridge/package.json 的 version 保持一致（有单测守护）。
+ */
+export const BRIDGE_INSTALL_PACKAGE = "ai-task-board-bridge@1.5.1";
+
 export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "getting-started", label: "新设备配置" },
   { id: "codex-bridge", label: "Codex Bridge" },

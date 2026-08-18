@@ -58,7 +58,7 @@ Workspace Owner 可通过 `GET` / `PATCH /api/user/connections/:connectionId/bri
 `history_turn_limit`；版本落后时返回
 `409 VERSION_CONFLICT`，客户端应刷新后让用户重新确认。
 
-Web 触发的 Bridge 自更新（1.4.0+）使用两个额外的用户态端点：
+Web 触发的 Bridge 自更新（1.5.0+）使用两个额外的用户态端点：
 `GET /api/user/bridge-release` 返回 npm 上 `ai-task-board-bridge` 的最新发布版本
 （服务端缓存 5 分钟，查询失败时 `latest_version` 为 `null`）；
 `POST /api/user/connections/:connectionId/bridge-update` 携带
