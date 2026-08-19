@@ -9,12 +9,14 @@ import {
   planningNotesQueryKey,
   SESSIONS_QUERY_KEY,
   TASKS_QUERY_KEY,
+  threadPlanningNotesQueryKey,
   turnPlansQueryKey,
 } from "@/hooks/query-keys";
 import type { TurnPlanStep } from "@/lib/types/domain";
 import type {
   PlanningNoteRow,
   SessionTurnPlanRow,
+  ThreadPlanningNoteRow,
 } from "@/lib/types/database";
 
 export function usePlanningNote(
@@ -46,6 +48,39 @@ export function useSavePlanningNote() {
     onSuccess: (data, input) => {
       queryClient.setQueryData(
         planningNotesQueryKey(input.project_ref),
+        data.note,
+      );
+    },
+  });
+}
+
+export function useThreadPlanningNote(sessionId: string | null) {
+  return useQuery({
+    queryKey: threadPlanningNotesQueryKey(sessionId ?? ""),
+    enabled: Boolean(sessionId),
+    queryFn: async () => {
+      const data = await apiFetch<{ note: ThreadPlanningNoteRow | null }>(
+        `/api/user/sessions/${sessionId}/planning-note`,
+      );
+      return data.note;
+    },
+  });
+}
+
+export function useSaveThreadPlanningNote() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { session_id: string; content: string }) =>
+      apiFetch<{ note: ThreadPlanningNoteRow }>(
+        `/api/user/sessions/${input.session_id}/planning-note`,
+        {
+          method: "PUT",
+          json: { content: input.content },
+        },
+      ),
+    onSuccess: (data, input) => {
+      queryClient.setQueryData(
+        threadPlanningNotesQueryKey(input.session_id),
         data.note,
       );
     },

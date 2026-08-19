@@ -318,6 +318,21 @@ export async function maybeApplyDesiredBridgeUpdate(
     }
     return null;
   }
+  // 统一设备 Bridge 下只有 update-role=leader 的运行时执行自更新；
+  // 其余运行时与 supervisor 一起随 systemd 服务重启到新版本。
+  if (
+    environment.AI_TASK_BOARD_BRIDGE_SUPERVISED === "1" &&
+    environment.AI_TASK_BOARD_BRIDGE_UPDATE_ROLE !== "leader"
+  ) {
+    if (noticedSkipTarget !== desired) {
+      noticedSkipTarget = desired;
+      log(
+        `看板请求将 Bridge 升级到 ${desired}，但统一设备 Bridge 的升级由 leader 运行时执行` +
+          "；本运行时随服务一起重启",
+      );
+    }
+    return null;
+  }
   // A failed target is not retried until the Board changes it or the Bridge
   // process restarts, so a broken release cannot cause a retry storm.
   if (failedTargetVersion === desired) return null;

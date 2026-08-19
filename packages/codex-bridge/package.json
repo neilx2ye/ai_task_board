@@ -1,13 +1,14 @@
 {
   "name": "ai-task-board-bridge",
   "version": "1.6.0",
-  "description": "Unified interactive installer and device bridge for Codex and Kimi Code on AI Task Board",
+  "description": "Unified interactive installer and device bridge for Codex, Kimi Code, Antigravity, and Claude Code on AI Task Board",
   "type": "module",
   "types": "./dist/index.d.ts",
   "keywords": [
     "ai-task-board",
     "codex",
     "kimi-code",
+    "claude-code",
     "acp",
     "bridge",
     "cli"
@@ -26,7 +27,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && npm run build --workspace @ai-task-board/antigravity-bridge-runtime && node scripts/embed-runtimes.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && npm run build --workspace @ai-task-board/antigravity-bridge-runtime && npm run build --workspace @ai-task-board/claude-code-bridge-runtime && node scripts/embed-runtimes.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsx src/cli.ts",
     "prepack": "npm run build"
   },

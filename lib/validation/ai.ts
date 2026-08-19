@@ -130,6 +130,8 @@ export const syncedQuotaSchema = z
 export const syncSessionsSchema = z
   .object({
     bridge_version: nonEmptyText.max(100),
+    /** Canonical Bridge runtime kind owning this inventory (codex/kimi/...). */
+    platform: nonEmptyText.max(100).optional(),
     quota: syncedQuotaSchema.optional(),
     model_catalog: z.array(syncedModelCatalogEntrySchema).max(500).optional(),
     device_id: nonEmptyText.max(100).optional(),
@@ -237,6 +239,8 @@ export const sessionHeartbeatSchema = z.object({}).strict();
 export const claimThreadCommandSchema = z
   .object({
     runtime_instance_id: uuidSchema,
+    /** Canonical Bridge kind claiming the command (codex/kimi/...). */
+    platform: nonEmptyText.max(100).optional(),
     lease_seconds: z.number().int().min(15).max(300).default(60),
   })
   .strict();

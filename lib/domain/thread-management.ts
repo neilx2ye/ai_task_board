@@ -19,6 +19,7 @@ export function claimThreadCommand(
     p_api_token_hash: auth.tokenHash,
     p_runtime_instance_id: input.runtime_instance_id,
     p_lease_seconds: input.lease_seconds,
+    p_platform: input.platform ?? null,
   });
 }
 
@@ -27,28 +28,39 @@ export function claimThreadCommand(
  * Keep successful Web creates discoverable by exact id so the Bridge can read
  * and publish those otherwise-empty Threads across inventory cycles/restarts.
  */
-export async function listCreatedThreadIds(auth: AIAuthContext) {
+export async function listCreatedThreadIds(
+  auth: AIAuthContext,
+  platform?: string | null,
+) {
   const admin = createAdminClient();
   const [creates, deletes] = await Promise.all([
-    admin
-      .from("ai_thread_commands")
-      .select("external_thread_id")
-      .eq("workspace_id", auth.workspaceId)
-      .eq("connection_id", auth.connectionId)
-      .eq("action", "create")
-      .eq("status", "succeeded")
-      .not("external_thread_id", "is", null)
-      .order("completed_at", { ascending: false })
-      .limit(500),
-    admin
-      .from("ai_thread_commands")
-      .select("external_thread_id")
-      .eq("workspace_id", auth.workspaceId)
-      .eq("connection_id", auth.connectionId)
-      .eq("action", "delete")
-      .eq("status", "succeeded")
-      .not("external_thread_id", "is", null)
-      .limit(500),
+    (() => {
+      let query = admin
+        .from("ai_thread_commands")
+        .select("external_thread_id")
+        .eq("workspace_id", auth.workspaceId)
+        .eq("connection_id", auth.connectionId)
+        .eq("action", "create")
+        .eq("status", "succeeded")
+        .not("external_thread_id", "is", null)
+        .order("completed_at", { ascending: false })
+        .limit(500);
+      if (platform) query = query.eq("platform", platform);
+      return query;
+    })(),
+    (() => {
+      let query = admin
+        .from("ai_thread_commands")
+        .select("external_thread_id")
+        .eq("workspace_id", auth.workspaceId)
+        .eq("connection_id", auth.connectionId)
+        .eq("action", "delete")
+        .eq("status", "succeeded")
+        .not("external_thread_id", "is", null)
+        .limit(500);
+      if (platform) query = query.eq("platform", platform);
+      return query;
+    })(),
   ]);
   if (creates.error) throw mapDatabaseError(creates.error);
   if (deletes.error) throw mapDatabaseError(deletes.error);

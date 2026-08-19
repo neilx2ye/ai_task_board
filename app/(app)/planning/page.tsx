@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
 import { ProjectBridgeNavigation } from "@/components/project-bridge-navigation";
 import { ProjectPlanningView } from "@/components/project-planning-view";
 import { ProjectTabBar } from "@/components/project-tab-bar";
+import type { ProjectEditInput } from "@/components/project-visibility-dialog";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
@@ -14,6 +15,7 @@ import {
   DeleteThreadDialog,
   RenameThreadDialog,
 } from "@/components/thread-management-dialogs";
+import { ThreadPlanningNotesEditor } from "@/components/thread-planning-notes-editor";
 import { TurnPlanPanel } from "@/components/turn-plan-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,8 +23,13 @@ import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { useHiddenProjects } from "@/hooks/use-hidden-projects";
+import { useRemovedProjects } from "@/hooks/use-removed-projects";
 import { useSelectedProject } from "@/hooks/use-selected-project";
-import { useSessions } from "@/hooks/use-sessions";
+import {
+  useMarkSessionCompletionsViewed,
+  useSessions,
+} from "@/hooks/use-sessions";
+import { useUpdateProject } from "@/hooks/use-update-project";
 import {
   supportsWebThreadManagement,
   supportsWebThreadRename,
@@ -43,6 +50,7 @@ import {
   type SessionProjectBridge,
   type SessionProjectGroup,
 } from "@/lib/domain/session-directory-groups";
+import { summarizeProjectUpdateResults } from "@/lib/domain/project-dispatch-summary";
 import {
   findCreatedWebThread,
   type PendingWebThreadCreation,
@@ -61,10 +69,12 @@ type ThreadPickerTarget = {
 
 /**
  * 任务规划工作台：与会话页共用「设备 → 项目目录 → Thread」导航。
- * 项目级规划按路径跨 Bridge 共享，与单个 Thread 的 Turn 规划链完全分开。
+ * 项目级规划按路径跨 Bridge 共享；每个 Thread 另有只属于该会话的思考笔记
+ * 和 Turn 规划链，两者与项目规划互不混用。
  */
 export default function PlanningPage() {
   const sessionsQuery = useSessions();
+  const markCompletionsViewed = useMarkSessionCompletionsViewed();
   const directoriesQuery = useBridgeDirectories();
   const workspaceQuery = useWorkspace();
   const isOwner = workspaceQuery.data?.role === "owner";
@@ -82,6 +92,9 @@ export default function PlanningPage() {
   const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   // 「管理项目」里隐藏的项目：从 Tab 链与「全部」视图剔除（浏览器本地）。
   const { hiddenProjectIds, setProjectHidden } = useHiddenProjects();
+  // 「管理项目」里删除的项目：隐藏之外，还从管理弹窗中移除（浏览器本地）。
+  const { removedProjectIds, setProjectRemoved } = useRemovedProjects();
+  const updateProject = useUpdateProject();
   const [pickerTarget, setPickerTarget] = useState<ThreadPickerTarget | null>(
     null,
   );
@@ -99,6 +112,44 @@ export default function PlanningPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
+
+  const handleProjectUpdate = useCallback(
+    async (project: SessionProjectGroup, input: ProjectEditInput) => {
+      const { results } = await updateProject.mutateAsync({
+        working_directory: project.workingDirectory ?? "",
+        name: input.name,
+        new_working_directory: input.workingDirectory,
+      });
+      if (!results.some((result) => result.status === "submitted")) {
+        throw new Error(summarizeProjectUpdateResults(results));
+      }
+      const nextId =
+        input.workingDirectory === project.workingDirectory
+          ? project.id
+          : `path:${input.workingDirectory}`;
+      if (nextId !== project.id) {
+        if (hiddenProjectIds.has(project.id)) {
+          setProjectHidden(project.id, false);
+          setProjectHidden(nextId, true);
+        }
+        if (selectedProjectId === project.id) {
+          setSelectedProjectId(nextId);
+        }
+        if (selectedPlanningProjectId === project.id) {
+          setSelectedPlanningProjectId(nextId);
+        }
+      }
+      setNotice(summarizeProjectUpdateResults(results));
+    },
+    [
+      hiddenProjectIds,
+      selectedPlanningProjectId,
+      selectedProjectId,
+      setProjectHidden,
+      setSelectedProjectId,
+      updateProject,
+    ],
+  );
 
   const sessionCandidates = useMemo(
     () =>
@@ -135,14 +186,18 @@ export default function PlanningPage() {
     () => listSessionProjects(connectionGroups),
     [connectionGroups],
   );
+  const dismissedProjectIds = useMemo(
+    () => new Set([...hiddenProjectIds, ...removedProjectIds]),
+    [hiddenProjectIds, removedProjectIds],
+  );
   const projects = useMemo(
     () =>
-      allProjects.filter((project) => !hiddenProjectIds.has(project.id)),
-    [allProjects, hiddenProjectIds],
+      allProjects.filter((project) => !dismissedProjectIds.has(project.id)),
+    [allProjects, dismissedProjectIds],
   );
   const visibleProjectGroups = useMemo(
-    () => excludeHiddenProjects(connectionGroups, hiddenProjectIds),
-    [connectionGroups, hiddenProjectIds],
+    () => excludeHiddenProjects(connectionGroups, dismissedProjectIds),
+    [connectionGroups, dismissedProjectIds],
   );
   const visibleGroups = useMemo(
     () =>
@@ -157,6 +212,33 @@ export default function PlanningPage() {
     () =>
       visibleProjectGroups.reduce(
         (count, group) => count + group.sessions.length,
+        0,
+      ),
+    [visibleProjectGroups],
+  );
+  const allRunningTaskCount = useMemo(
+    () =>
+      visibleProjectGroups.reduce(
+        (count, group) =>
+          count +
+          group.sessions.reduce(
+            (sum, session) => sum + (session.running_task_count ?? 0),
+            0,
+          ),
+        0,
+      ),
+    [visibleProjectGroups],
+  );
+  const allUnviewedCompletedCount = useMemo(
+    () =>
+      visibleProjectGroups.reduce(
+        (count, group) =>
+          count +
+          group.sessions.reduce(
+            (sum, session) =>
+              sum + (session.unviewed_completed_count ?? 0),
+            0,
+          ),
         0,
       ),
     [visibleProjectGroups],
@@ -253,6 +335,14 @@ export default function PlanningPage() {
   // 这里不手动清理 id，Thread 因清单抖动短暂消失再回来时面板可以原地恢复。
   const toggleSessionSelected = (sessionId: string) => {
     setSelectedPlanningProjectId(null);
+    if (selectedSessionId !== sessionId) {
+      const session = sessions.find(
+        (candidate) => candidate.id === sessionId,
+      );
+      if (session && (session.unviewed_completed_count ?? 0) > 0) {
+        markCompletionsViewed.mutate(sessionId);
+      }
+    }
     setSelectedSessionId((previous) =>
       previous === sessionId ? null : sessionId,
     );
@@ -367,10 +457,15 @@ export default function PlanningPage() {
             projects={projects}
             allProjects={allProjects}
             hiddenProjectIds={hiddenProjectIds}
+            removedProjectIds={removedProjectIds}
             onToggleHiddenProject={setProjectHidden}
+            onToggleRemovedProject={setProjectRemoved}
+            onUpdateProject={handleProjectUpdate}
             selectedProjectId={selectedProjectId}
             onSelect={setSelectedProjectId}
             totalSessionCount={allVisibleSessionCount}
+            totalRunningTaskCount={allRunningTaskCount}
+            totalUnviewedCompletedCount={allUnviewedCompletedCount}
             connections={connectionsQuery.data ?? []}
             canManage={Boolean(isOwner)}
             onNotice={setNotice}
@@ -403,7 +498,7 @@ export default function PlanningPage() {
                         : "项目、Bridge 与 Threads"}
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      选中项目看共享规划，选中 Thread 编排 Turn 链
+                      选中项目看共享规划，选中 Thread 写独立规划并编排 Turn 链
                     </p>
                   </div>
                 )}
@@ -497,6 +592,12 @@ export default function PlanningPage() {
                     </Badge>
                   </header>
 
+                  <ThreadPlanningNotesEditor
+                    key={selectedSession.id}
+                    sessionId={selectedSession.id}
+                    sessionName={selectedSession.name}
+                  />
+
                   <TurnPlanPanel session={selectedSession} />
                 </div>
               ) : projectPlanningContext ? (
@@ -513,7 +614,7 @@ export default function PlanningPage() {
                   <EmptyState
                     icon={<BotIcon className="size-6" />}
                     title="没有选中的项目或 Thread"
-                    description="在左侧点击项目，可以记录整个项目跨 Bridge 共享的思考与规划；点击一个 Thread，则为它编排独立的 Turn 规划链。"
+                    description="在左侧点击项目，可以记录整个项目跨 Bridge 共享的思考与规划；点击一个 Thread，则编辑它自己的规划笔记，并为它编排独立的 Turn 规划链。"
                     className="w-full max-w-md"
                   />
                 </div>
@@ -572,6 +673,12 @@ export default function PlanningPage() {
           );
         }}
         onOpen={(sessionId) => {
+          const session = sessions.find(
+            (candidate) => candidate.id === sessionId,
+          );
+          if (session && (session.unviewed_completed_count ?? 0) > 0) {
+            markCompletionsViewed.mutate(sessionId);
+          }
           setSelectedPlanningProjectId(null);
           setSelectedSessionId(sessionId);
           setPickerTarget(null);
@@ -614,7 +721,7 @@ export default function PlanningPage() {
           onSubmitted={() =>
             setNotice(
               `Thread 名称已更新，并已提交给 Bridge 同步到本机 ${agentDisplayName(
-                renameSession.connection.platform,
+                renameSession.platform,
               )}。`,
             )
           }
@@ -634,7 +741,7 @@ export default function PlanningPage() {
             }
             setNotice(
               `Thread 已从 Console 隐藏，并已提交给在线 Bridge 从本机 ${agentDisplayName(
-                deleteSession.connection.platform,
+                deleteSession.platform,
               )} 删除。`,
             );
           }}

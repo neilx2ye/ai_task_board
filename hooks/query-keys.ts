@@ -12,5 +12,8 @@ export const planningNotesQueryKey = (
   projectRef: string,
 ) => ["planning-notes", projectRef] as const;
 
+export const threadPlanningNotesQueryKey = (sessionId: string) =>
+  ["thread-planning-notes", sessionId] as const;
+
 export const turnPlansQueryKey = (sessionId: string) =>
   ["turn-plans", sessionId] as const;

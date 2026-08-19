@@ -112,6 +112,8 @@ const bridgeConstraintsReportSchema =
 export const exchangeBridgeConfigurationSchema = z
   .object({
     runtime_instance_id: z.string().uuid(),
+    /** Canonical Bridge runtime kind (codex/kimi/antigravity/claude). */
+    platform: nonEmptyText.max(100).optional(),
     report_sequence: z
       .number()
       .int()

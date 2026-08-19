@@ -33,7 +33,11 @@ import {
   defaultCodexModel,
   reasoningEffortLabel,
 } from "@/lib/codex-models";
-import { agentDisplayName } from "@/lib/agent-platforms";
+import {
+  agentDisplayName,
+  bridgeKindDisplayName,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 import type {
   SessionConnectionSummary,
   SessionListItem,
@@ -56,11 +60,15 @@ export function CreateThreadDialog({
   workingDirectory: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmitted: (input: { name: string }) => void;
+  onSubmitted: (input: { name: string; platform?: string | null }) => void;
 }) {
   const createThread = useCreateThread(connection.id);
+  const unified = isUnifiedPlatform(connection.platform);
   const [name, setName] = useState("");
-  const agentName = agentDisplayName(connection.platform);
+  const [platform, setPlatform] = useState("codex");
+  const agentName = unified
+    ? bridgeKindDisplayName(platform)
+    : agentDisplayName(connection.platform);
   const modelOptions = agentModelOptions(
     connection.model_catalog,
     connection.platform,
@@ -110,14 +118,16 @@ export function CreateThreadDialog({
       await createThread.mutateAsync({
         name: submittedName,
         directory_key: directoryKey,
-        model: model === INHERIT_AGENT_SETTING ? null : model,
+        model:
+          unified || model === INHERIT_AGENT_SETTING ? null : model,
         reasoning_effort:
-          reasoningEffort === INHERIT_AGENT_SETTING
+          unified || reasoningEffort === INHERIT_AGENT_SETTING
             ? null
             : reasoningEffort,
+        platform: unified ? platform : null,
       });
       onOpenChange(false);
-      onSubmitted({ name: submittedName });
+      onSubmitted({ name: submittedName, platform: unified ? platform : null });
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建失败，请稍后重试");
     }
@@ -135,6 +145,27 @@ export function CreateThreadDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {unified ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`new-thread-platform-${connection.id}`}>
+                运行时
+              </Label>
+              <Select value={platform} onValueChange={setPlatform}>
+                <SelectTrigger id={`new-thread-platform-${connection.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["codex", "kimi", "antigravity", "claude"] as const).map(
+                    (kind) => (
+                      <SelectItem key={kind} value={kind}>
+                        {bridgeKindDisplayName(kind)}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`new-thread-${connection.id}`}>Thread 名称</Label>
             <Input
@@ -147,6 +178,7 @@ export function CreateThreadDialog({
               placeholder="例如：修复登录流程"
             />
           </div>
+          {!unified ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`new-thread-model-${connection.id}`}>模型</Label>
@@ -193,6 +225,7 @@ export function CreateThreadDialog({
               </Select>
             </div>
           </div>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             {selectedModel?.description ??
               `模型与思考强度由运行 Bridge 的 ${agentName} 配置决定。`}
@@ -241,9 +274,7 @@ export function RenameThreadDialog({
   onSubmitted: () => void;
 }) {
   const renameThread = useRenameThread(session.id);
-  const agentName = agentDisplayName(
-    session.connection?.platform ?? session.platform,
-  );
+  const agentName = agentDisplayName(session.platform);
   const [name, setName] = useState(session.name);
   const [error, setError] = useState<string | null>(null);
 

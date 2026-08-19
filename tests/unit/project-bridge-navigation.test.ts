@@ -63,6 +63,8 @@ describe("Project-first Bridge navigation", () => {
     name: "主应用",
     workingDirectory: "/workspace/app",
     sessionCount: 2,
+    runningTaskCount: 1,
+    unviewedCompletedCount: 0,
     bridges: [
       {
         connection: laptopConnection,

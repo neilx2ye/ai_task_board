@@ -25,10 +25,13 @@ const connectionParamsSchema = z
 export async function GET(request: Request, route: RouteContext) {
   return withApiHandler(async () => {
     const { connectionId } = connectionParamsSchema.parse(await route.params);
+    const platform =
+      new URL(request.url).searchParams.get("platform") ?? undefined;
     return apiSuccess(
       await getBridgeConfiguration(
         await ownerContextForRequest(request),
         connectionId,
+        platform,
       ),
     );
   });
@@ -37,6 +40,8 @@ export async function GET(request: Request, route: RouteContext) {
 export async function PATCH(request: Request, route: RouteContext) {
   return withApiHandler(async () => {
     const { connectionId } = connectionParamsSchema.parse(await route.params);
+    const platform =
+      new URL(request.url).searchParams.get("platform") ?? undefined;
     const input = await parseJson(
       request,
       updateBridgeConfigurationSchema,
@@ -46,6 +51,7 @@ export async function PATCH(request: Request, route: RouteContext) {
       await updateBridgeConfiguration(
         await ownerContextForRequest(request),
         connectionId,
+        platform,
         input,
         requireIdempotencyKey(request),
       ),

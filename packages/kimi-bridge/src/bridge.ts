@@ -831,6 +831,7 @@ export class KimiBridge {
     const firstDirectory = this.configuration.localWorkingDirectories[0];
     return {
       runtime_instance_id: this.runtimeInstanceId,
+      platform: "kimi",
       report_sequence: this.reportSequence,
       lease_seconds: this.configuration.runtimeLeaseSeconds,
       release_runtime: releaseRuntime,
@@ -1159,7 +1160,7 @@ export class KimiBridge {
     return {
       external_conversation_ref: session.sessionId,
       name: name.slice(0, 200),
-      platform: "kimi-code",
+      platform: "kimi",
       model: this.knownModels.get(session.sessionId) ?? null,
       working_directory: session.cwd,
       directory_key: directory.key,

@@ -17,6 +17,8 @@ import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 export type AIAuthContext = {
   connectionId: string;
   workspaceId: string;
+  /** Platform label of the authenticated connection (may be a unified "All"). */
+  platform: string;
   tokenHash: string;
 };
 
@@ -99,6 +101,10 @@ export type SessionCurrentTaskSummary = Pick<
 export type SessionListItem = AISessionRow & {
   connection: SessionConnectionSummary;
   current_task: SessionCurrentTaskSummary | null;
+  /** 最近一次完成的任务；待查看状态清空后仍用于展示“已完成”。 */
+  last_completed_task: SessionCurrentTaskSummary | null;
+  /** 当前被本会话领取/执行中的任务数（claimed/running）。 */
+  running_task_count: number;
   queued_task_count: number;
   /** Latest non-failed model selection submitted through Web management. */
   configured_model: string | null;

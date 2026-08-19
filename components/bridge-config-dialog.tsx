@@ -37,9 +37,17 @@ import {
   type BridgeDesiredConfig,
 } from "@/hooks/use-bridge-config";
 import {
-  isAntigravityPlatform,
-  isKimiPlatform,
+  bridgeKindDisplayName,
+  canonicalBridgeKind,
+  isUnifiedPlatform,
 } from "@/lib/agent-platforms";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { AIBridgeDirectoryRow } from "@/lib/types/database";
 
 type BridgeConnection = {
@@ -422,19 +430,21 @@ function LocalDirectories({
 
 function BridgeConfigForm({
   connection,
+  platform,
   configuration,
   directories,
   onConflict,
   onSubmitStart,
 }: {
   connection: BridgeConnection;
+  platform: string;
   configuration: BridgeConfiguration;
   directories: AIBridgeDirectoryRow[];
   onConflict: () => Promise<unknown>;
   onSubmitStart: () => void;
 }) {
   const fieldId = useId();
-  const updateConfig = useUpdateBridgeConfig(connection.id);
+  const updateConfig = useUpdateBridgeConfig(connection.id, platform);
   const [enabled, setEnabled] = useState(configuration.desired.enabled);
   const [includeTitles, setIncludeTitles] = useState(
     configuration.desired.include_thread_titles,
@@ -469,21 +479,23 @@ function BridgeConfigForm({
   const [error, setError] = useState<string | null>(null);
 
   const constraints = configuration.applied?.constraints ?? null;
-  // 历史同步只有 Codex 运行时实现；Web 目录管理三个运行时都支持，
-  // 但 Kimi / Antigravity 需要 Bridge 1.3.0 起的能力版本。
-  const isCodexRuntime =
-    !isKimiPlatform(connection.platform) &&
-    !isAntigravityPlatform(connection.platform);
-  const allowWorkingDirectoriesEnvVar = isKimiPlatform(connection.platform)
+  // 历史同步只有 Codex 运行时实现；Web 目录管理四个运行时都支持，
+  // 但 Kimi / Antigravity / Claude Code 需要 Bridge 1.3.0 起的能力版本。
+  const isCodexRuntime = platform === "codex";
+  const allowWorkingDirectoriesEnvVar = platform === "kimi"
     ? "KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
-    : isAntigravityPlatform(connection.platform)
+    : platform === "antigravity"
       ? "ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
-      : "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES";
-  const localWorkingDirectoriesEnvVar = isKimiPlatform(connection.platform)
+      : platform === "claude"
+        ? "CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
+        : "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES";
+  const localWorkingDirectoriesEnvVar = platform === "kimi"
     ? "KIMI_WORKING_DIRECTORIES"
-    : isAntigravityPlatform(connection.platform)
+    : platform === "antigravity"
       ? "ANTIGRAVITY_WORKING_DIRECTORIES"
-      : "CODEX_WORKING_DIRECTORIES";
+      : platform === "claude"
+        ? "CLAUDE_WORKING_DIRECTORIES"
+        : "CODEX_WORKING_DIRECTORIES";
   const titleUploadBlocked = constraints?.allow_thread_titles === false;
   // A locally blocked device must still let the Owner turn an already-saved
   // desired value off; only enabling the disclosure is forbidden.
@@ -949,11 +961,13 @@ function BridgeConfigForm({
 
       {!isCodexRuntime ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Kimi / Antigravity 运行时暂不支持历史同步，该项以设备本机配置为准。
+          Kimi / Antigravity / Claude Code 运行时暂不支持历史同步，该项以设备本机配置为准。
           设备还需设置
-          {isKimiPlatform(connection.platform)
+          {platform === "kimi"
             ? " KIMI_BRIDGE_WEB_CONFIG=true"
-            : " ANTIGRAVITY_BRIDGE_WEB_CONFIG=true"}
+            : platform === "antigravity"
+              ? " ANTIGRAVITY_BRIDGE_WEB_CONFIG=true"
+              : " CLAUDE_BRIDGE_WEB_CONFIG=true"}
           后才会应用这里的启停、标题与上限设置。
         </p>
       ) : null}
@@ -1002,7 +1016,16 @@ export function BridgeConfigDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const configQuery = useBridgeConfig(connection.id, open);
+  const unified = isUnifiedPlatform(connection.platform);
+  const [platform, setPlatform] = useState("codex");
+  const selectedPlatform = unified
+    ? platform
+    : canonicalBridgeKind(connection.platform);
+  const configQuery = useBridgeConfig(
+    connection.id,
+    selectedPlatform,
+    open,
+  );
   const directoriesQuery = useBridgeDirectories(open);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
 
@@ -1015,11 +1038,37 @@ export function BridgeConfigDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Bridge 设置 · {connection.name}</DialogTitle>
+          <DialogTitle>
+            Bridge 设置 · {connection.name}
+            {unified ? ` · ${bridgeKindDisplayName(platform)}` : ""}
+          </DialogTitle>
           <DialogDescription>
             Web 只保存期望值；设备会在本地安全边界内应用，并回报实际值。
+            {unified
+              ? "统一设备连接下，每个 Bridge 运行时都有独立的一套设置。"
+              : ""}
           </DialogDescription>
         </DialogHeader>
+
+        {unified ? (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="bridge-config-platform">运行时</Label>
+            <Select value={platform} onValueChange={setPlatform}>
+              <SelectTrigger id="bridge-config-platform">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(["codex", "kimi", "antigravity", "claude"] as const).map(
+                  (kind) => (
+                    <SelectItem key={kind} value={kind}>
+                      {bridgeKindDisplayName(kind)}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
 
         {configQuery.isLoading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -1050,11 +1099,14 @@ export function BridgeConfigDialog({
               </p>
             ) : null}
             <BridgeConfigForm
-              key={configQuery.data.configuration.version}
+              key={`${platform}:${configQuery.data.configuration.version}`}
               connection={connection}
+              platform={selectedPlatform}
               configuration={configQuery.data.configuration}
               directories={(directoriesQuery.data ?? []).filter(
-                (directory) => directory.connection_id === connection.id,
+                (directory) =>
+                  directory.connection_id === connection.id &&
+                  (!unified || directory.platform === platform),
               )}
               onSubmitStart={() => setConflictNotice(null)}
               onConflict={async () => {

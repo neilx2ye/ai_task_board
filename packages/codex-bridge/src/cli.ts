@@ -19,30 +19,33 @@ import {
 const HELP = `AI Task Board Bridge
 
 Usage:
-  ai-task-board-bridge setup [codex|kimi|antigravity|both|all]
-  ai-task-board-bridge run [codex|kimi|antigravity]
+  ai-task-board-bridge setup [codex|kimi|antigravity|claude|both|all]
+  ai-task-board-bridge run [codex|kimi|antigravity|claude|all]
 
 Commands:
-  setup  Interactively choose and install Codex, Kimi, Antigravity, or several.
-         On Linux, setup installs and starts the current user's systemd service
-         or services; it does not leave a Bridge running inside the npx process.
-  run    Run one Bridge in the foreground using environment variables
-         (default: codex)
+  setup  Interactively choose and install one unified device Bridge for the
+         current user. A single service, environment file and Connection Token
+         host Codex, Kimi, Antigravity and Claude Code together; re-running
+         setup merges newly available Bridge kinds without re-asking the token.
+  run    Run one Bridge runtime, or "run all" to run the unified supervisor,
+         in the foreground using environment variables.
 
 Interactive vs non-interactive:
-  未提供 AI_TASK_BOARD_CONNECTION_TOKEN 时进入交互式配置：先询问要安装/运行的
-  Bridge（已通过参数指定则跳过），再询问 Board 地址（留空使用
-  https://task.neilx.online）与 Connection Token。三种 Bridge 的交互问题完全
-  一致，其余配置（工作目录、thread/并发上限、权限与审批策略等）在网页
-  「AI 连接 → Bridge 设置」中管理。
+  未提供 AI_TASK_BOARD_CONNECTION_TOKEN 时进入交互式配置：只询问一次 Board
+  地址（留空使用 https://task.neilx.online）、Connection Token 与要启用的
+  Bridge 类型。其余配置（工作目录、thread/并发上限、权限与审批策略等）在
+  网页「AI 连接 → Bridge 设置」中按平台管理。
   提供 AI_TASK_BOARD_CONNECTION_TOKEN 后直接按环境变量非交互安装/运行，不再
   提问；未提供 Board 地址时同样使用默认地址。run 直接前台运行，npx 进程结束后
-  Bridge 随之下线；setup 写入当前用户的 systemd 用户服务并立即启动。
+  Bridge 随之下线；setup 写入并启动当前用户的唯一 systemd 用户服务
+  （current user's systemd service）并立即启动。
 
 Examples:
   ai-task-board-bridge setup
   ai-task-board-bridge setup kimi
+  ai-task-board-bridge run all
   ai-task-board-bridge run antigravity
+  ai-task-board-bridge setup claude
   AI_TASK_BOARD_URL='https://board.example.com' \\
     AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
     ai-task-board-bridge setup codex
@@ -52,6 +55,8 @@ Required environment variables:
 
 Optional environment variables:
   AI_TASK_BOARD_URL               Board HTTPS base URL (default: https://task.neilx.online)
+  AI_TASK_BOARD_BRIDGES           Comma list of enabled kinds for run all/setup
+                                  (codex,kimi,antigravity,claude or all)
   CODEX_THREAD_ID                 Manage only this thread (legacy compatibility)
   CODEX_WORKING_DIRECTORY         Legacy single working directory (default: cwd)
   CODEX_WORKING_DIRECTORIES       JSON allowlist of {key,name,path} directories
@@ -96,6 +101,16 @@ Antigravity variables:
   ANTIGRAVITY_PRINT_TIMEOUT       Go duration, e.g. 5m, 90s, or 1h
   ANTIGRAVITY_REGISTRY_FILE       Local thread registry JSON path
   ANTIGRAVITY_BINARY              Antigravity CLI executable (default: agy)
+
+Claude variables:
+  CLAUDE_WORKING_DIRECTORY        Working directory (default: cwd)
+  CLAUDE_WORKING_DIRECTORIES      JSON allowlist of {key,name,path} directories
+  CLAUDE_MAX_THREADS              Maximum Sessions to manage (1..500)
+  CLAUDE_MAX_CONCURRENT_TURNS     Device-wide concurrent turns (1..32)
+  CLAUDE_BRIDGE_APPROVAL_MODE     accept or decline
+  CLAUDE_BRIDGE_MODE              default, plan, accept-edits, or bypass-permissions
+  CLAUDE_BINARY                   claude-agent-acp executable (default:
+                                  claude-agent-acp on PATH)
 
 Options:
   -h, --help     Show this help

@@ -41,6 +41,47 @@ export function useSessions() {
   });
 }
 
+type MarkCompletionsViewedResult = {
+  session_id: string;
+  unviewed_completed_count: number;
+};
+
+/** 打开 Thread 时把“完成未查看”任务标记为已查看，并乐观更新会话清单。 */
+export function useMarkSessionCompletionsViewed() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      apiFetch<MarkCompletionsViewedResult>(
+        `/api/user/sessions/${sessionId}/viewed`,
+        { method: "POST" },
+      ),
+    onMutate: async (sessionId) => {
+      await queryClient.cancelQueries({ queryKey: SESSIONS_QUERY_KEY });
+      const previous = queryClient.getQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+      );
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.map((session) =>
+            session.id === sessionId
+              ? { ...session, unviewed_completed_count: 0 }
+              : session,
+          ),
+      );
+      return { previous };
+    },
+    onError: (_error, _sessionId, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(SESSIONS_QUERY_KEY, context.previous);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+    },
+  });
+}
+
 export function useSessionConversation(sessionId: string | null) {
   return useInfiniteQuery({
     queryKey: sessionQueryKey(sessionId ?? ""),
@@ -239,6 +280,7 @@ export function useCreateThread(connectionId: string) {
       directory_key?: string | null;
       model?: string | null;
       reasoning_effort?: string | null;
+      platform?: string | null;
     }) =>
       apiFetch<ThreadCommandResult>(
         `/api/user/connections/${connectionId}/threads`,

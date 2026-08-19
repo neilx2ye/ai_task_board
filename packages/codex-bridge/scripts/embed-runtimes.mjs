@@ -22,3 +22,4 @@ async function embedRuntime(workspaceName, destinationName) {
 
 await embedRuntime("kimi-bridge", "kimi-runtime");
 await embedRuntime("antigravity-bridge", "antigravity-runtime");
+await embedRuntime("claude-code-bridge", "claude-runtime");

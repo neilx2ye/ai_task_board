@@ -67,6 +67,8 @@ export {
 } from "./working-directories.js";
 
 const BRIDGE_VERSION = "1.6.0";
+/** Canonical settings-row kind shared with the unified device Bridge. */
+const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -261,6 +263,7 @@ type RemoteConfigurationResponse = {
 
 type RemoteConfigurationStatus = {
   runtime_instance_id: string;
+  platform: string;
   report_sequence: number;
   lease_seconds: number;
   release_runtime: boolean;
@@ -1299,6 +1302,7 @@ class BoardClient {
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      platform: BRIDGE_PLATFORM,
       device_id: this.deviceIdentity.deviceId,
       device_label: this.deviceIdentity.deviceLabel,
       ...(quota === undefined ? {} : { quota }),
@@ -1363,6 +1367,7 @@ class BoardClient {
         signal,
         body: {
           runtime_instance_id: runtimeInstanceId,
+          platform: BRIDGE_PLATFORM,
           lease_seconds: 60,
         },
       },
@@ -1372,7 +1377,9 @@ class BoardClient {
 
   async listCreatedThreadIds(signal?: AbortSignal): Promise<string[]> {
     const result = await this.request<CreatedThreadIdsResponse>(
-      "/api/ai/thread-commands/created",
+      `/api/ai/thread-commands/created?platform=${encodeURIComponent(
+        BRIDGE_PLATFORM,
+      )}`,
       {
         method: "GET",
         maxAttempts: 1,
@@ -3255,6 +3262,7 @@ class DeviceBridge {
     this.reportSequence += 1;
     return {
       runtime_instance_id: this.runtimeInstanceId,
+      platform: BRIDGE_PLATFORM,
       report_sequence: this.reportSequence,
       lease_seconds: this.configuration.configurationLeaseSeconds,
       release_runtime: releaseRuntime,

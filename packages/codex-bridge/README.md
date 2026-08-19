@@ -1,10 +1,12 @@
 # AI Task Board Bridge
 
 `ai-task-board-bridge` is the single public npm package for AI Task Board's
-device companions. Its interactive installer asks whether to install Codex
-Bridge, Kimi Bridge, Antigravity Bridge, or a combination. The three runtimes
-remain separate processes with separate Board Connections, tokens,
-working-directory allowlists, and systemd services.
+device companions. One system user needs exactly one Bridge: the interactive
+installer asks once for the Board URL, one Connection Token, and the runtimes
+to enable (all four by default), then installs a single systemd service that
+supervises the Codex, Kimi, Antigravity, and Claude Code runtimes together.
+Re-running setup merges newly available runtime kinds into the same service
+without asking for the token again.
 
 Codex Bridge starts the local `codex app-server` over stdio, discovers
 non-archived top-level Codex threads, maps each thread to a Board Session,
@@ -28,28 +30,34 @@ npx --yes ai-task-board-bridge@1.6.0 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
-`both`, and `all`. Automation or repeat installs can bypass that first prompt:
+`Claude Code Bridge`, `both`, and `all` (the unified device Bridge). Automation
+or repeat installs can bypass that first prompt:
 
 ```bash
 npx --yes ai-task-board-bridge@1.6.0 setup codex
 npx --yes ai-task-board-bridge@1.6.0 setup kimi
 npx --yes ai-task-board-bridge@1.6.0 setup antigravity
+npx --yes ai-task-board-bridge@1.6.0 setup claude
 npx --yes ai-task-board-bridge@1.6.0 setup both
 npx --yes ai-task-board-bridge@1.6.0 setup all
 ```
 
-Installing a combination runs the selected setup flows in sequence. Create a
-separate Board Connection with the matching platform for each runtime; a token
-for one runtime must not be reused for another. The public tarball embeds the
-private Kimi and Antigravity runtimes, so no second npm package needs to be
-published or installed.
+Every target installs the same single user service, environment file, and
+Connection Token; `setup kimi` on an existing install simply enables the Kimi
+runtime inside that service. Use one "统一设备 Bridge" (`All`) Board
+Connection whose token covers all four runtimes, or keep single-platform
+Connections when only one agent is used. The public tarball embeds the private
+Kimi, Antigravity, and Claude Code runtimes, so no second npm package needs to
+be published or installed.
 
 `setup` always finishes by installing and starting a systemd user service; it
 never leaves a Bridge running inside the `npx` process. When stdin/stdout is
 not a TTY (for example an SSH command or CI script), `setup codex`,
-`setup kimi`, and `setup antigravity` install the same services from
-environment variables without prompting. The `both`/`all` targets remain
-interactive because each runtime needs its own Connection Token.
+`setup kimi`, `setup antigravity`, and `setup claude` install the same
+services from
+environment variables without prompting. With
+`AI_TASK_BOARD_CONNECTION_TOKEN` present, even the `both`/`all` targets install
+non-interactively because all runtimes share that one token.
 
 ### Codex setup
 
@@ -439,3 +447,36 @@ bounded completion metadata are uploaded.
 `ANTIGRAVITY_BRIDGE_APPROVAL_MODE=accept` adds
 `--dangerously-skip-permissions` and is a high-risk opt-in;
 `ANTIGRAVITY_BRIDGE_SANDBOX=true` enables agy's terminal sandbox.
+
+## Claude Code Bridge
+
+Claude Code Bridge requires Anthropic's official ACP adapter
+(`npm install -g @agentclientprotocol/claude-agent-acp`) plus either a
+`claude login` for subscription users or an `ANTHROPIC_API_KEY` /
+`ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` credential, and a dedicated
+Board Connection whose platform is `Claude Code`. Interactive setup installs
+the separate `ai-task-board-claude-bridge.service`, stores its token in a
+`0600` environment file, and stages the embedded Claude Code runtime under the
+current user's XDG data directory.
+
+Foreground or non-systemd operation uses the same public npm package:
+
+```bash
+AI_TASK_BOARD_URL='https://board.example.com' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
+CLAUDE_BRIDGE_MODE='default' \
+CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.6.0 run claude
+```
+
+`CLAUDE_WORKING_DIRECTORIES` accepts 1 to 100 unique exact `{key,name?,path}`
+entries. The Bridge dynamically reports the Claude ACP model and
+thought-level catalog. Web creation, resumption, and deletion operate on real
+Claude Code Sessions; rename remains hidden because Claude Code does not
+expose a reliable ACP rename operation. Goal mode maps to Claude Code's native
+`/goal` session goal. The Board token is removed from the
+`claude-agent-acp` child environment, and only final replies plus bounded
+completion metadata are uploaded. Interactive setup defaults to declining
+extra ACP permissions; `CLAUDE_BRIDGE_MODE=bypass-permissions` and
+`CLAUDE_BRIDGE_APPROVAL_MODE=accept` are explicit high-risk opt-ins.

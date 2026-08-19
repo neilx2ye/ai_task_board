@@ -19,6 +19,7 @@ export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "codex-bridge", label: "Codex Bridge" },
   { id: "kimi-bridge", label: "Kimi Bridge" },
   { id: "antigravity-bridge", label: "Antigravity Bridge" },
+  { id: "claude-code-bridge", label: "Claude Code Bridge" },
   { id: "bridge-updates", label: "Bridge 升级与回滚" },
   { id: "task-status", label: "任务状态" },
   { id: "ai-integration", label: "AI 接入" },
@@ -46,7 +47,8 @@ export const HELP_ACTIONS: ReadonlyArray<HelpAction> = [
   {
     href: "/planning",
     label: "打开任务规划",
-    description: "查看跨 Bridge 的项目规划笔记与 Thread 的 Turn 规划链",
+    description:
+      "查看跨 Bridge 的项目规划笔记，以及每个 Thread 独立的思考笔记与 Turn 规划链",
   },
   {
     href: "/files",

@@ -14,6 +14,7 @@ import type {
 import type {
   CreateTurnPlanStepInput,
   UpdateTurnPlanStepInput,
+  UpsertThreadPlanningNotesInput,
   UpsertPlanningNotesInput,
 } from "@/lib/validation/user";
 
@@ -52,6 +53,104 @@ export async function upsertPlanningNote(
     .single();
   if (error) throw mapDatabaseError(error);
   return { note: data };
+}
+
+export async function getThreadPlanningNote(
+  context: UserWorkspaceContext,
+  sessionId: string,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("thread_planning_notes")
+    .select("*")
+    .eq("workspace_id", context.workspaceId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  return { note: data };
+}
+
+export async function upsertThreadPlanningNote(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  input: UpsertThreadPlanningNotesInput,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("thread_planning_notes")
+    .upsert(
+      {
+        workspace_id: context.workspaceId,
+        session_id: sessionId,
+        content: input.content,
+        updated_by: context.userId,
+      },
+      { onConflict: "workspace_id,session_id" },
+    )
+    .select("*")
+    .single();
+  if (error) throw mapDatabaseError(error);
+  return { note: data };
+}
+
+/**
+ * 项目工作目录变更后，把按路径共享的项目规划笔记迁到新的 project_ref。
+ * 目标位置已存在笔记时保留两者中最近更新的一份，避免静默覆盖用户内容。
+ */
+export async function migrateProjectPlanningNote(
+  context: UserWorkspaceContext,
+  previousWorkingDirectory: string,
+  nextWorkingDirectory: string,
+): Promise<void> {
+  if (previousWorkingDirectory === nextWorkingDirectory) return;
+  const previousRef = `path:${previousWorkingDirectory}`;
+  const nextRef = `path:${nextWorkingDirectory}`;
+  const admin = createAdminClient();
+
+  const { data: previous, error: previousError } = await admin
+    .from("planning_notes")
+    .select("content, updated_at, updated_by")
+    .eq("workspace_id", context.workspaceId)
+    .eq("project_ref", previousRef)
+    .maybeSingle();
+  if (previousError) throw mapDatabaseError(previousError);
+  if (!previous) return;
+
+  const { data: existing, error: existingError } = await admin
+    .from("planning_notes")
+    .select("content, updated_at, updated_by")
+    .eq("workspace_id", context.workspaceId)
+    .eq("project_ref", nextRef)
+    .maybeSingle();
+  if (existingError) throw mapDatabaseError(existingError);
+
+  const previousIsNewer =
+    !existing ||
+    Date.parse(previous.updated_at) > Date.parse(existing.updated_at);
+  if (!existing || previousIsNewer) {
+    const { error } = await admin
+      .from("planning_notes")
+      .update(
+        existing
+          ? {
+              content: previous.content,
+              updated_by: previous.updated_by,
+            }
+          : { project_ref: nextRef },
+      )
+      .eq("workspace_id", context.workspaceId)
+      .eq("project_ref", existing ? nextRef : previousRef);
+    if (error) throw mapDatabaseError(error);
+  }
+
+  if (existing) {
+    const { error } = await admin
+      .from("planning_notes")
+      .delete()
+      .eq("workspace_id", context.workspaceId)
+      .eq("project_ref", previousRef);
+    if (error) throw mapDatabaseError(error);
+  }
 }
 
 async function requireTurnPlanStep(

@@ -58,7 +58,8 @@ export function ProjectPlanningView({
         <header>
           <h3 className="text-sm font-semibold">项目下的 Threads</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            按 Bridge 分组列出；打开某个 Thread 即可为它编排 Turn 规划链。
+            按 Bridge 分组列出；打开某个 Thread 即可编辑它独立的规划笔记，
+            并编排 Turn 规划链。
           </p>
         </header>
         {project.sessionCount === 0 ? (
@@ -98,7 +99,7 @@ export function ProjectPlanningView({
                           <button
                             type="button"
                             onClick={() => onOpenThread(session.id)}
-                            aria-label={`打开 Thread「${session.name}」的 Turn 规划`}
+                            aria-label={`打开 Thread「${session.name}」的规划与 Turn 链`}
                             className={cn(
                               "flex w-full items-center gap-3 rounded-md border border-border px-3 py-2.5 text-left transition-colors",
                               "hover:bg-secondary/50 outline-none focus-visible:ring-2 focus-visible:ring-ring/50",

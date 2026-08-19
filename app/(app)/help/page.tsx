@@ -177,7 +177,8 @@ export default function HelpPage() {
         <ol className="flex flex-col gap-4">
           <Step index={1} title="准备新设备和 Agent CLI">
             安装 Node.js 18 或更高版本，以及这台设备要接入的 Agent CLI（Codex、Kimi
-            Code，或 Antigravity CLI 1.1.8 及以上），并使用准备运行 Bridge 的同一个
+            Code、Antigravity CLI 1.1.8 及以上，或 Claude Code 的
+            <code>claude-agent-acp</code> 适配器），并使用准备运行 Bridge 的同一个
             操作系统用户完成对应登录。确认该用户可以访问目标工作目录，且设备可以通过
             HTTPS 访问 AI Task Board。
           </Step>
@@ -189,13 +190,16 @@ export default function HelpPage() {
             >
               「AI 连接」
             </Link>
-            ，按设备上的 Agent 创建平台匹配的连接（Codex、Kimi Code 或 Antigravity，
-            一台设备运行多个 Bridge 时每个平台各建一个）。连接令牌
+            ，为一个系统用户创建
+            <strong className="text-foreground">一个</strong>
+            平台为「统一设备 Bridge」的连接：一个连接、一个 Token 即可承载该用户
+            环境里的 Codex、Kimi Code、Antigravity 与 Claude Code 四种运行时。
+            （只接入单个 Agent 时，也可以继续创建对应的单平台连接。）连接令牌
             <strong className="text-foreground">只显示一次</strong>
             ，请立即复制并妥善保存；丢失后只能轮换生成新令牌，旧令牌同时失效。
           </Step>
           <Step index={3} title="准备工作目录和权限边界">
-            三个 Bridge 的工作目录都可以在安装完成后到「AI 连接 → Bridge 设置 /
+            四个 Bridge 的工作目录都可以在安装完成后到「AI 连接 → Bridge 设置 /
             新建项目」用网页添加，交互安装不再询问目录（默认由 Web 管理）；自动化或
             前台部署需要本机固定白名单时，再通过各自前缀的
             <code>*_WORKING_DIRECTORY(S)</code> 环境变量填写绝对路径。Codex Bridge
@@ -208,7 +212,7 @@ export default function HelpPage() {
             <code className="mx-1 rounded bg-muted px-1 text-xs">all</code>。
             如果任务不需要完整文件和网络访问，Codex 请把权限模式设为
             <code className="mx-1 rounded bg-muted px-1 text-xs">safe</code>
-            ；Kimi / Antigravity 保持安装器默认的拒绝额外权限即可。
+            ；Kimi / Antigravity / Claude Code 保持安装器默认的拒绝额外权限即可。
           </Step>
           <Step index={4} title="在新设备上启动 Bridge">
             使用
@@ -218,20 +222,25 @@ export default function HelpPage() {
             >
               下方统一的安装命令
             </a>
-            。<code>setup</code> 安装并启动 systemd 服务（后台常驻），
-            <code>run</code> 直接前台运行；没有显式指定平台时交互式询问，三种 Bridge
-            只问同样两个问题：Board 地址（留空使用
-            <code>https://task.neilx.online</code>）和一次性连接令牌。只要环境变量里
-            提供了 <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，两个命令就直接按
+            。一个系统用户只需一个 Bridge：<code>setup</code> 一次只问 Board 地址
+            （留空使用 <code>https://task.neilx.online</code>）、一个连接令牌和要
+            启用的运行时（默认全部四种），然后安装并启动
+            <strong className="text-foreground">唯一一个</strong>
+            systemd 用户服务，四种运行时在该服务内并行常驻；<code>run all</code>
+            在前台运行同一套运行时。后续如果版本新增了 Bridge 类型，再运行一次
+            <code>setup</code> 即可并入现有服务，无需重新输入 Token。只要环境变量里
+            提供了 <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，setup / run 就按
             环境变量非交互执行，不再提问，因此 SSH 命令或 CI 脚本同样可用
             <code>setup</code> 安装 systemd 服务。
             命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
-            同一台设备和 Connection 只运行一个 Bridge。
+            同一台设备和一个系统用户只运行一个统一 Bridge。
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
-            Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置。交互安装默认
+            Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置；统一设备
+            连接里可以为每个运行时分别选择并调整设置。交互安装默认
             已写入各自的 Web 配置开关（Codex 为
-            <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，Kimi / Antigravity 为各自前缀
+            <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，Kimi / Antigravity / Claude
+            Code 为各自前缀
             的 <code>*_BRIDGE_WEB_CONFIG=true</code>），所以安装后可以直接在网页管理；
             纯环境变量或前台方式启动时才需要显式设置这些开关。再到
             <Link
@@ -266,12 +275,15 @@ export default function HelpPage() {
           thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Linux 推荐使用统一的交互式安装器。它会先询问安装 Codex、Kimi、Antigravity，
-          还是组合，再以执行命令的当前用户创建对应的 systemd user service。三种
-          Bridge 的交互问题完全一致：只询问 Board 地址（留空使用
-          <code>https://task.neilx.online</code>）与 Connection Token；工作目录、
+          Linux 推荐使用统一的交互式安装器。一个系统用户只需一个 Bridge：安装器只
+          询问一次 Board 地址（留空使用
+          <code>https://task.neilx.online</code>）、一个 Connection Token 与要启用
+          的运行时（默认全部四种），然后创建
+          <code className="ml-1">ai-task-board-bridge.service</code>
+          这唯一一个 systemd user service，四种运行时在其中并行常驻。工作目录、
           thread/并发上限、权限与审批策略等其余配置默认由 Web 端管理（安装后到
-          「AI 连接 → Bridge 设置 / 新建项目」添加）。只要提供了
+          「AI 连接 → Bridge 设置 / 新建项目」添加，统一连接下每个运行时各有一套）。
+          再次运行 setup 会把新加入的 Bridge 类型并入现有服务并保留 Token。只要提供了
           <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，<code>setup</code> 和
           <code>run</code> 就直接按环境变量非交互运行，不再提问；<code>setup</code>
           写入 systemd 服务并立即启动，<code>run</code> 只在前台运行、npx 进程结束
@@ -323,12 +335,12 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
           <li>
             交互安装默认写入 <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，因此
             Workspace Owner 安装后就能在“AI 连接 → Bridge 设置”动态启停、切换标题
-            与历史同步，并调整 thread/并发/历史上限；这套远程配置在 Codex、Kimi 与
-            Antigravity 连接上均可使用（历史同步仅 Codex 支持）。纯环境变量或前台
+            与历史同步，并调整 thread/并发/历史上限；这套远程配置在 Codex、Kimi、
+            Antigravity 与 Claude Code 连接上均可使用（历史同步仅 Codex 支持）。纯环境变量或前台
             方式启动时，需要显式设置各自前缀的 <code>*_BRIDGE_WEB_CONFIG=true</code>。
             交互安装同时写入
             <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
-            （Kimi / Antigravity 为各自前缀的
+            （Kimi / Antigravity / Claude Code 为各自前缀的
             <code className="ml-1">*_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>）
             ，因此还可以在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
           </li>
@@ -394,8 +406,8 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
           直接非交互安装并启动 systemd 服务（SSH / CI 同样适用），
           <code>run kimi</code> 在前台运行。未提供
           <code>KIMI_WORKING_DIRECTORY</code> 时默认由 Web 端管理工作目录（安装后到
-          「AI 连接 → Bridge 设置 / 新建项目」添加）。令牌必须来自独立的 Kimi Code
-          连接：
+          「AI 连接 → Bridge 设置 / 新建项目」添加）。使用统一设备连接时，令牌就是
+          那一个连接令牌；也可以继续使用独立的 Kimi Code 连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -438,8 +450,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
             都会扩大自动执行范围。安装器默认拒绝额外权限，请只在可信工作区显式开启。
           </li>
           <li>
-            Linux 安装器创建并启动当前用户的
-            <code className="mx-1">ai-task-board-kimi-bridge.service</code>。
+            Linux 安装器把 Kimi 运行时并入当前用户的统一服务
+            <code className="mx-1">ai-task-board-bridge.service</code>（旧版独立
+            服务 <code>ai-task-board-kimi-bridge.service</code> 会自动停用）。
             Board Connection Token 会从 <code>kimi acp</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
           </li>
@@ -513,10 +526,93 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
             额外启用 agy 终端沙箱。
           </li>
           <li>
-            Linux 安装器创建并启动当前用户的
-            <code className="mx-1">ai-task-board-antigravity-bridge.service</code>。
+            Linux 安装器把 Antigravity 运行时并入当前用户的统一服务
+            <code className="mx-1">ai-task-board-bridge.service</code>（旧版独立
+            服务 <code>ai-task-board-antigravity-bridge.service</code> 会自动停用）。
             Board Connection Token 会从 <code>agy</code> 子进程环境移除；同一 OS
             用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或 token proxy。
+          </li>
+        </ul>
+      </Section>
+
+      <Section
+        id="claude-code-bridge"
+        title="Claude Code Bridge（claude-agent-acp）"
+      >
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Claude Code Bridge 是独立的设备 companion，通过 Anthropic 官方的
+          <code className="mx-1">@agentclientprotocol/claude-agent-acp</code>
+          ACP 适配器驱动本机 Claude Code Sessions。它不会把 Claude 伪装成
+          Codex 模型；请先在「AI 连接」新建平台为 “Claude Code” 的连接，再由
+          拥有 Claude 登录和目标工作区的同一系统用户安装。运行时已内嵌在统一
+          Bridge 包中；ACP 适配器本身需要单独安装：
+          <code className="ml-1">npm install -g @agentclientprotocol/claude-agent-acp</code>。
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Claude Code Bridge 安装命令">
+          {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup claude`}
+        </CopyableCodeBlock>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          订阅用户请先用同一系统用户运行 <code>claude login</code>；API / 自定义
+          网关用户请设置 <code>ANTHROPIC_API_KEY</code>、
+          <code>ANTHROPIC_AUTH_TOKEN</code> 或 <code>CLAUDE_CODE_OAUTH_TOKEN</code>。
+          交互安装只询问 Board 地址与 Token；提供了
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code> 时，
+          <code>setup claude</code> 直接非交互安装并启动 systemd 服务，
+          <code>run claude</code> 在前台运行。未提供
+          <code>CLAUDE_WORKING_DIRECTORY</code> 时默认由 Web 端管理工作目录。令牌
+          可以是统一设备连接的那一个令牌，也可以来自独立的 Claude Code 连接：
+        </p>
+        <CopyableCodeBlock copyLabel="复制 Claude Code Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \\
+CLAUDE_BRIDGE_MODE='default' \\
+CLAUDE_BRIDGE_APPROVAL_MODE='accept' \\
+npx --yes ${BRIDGE_INSTALL_PACKAGE} run claude`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            Bridge 会从 Claude ACP 的会话配置项动态上报可用模型（Default / Sonnet /
+            Opus / Haiku 等）与思考强度；新建 Session 与下一 Turn 的模型选择不会使用
+            Codex 兼容列表。
+          </li>
+          <li>
+            可用 <code>CLAUDE_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；
+            网页新建只发送稳定目录 key，不能注入任意本机路径。设备设置
+            <code className="ml-1">CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
+            （交互安装默认写入）后，目录清单也可以直接在「Bridge
+            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
+            由设备自动创建。
+          </li>
+          <li>
+            Claude ACP 支持新建、恢复和删除 Session，但没有可靠的改名接口，因此
+            Claude Code 连接会隐藏 Thread 改名入口；网页创建时填写的名称仍作为看板
+            显示名保留。
+          </li>
+          <li>
+            Goal 模式使用 Claude Code 原生的
+            <code className="ml-1">/goal</code> 会话目标：开启时在下一 Turn 前设置
+            目标，关闭时发送 <code>/goal clear</code>，需要较新的
+            <code>claude-agent-acp</code> 适配器。
+          </li>
+          <li>
+            交互安装默认写入
+            <code className="ml-1">CLAUDE_BRIDGE_WEB_CONFIG=true</code>
+            ，「Bridge 设置」可以动态启停、调整 Session 数与并发上限；
+            <code className="ml-1">CLAUDE_MAX_THREADS</code>
+            仍是设备本机上限，Web 不能超过它。
+          </li>
+          <li>
+            <code>CLAUDE_BRIDGE_MODE=bypass-permissions</code> 会跳过大部分权限检查，
+            <code className="ml-1">CLAUDE_BRIDGE_APPROVAL_MODE=accept</code>
+            会自动批准与看板任务关联的权限请求，两者都扩大自动执行范围。安装器默认
+            拒绝额外权限，请只在可信工作区显式开启。
+          </li>
+          <li>
+            Linux 安装器把 Claude Code 运行时并入当前用户的统一服务
+            <code className="mx-1">ai-task-board-bridge.service</code>（旧版独立
+            服务 <code>ai-task-board-claude-bridge.service</code> 会自动停用）。
+            Board Connection Token 会从 <code>claude-agent-acp</code> 子进程环境
+            移除；同一 OS 用户下的进程仍不构成强隔离，敏感部署应使用独立 UID 或
+            token proxy。
           </li>
         </ul>
       </Section>
@@ -533,7 +629,8 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           升级失败时旧版本继续运行，错误会显示在「AI 连接 → Bridge 设置」；同一目标
           版本失败后不会立即重试。前台 <code>run</code> 的进程无法自动重启，因此不执行
-          自更新，需要手动重跑安装命令（Codex 为例，Kimi / Antigravity 替换平台名）：
+          自更新，需要手动重跑安装命令（Codex 为例，Kimi / Antigravity / Claude
+          Code 替换平台名）：
         </p>
         <CopyableCodeBlock copyLabel="复制手动升级命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -579,7 +676,7 @@ systemctl --user restart ai-task-board-bridge.service`}</CopyableCodeBlock>
           />
           <StatusRow
             status="waiting_user"
-            description="AI 正在等你回答。Codex Bridge 转发的结构化问题会显示为选择框，并保留原 turn 与 claim（Kimi / Antigravity 通道暂不支持结构化问答）；REST/MCP 纯文字提问仍会结束租约，回复后回到原会话队列。"
+            description="AI 正在等你回答。Codex Bridge 转发的结构化问题会显示为选择框，并保留原 turn 与 claim（Kimi / Antigravity / Claude Code 通道暂不支持结构化问答）；REST/MCP 纯文字提问仍会结束租约，回复后回到原会话队列。"
           />
           <StatusRow
             status="completed"
@@ -599,7 +696,16 @@ systemctl --user restart ai-task-board-bridge.service`}</CopyableCodeBlock>
           <Badge className={cn("mx-1", TASK_STATUS_META.cancelled.badgeClass)}>
             已取消
           </Badge>
-          表示已取消且不可恢复。
+          表示已取消且不可恢复。另外，Thread 完成任务后、在你打开查看前，
+          侧栏会显示
+          <Badge className="mx-1 border-amber-200 bg-amber-50 text-amber-800">
+            待查看
+          </Badge>
+          ，点击打开 Thread 后转为
+          <Badge className="mx-1 border-emerald-200 bg-emerald-50 text-emerald-700">
+            已完成
+          </Badge>
+          。
         </p>
       </Section>
 
@@ -697,18 +803,20 @@ Idempotency-Key: <唯一键>
             Bridge 工作目录、历史同步和规划笔记等数据的变化并自动更新；断线重连后会补拉
             遗漏事件，另有 30 秒低频轮询兜底，不需要手动刷新。
           </FaqItem>
-          <FaqItem question="为什么三个 Bridge 的环境变量数量差很多？">
-            三者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单，也都有
+          <FaqItem question="为什么四个 Bridge 的环境变量数量差很多？">
+            四者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单，也都有
             各自的 *_BRIDGE_WEB_CONFIG 远程配置开关。差异来自
             Agent 能力面：Codex Bridge 要发现并接管本机已存在的 Codex threads，因此多出
             thread 范围（CODEX_THREAD_SCOPE / CODEX_THREAD_ID）、标题与历史同步
-            等开关；Kimi（ACP）和 Antigravity（agy headless）由 Bridge 按需创建
+            等开关；Kimi（ACP）、Antigravity（agy headless）和 Claude Code
+            （claude-agent-acp）由 Bridge 按需创建
             会话，没有可接管的本机清单，也就不需要这些变量。权限类变量则直接映射各自 CLI
             的原生模型：Codex 用沙箱加审批组合，Kimi 用 ACP mode，Antigravity 用
-            --mode、--dangerously-skip-permissions 和 --sandbox。
+            --mode、--dangerously-skip-permissions 和 --sandbox，Claude Code 用
+            ACP permission mode 与审批组合。
           </FaqItem>
           <FaqItem question="交互式安装会问哪些问题？">
-            三种 Bridge 完全一致，只问两个问题：Board 地址（留空使用
+            四种 Bridge 完全一致，只问两个问题：Board 地址（留空使用
             https://task.neilx.online）和 Connection Token（输入不回显、必填）。
             工作目录、thread/并发上限、权限与审批策略等其余配置都在安装后到
             「AI 连接 → Bridge 设置 / 新建项目」管理；环境变量里已有 Token 时，

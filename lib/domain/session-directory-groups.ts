@@ -29,6 +29,10 @@ export type SessionProjectGroup = {
   name: string;
   workingDirectory: string | null;
   sessionCount: number;
+  /** 项目内正在执行的任务数（claimed/running）。 */
+  runningTaskCount: number;
+  /** 项目内已完成但用户尚未查看的任务数。 */
+  unviewedCompletedCount: number;
 };
 
 export type SessionProjectBridge = {
@@ -226,9 +230,20 @@ export function listSessionProjects(
   for (const group of groups) {
     for (const directory of group.directories) {
       const id = sessionProjectIdForDirectory(directory);
+      const runningTaskCount = directory.sessions.reduce(
+        (count, session) => count + (session.running_task_count ?? 0),
+        0,
+      );
+      const unviewedCompletedCount = directory.sessions.reduce(
+        (count, session) =>
+          count + (session.unviewed_completed_count ?? 0),
+        0,
+      );
       const existing = projects.get(id);
       if (existing) {
         existing.sessionCount += directory.sessions.length;
+        existing.runningTaskCount += runningTaskCount;
+        existing.unviewedCompletedCount += unviewedCompletedCount;
         // 任意一个 Bridge 配置了该目录时，优先展示配置里的目录名。
         if (directory.configured) existing.name = directory.name;
         continue;
@@ -238,6 +253,8 @@ export function listSessionProjects(
         name: directory.name,
         workingDirectory: directory.workingDirectory,
         sessionCount: directory.sessions.length,
+        runningTaskCount,
+        unviewedCompletedCount,
       });
     }
   }

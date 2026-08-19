@@ -15,6 +15,7 @@ import {
   SESSIONS_QUERY_KEY,
   taskQueryKey,
   TASKS_QUERY_KEY,
+  threadPlanningNotesQueryKey,
   turnPlansQueryKey,
 } from "@/hooks/query-keys";
 import { compareSessionActivities } from "@/hooks/use-sessions";
@@ -40,6 +41,7 @@ export const REALTIME_TABLES = [
   "ai_bridge_directories",
   "artifacts",
   "planning_notes",
+  "thread_planning_notes",
   "session_turn_plans",
 ] as const;
 
@@ -134,6 +136,13 @@ export function realtimeInvalidations(
       const projectRef = nonEmptyString(row, "project_ref");
       if (projectRef) {
         exact(planningNotesQueryKey(projectRef));
+      }
+    }
+  } else if (table === "thread_planning_notes") {
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "session_id");
+      if (sessionId) {
+        exact(threadPlanningNotesQueryKey(sessionId));
       }
     }
   } else if (table === "session_turn_plans") {

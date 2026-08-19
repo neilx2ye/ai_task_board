@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 
 import { CreateProjectDialog } from "@/components/create-project-dialog";
-import { ProjectVisibilityDialog } from "@/components/project-visibility-dialog";
+import {
+  ProjectVisibilityDialog,
+  type ProjectEditInput,
+} from "@/components/project-visibility-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
@@ -22,12 +25,23 @@ type ProjectTabBarProps = {
   /** 全部项目（含隐藏），供管理对话框使用。 */
   allProjects: SessionProjectGroup[];
   hiddenProjectIds: ReadonlySet<string>;
+  removedProjectIds: ReadonlySet<string>;
   onToggleHiddenProject: (projectId: string, hidden: boolean) => void;
+  onToggleRemovedProject: (projectId: string, removed: boolean) => void;
+  /** 管理对话框中保存项目名称/路径的编辑结果。 */
+  onUpdateProject: (
+    project: SessionProjectGroup,
+    input: ProjectEditInput,
+  ) => Promise<void>;
   /** null 表示选中「全部」。 */
   selectedProjectId: string | null;
   onSelect: (projectId: string | null) => void;
   /** 「全部」Tab 上展示的 Thread 数（不含隐藏项目）。 */
   totalSessionCount: number;
+  /** 「全部」Tab 上正在运行的任务数（不含隐藏项目）。 */
+  totalRunningTaskCount: number;
+  /** 「全部」Tab 上已完成待查看的任务数（不含隐藏项目）。 */
+  totalUnviewedCompletedCount: number;
   /** 创建项目对话框用的连接清单（按设备分组）。 */
   connections: PublicConnection[];
   canManage: boolean;
@@ -38,17 +52,22 @@ function ProjectTab({
   selected,
   onSelect,
   label,
-  count,
+  totalCount,
+  runningCount,
+  unviewedCount,
   title,
   icon,
 }: {
   selected: boolean;
   onSelect: () => void;
   label: string;
-  count: number;
+  totalCount: number;
+  runningCount: number;
+  unviewedCount: number;
   title?: string;
   icon: React.ReactNode;
 }) {
+  const hasActivity = runningCount > 0 || unviewedCount > 0;
   return (
     <button
       type="button"
@@ -66,9 +85,30 @@ function ProjectTab({
     >
       {icon}
       <span className="max-w-40 truncate">{label}</span>
-      <Badge variant="outline" className="tabular-nums">
-        {count}
-      </Badge>
+      {hasActivity ? (
+        <span className="flex shrink-0 items-center gap-1">
+          {runningCount > 0 ? (
+            <Badge
+              title={`${runningCount} 个任务正在运行`}
+              className="border-indigo-300 bg-indigo-100 text-indigo-800 tabular-nums"
+            >
+              {runningCount} 运行
+            </Badge>
+          ) : null}
+          {unviewedCount > 0 ? (
+            <Badge
+              title={`${unviewedCount} 个任务已完成，尚未查看`}
+              className="border-amber-200 bg-amber-50 text-amber-800 tabular-nums"
+            >
+              {unviewedCount} 待查看
+            </Badge>
+          ) : null}
+        </span>
+      ) : (
+        <Badge variant="outline" className="tabular-nums">
+          {totalCount}
+        </Badge>
+      )}
     </button>
   );
 }
@@ -82,10 +122,15 @@ export function ProjectTabBar({
   projects,
   allProjects,
   hiddenProjectIds,
+  removedProjectIds,
   onToggleHiddenProject,
+  onToggleRemovedProject,
+  onUpdateProject,
   selectedProjectId,
   onSelect,
   totalSessionCount,
+  totalRunningTaskCount,
+  totalUnviewedCompletedCount,
   connections,
   canManage,
   onNotice,
@@ -104,7 +149,9 @@ export function ProjectTabBar({
           selected={selectedProjectId === null}
           onSelect={() => onSelect(null)}
           label="全部"
-          count={totalSessionCount}
+          totalCount={totalSessionCount}
+          runningCount={totalRunningTaskCount}
+          unviewedCount={totalUnviewedCompletedCount}
           title="显示所有项目的 Bridge 与 Thread"
           icon={<LayersIcon className="size-3.5 shrink-0" />}
         />
@@ -114,7 +161,9 @@ export function ProjectTabBar({
             selected={selectedProjectId === project.id}
             onSelect={() => onSelect(project.id)}
             label={project.name}
-            count={project.sessionCount}
+            totalCount={project.sessionCount}
+            runningCount={project.runningTaskCount}
+            unviewedCount={project.unviewedCompletedCount}
             title={project.workingDirectory ?? project.name}
             icon={<FolderIcon className="size-3.5 shrink-0" />}
           />
@@ -158,7 +207,10 @@ export function ProjectTabBar({
       <ProjectVisibilityDialog
         projects={allProjects}
         hiddenProjectIds={hiddenProjectIds}
+        removedProjectIds={removedProjectIds}
         onToggle={onToggleHiddenProject}
+        onToggleRemoved={onToggleRemovedProject}
+        onUpdate={onUpdateProject}
         open={manageOpen}
         onOpenChange={setManageOpen}
       />

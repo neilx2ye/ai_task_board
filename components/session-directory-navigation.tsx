@@ -3,7 +3,7 @@
 import { FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 
 import { connectionColorMeta } from "@/components/connection-meta";
-import { SESSION_STATUS_META, TASK_STATUS_META } from "@/components/task-meta";
+import { sessionStatusMeta, TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
@@ -11,10 +11,8 @@ import {
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
 } from "@/hooks/use-connections";
-import {
-  effectiveSessionStatus,
-  isConnectionAlive,
-} from "@/lib/domain/session-presence";
+import { connectionPlatformLabel } from "@/lib/agent-platforms";
+import { isConnectionAlive } from "@/lib/domain/session-presence";
 import { sessionProjectIdForDirectory } from "@/lib/domain/session-directory-groups";
 import type {
   SessionConnectionGroup,
@@ -50,8 +48,9 @@ export function SessionListRow({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const statusMeta = SESSION_STATUS_META[effectiveSessionStatus(session)];
+  const statusMeta = sessionStatusMeta(session);
   const task = session.current_task;
+  const lastCompletedTask = session.last_completed_task;
   const taskStatusMeta = task
     ? TASK_STATUS_META[
         task.awaiting_user_input ? "waiting_user" : task.status
@@ -102,6 +101,12 @@ export function SessionListRow({
                   {taskStatusMeta.label}
                 </Badge>
               ) : null}
+            </div>
+          ) : lastCompletedTask ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
+                {lastCompletedTask.title}
+              </span>
             </div>
           ) : (
             <span className="text-xs text-muted-foreground">当前空闲</span>
@@ -323,7 +328,7 @@ function ConnectionSection({
           ) : null}
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {connection.platform}
+          {connectionPlatformLabel(connection.platform)}
           {connection.bridge_version
             ? ` · Bridge ${connection.bridge_version}`
             : ""}

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
 import { ProjectTabBar } from "@/components/project-tab-bar";
 import { ProjectBridgeNavigation } from "@/components/project-bridge-navigation";
+import type { ProjectEditInput } from "@/components/project-visibility-dialog";
 import { ResizableSessionPanel } from "@/components/resizable-session-panel";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
@@ -21,10 +22,15 @@ import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { useHiddenProjects } from "@/hooks/use-hidden-projects";
+import { useRemovedProjects } from "@/hooks/use-removed-projects";
 import { sessionQueryKey } from "@/hooks/query-keys";
 import { useSelectedSessionIds } from "@/hooks/use-selected-session-ids";
 import { useSelectedProject } from "@/hooks/use-selected-project";
-import { useSessions } from "@/hooks/use-sessions";
+import {
+  useMarkSessionCompletionsViewed,
+  useSessions,
+} from "@/hooks/use-sessions";
+import { useUpdateProject } from "@/hooks/use-update-project";
 import {
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
@@ -41,7 +47,9 @@ import {
   listSessionProjects,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
+  type SessionProjectGroup,
 } from "@/lib/domain/session-directory-groups";
+import { summarizeProjectUpdateResults } from "@/lib/domain/project-dispatch-summary";
 import {
   findCreatedWebThread,
   type PendingWebThreadCreation,
@@ -72,6 +80,10 @@ export default function SessionsPage() {
   const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   // 「管理项目」里隐藏的项目：从 Tab 链与「全部」视图剔除（浏览器本地）。
   const { hiddenProjectIds, setProjectHidden } = useHiddenProjects();
+  // 「管理项目」里删除的项目：隐藏之外，还从管理弹窗中移除（浏览器本地）。
+  const { removedProjectIds, setProjectRemoved } = useRemovedProjects();
+  const updateProject = useUpdateProject();
+  const markCompletionsViewed = useMarkSessionCompletionsViewed();
   const [pickerTarget, setPickerTarget] =
     useState<ThreadPickerTarget | null>(null);
   const [createTarget, setCreateTarget] =
@@ -87,6 +99,40 @@ export default function SessionsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
+
+  const handleProjectUpdate = useCallback(
+    async (project: SessionProjectGroup, input: ProjectEditInput) => {
+      const { results } = await updateProject.mutateAsync({
+        working_directory: project.workingDirectory ?? "",
+        name: input.name,
+        new_working_directory: input.workingDirectory,
+      });
+      if (!results.some((result) => result.status === "submitted")) {
+        throw new Error(summarizeProjectUpdateResults(results));
+      }
+      const nextId =
+        input.workingDirectory === project.workingDirectory
+          ? project.id
+          : `path:${input.workingDirectory}`;
+      if (nextId !== project.id) {
+        if (hiddenProjectIds.has(project.id)) {
+          setProjectHidden(project.id, false);
+          setProjectHidden(nextId, true);
+        }
+        if (selectedProjectId === project.id) {
+          setSelectedProjectId(nextId);
+        }
+      }
+      setNotice(summarizeProjectUpdateResults(results));
+    },
+    [
+      hiddenProjectIds,
+      selectedProjectId,
+      setProjectHidden,
+      setSelectedProjectId,
+      updateProject,
+    ],
+  );
 
   const sessionCandidates = useMemo(
     () =>
@@ -124,14 +170,18 @@ export default function SessionsPage() {
     () => listSessionProjects(connectionGroups),
     [connectionGroups],
   );
+  const dismissedProjectIds = useMemo(
+    () => new Set([...hiddenProjectIds, ...removedProjectIds]),
+    [hiddenProjectIds, removedProjectIds],
+  );
   const projects = useMemo(
     () =>
-      allProjects.filter((project) => !hiddenProjectIds.has(project.id)),
-    [allProjects, hiddenProjectIds],
+      allProjects.filter((project) => !dismissedProjectIds.has(project.id)),
+    [allProjects, dismissedProjectIds],
   );
   const visibleProjectGroups = useMemo(
-    () => excludeHiddenProjects(connectionGroups, hiddenProjectIds),
-    [connectionGroups, hiddenProjectIds],
+    () => excludeHiddenProjects(connectionGroups, dismissedProjectIds),
+    [connectionGroups, dismissedProjectIds],
   );
   const visibleGroups = useMemo(
     () =>
@@ -146,6 +196,33 @@ export default function SessionsPage() {
     () =>
       visibleProjectGroups.reduce(
         (count, group) => count + group.sessions.length,
+        0,
+      ),
+    [visibleProjectGroups],
+  );
+  const allRunningTaskCount = useMemo(
+    () =>
+      visibleProjectGroups.reduce(
+        (count, group) =>
+          count +
+          group.sessions.reduce(
+            (sum, session) => sum + (session.running_task_count ?? 0),
+            0,
+          ),
+        0,
+      ),
+    [visibleProjectGroups],
+  );
+  const allUnviewedCompletedCount = useMemo(
+    () =>
+      visibleProjectGroups.reduce(
+        (count, group) =>
+          count +
+          group.sessions.reduce(
+            (sum, session) =>
+              sum + (session.unviewed_completed_count ?? 0),
+            0,
+          ),
         0,
       ),
     [visibleProjectGroups],
@@ -255,6 +332,12 @@ export default function SessionsPage() {
     if (selectedSessionIds.includes(sessionId)) {
       deselectSession(sessionId);
     } else {
+      const session = sessions.find(
+        (candidate) => candidate.id === sessionId,
+      );
+      if (session && (session.unviewed_completed_count ?? 0) > 0) {
+        markCompletionsViewed.mutate(sessionId);
+      }
       setSelectedSessionIds((prev) => [...prev, sessionId]);
     }
   };
@@ -368,10 +451,15 @@ export default function SessionsPage() {
             projects={projects}
             allProjects={allProjects}
             hiddenProjectIds={hiddenProjectIds}
+            removedProjectIds={removedProjectIds}
             onToggleHiddenProject={setProjectHidden}
+            onToggleRemovedProject={setProjectRemoved}
+            onUpdateProject={handleProjectUpdate}
             selectedProjectId={selectedProjectId}
             onSelect={setSelectedProjectId}
             totalSessionCount={allVisibleSessionCount}
+            totalRunningTaskCount={allRunningTaskCount}
+            totalUnviewedCompletedCount={allUnviewedCompletedCount}
             connections={connectionsQuery.data ?? []}
             canManage={Boolean(isOwner)}
             onNotice={setNotice}
@@ -545,6 +633,12 @@ export default function SessionsPage() {
           );
         }}
         onOpen={(sessionId) => {
+          const session = sessions.find(
+            (candidate) => candidate.id === sessionId,
+          );
+          if (session && (session.unviewed_completed_count ?? 0) > 0) {
+            markCompletionsViewed.mutate(sessionId);
+          }
           setSelectedSessionIds((prev) =>
             prev.includes(sessionId) ? prev : [...prev, sessionId],
           );
@@ -588,7 +682,7 @@ export default function SessionsPage() {
           onSubmitted={() =>
             setNotice(
               `Thread 名称已更新，并已提交给 Bridge 同步到本机 ${agentDisplayName(
-                renameSession.connection.platform,
+                renameSession.platform,
               )}。`,
             )
           }
@@ -606,7 +700,7 @@ export default function SessionsPage() {
             deselectSession(deleteSession.id);
             setNotice(
               `Thread 已从 Console 隐藏，并已提交给在线 Bridge 从本机 ${agentDisplayName(
-                deleteSession.connection.platform,
+                deleteSession.platform,
               )} 删除。`,
             );
           }}

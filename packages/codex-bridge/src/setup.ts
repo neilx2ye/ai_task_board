@@ -48,6 +48,8 @@ export interface SystemdUnitOptions {
   homeDirectory: string;
   codexHome: string;
   environmentFile: string;
+  /** Additional CLI arguments after `run` (e.g. "all" for the unified daemon). */
+  runArgs?: string;
 }
 
 function xdgDirectory(
@@ -256,7 +258,12 @@ function escapeSystemdPath(value: string): string {
 }
 
 export function renderSystemdUserUnit(options: SystemdUnitOptions): string {
-  const command = [options.nodeBinary, options.runtimeCli, "run"]
+  const command = [
+    options.nodeBinary,
+    options.runtimeCli,
+    "run",
+    ...(options.runArgs ? [options.runArgs] : []),
+  ]
     .map(quoteSystemdArgument)
     .join(" ");
   return `[Unit]
@@ -965,7 +972,7 @@ export async function runInteractiveSetup(
       }
     }
 
-    // 三套 Bridge 的交互流程统一只问最少的问题：Board 地址（留空使用默认）
+    // 四套 Bridge 的交互流程统一只问最少的问题：Board 地址（留空使用默认）
     // 与 Connection Token。工作目录、数量/并发上限、权限与审批策略等
     // 其余配置默认交给 Web 端管理。
     const basics = await promptForConnectionBasics(prompt, {

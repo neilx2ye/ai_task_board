@@ -7,6 +7,7 @@ import {
   type ConnectionQuotaBucket,
   type ConnectionQuotaSnapshot,
 } from "@/lib/domain/connection-quota";
+import { bridgeKindDisplayName } from "@/lib/agent-platforms";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
 import type { PublicConnection } from "@/hooks/use-connections";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +15,27 @@ import { cn } from "@/components/utils";
 
 /** Compact quota summary shown on one Bridge card in the connections page. */
 export function ConnectionQuota({ connection }: { connection: PublicConnection }) {
+  const quotas = connection.quotas?.filter(
+    (entry) => entry.quota !== null && entry.quota !== undefined,
+  );
+  if (quotas?.length) {
+    return (
+      <div className="flex flex-col gap-2">
+        {quotas.map((entry) => {
+          const quota = parseConnectionQuota(entry.quota);
+          if (!quota) return null;
+          return (
+            <div key={entry.platform}>
+              <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                {bridgeKindDisplayName(entry.platform)}
+              </p>
+              <QuotaSnapshotView quota={quota} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   const quota = parseConnectionQuota(connection.quota);
   if (!quota) {
     return (

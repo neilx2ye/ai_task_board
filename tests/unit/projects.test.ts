@@ -7,6 +7,9 @@ const adminState = vi.hoisted(() => ({
   settingsRow: null as Record<string, unknown> | null,
 }));
 const updateMock = vi.hoisted(() => vi.fn());
+const planningMocks = vi.hoisted(() => ({
+  migrateProjectPlanningNote: vi.fn(),
+}));
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
@@ -16,8 +19,15 @@ vi.mock("@/lib/supabase/admin", () => ({
           select: () => ({
             eq: () => ({
               is: () => ({
-                in: () =>
+                in: (_column: string, ids: string[]) =>
                   Promise.resolve({
+                    data: adminState.connectionsRows.filter((row) =>
+                      ids.includes(row.id),
+                    ),
+                    error: null,
+                  }),
+                then: (resolve: (value: unknown) => unknown) =>
+                  resolve({
                     data: adminState.connectionsRows,
                     error: null,
                   }),
@@ -26,15 +36,19 @@ vi.mock("@/lib/supabase/admin", () => ({
           }),
         };
       }
-      return {
-        select: () => ({
-          eq: () => ({
-            eq: () => ({
-              maybeSingle: () =>
-                Promise.resolve({ data: adminState.settingsRow, error: null }),
-            }),
+      const settingsQuery = {
+        select: () => settingsQuery,
+        eq: () => settingsQuery,
+        maybeSingle: () =>
+          Promise.resolve({ data: adminState.settingsRow, error: null }),
+        then: (resolve: (value: unknown) => unknown) =>
+          resolve({
+            data: adminState.settingsRow ? [adminState.settingsRow] : [],
+            error: null,
           }),
-        }),
+      };
+      return {
+        ...settingsQuery,
       };
     },
   }),
@@ -42,14 +56,21 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/domain/bridge-config", () => ({
   updateBridgeConfiguration: updateMock,
 }));
+vi.mock("@/lib/domain/planning", () => ({
+  migrateProjectPlanningNote: planningMocks.migrateProjectPlanningNote,
+}));
 
 import {
   createProjectOnBridges,
   deriveDirectoryKey,
+  updateProjectOnBridges,
 } from "@/lib/domain/projects";
 import { AppError } from "@/lib/domain/errors";
 import { bridgeWorkingDirectoriesSchema } from "@/lib/validation/bridge-config";
-import { createProjectSchema } from "@/lib/validation/projects";
+import {
+  createProjectSchema,
+  updateProjectSchema,
+} from "@/lib/validation/projects";
 
 const ownerContext = {
   role: "owner" as const,
@@ -66,6 +87,7 @@ const baseInput = {
 
 function settingsRow(overrides: Record<string, unknown> = {}) {
   return {
+    platform: "codex",
     version: 4,
     desired_enabled: true,
     desired_include_thread_titles: false,
@@ -130,6 +152,38 @@ describe("createProjectSchema", () => {
   });
 });
 
+describe("updateProjectSchema", () => {
+  const updateInput = {
+    working_directory: "/srv/main",
+    name: "Main app renamed",
+    new_working_directory: "/srv/main-app",
+  };
+
+  it("accepts absolute old and new paths", () => {
+    expect(updateProjectSchema.parse(updateInput).new_working_directory).toBe(
+      "/srv/main-app",
+    );
+    expect(
+      updateProjectSchema.parse({
+        ...updateInput,
+        working_directory: "C:\\projects\\main",
+        new_working_directory: "D:\\projects\\main",
+      }).new_working_directory,
+    ).toBe("D:\\projects\\main");
+  });
+
+  it("rejects relative paths, blank names and unknown fields", () => {
+    for (const body of [
+      { ...updateInput, working_directory: "srv/main" },
+      { ...updateInput, new_working_directory: "srv/main-app" },
+      { ...updateInput, name: "   " },
+      { ...updateInput, unexpected: true },
+    ]) {
+      expect(() => updateProjectSchema.parse(body)).toThrow();
+    }
+  });
+});
+
 describe("bridgeWorkingDirectoriesSchema create_if_missing", () => {
   it("accepts the optional create flag and still rejects unknown fields", () => {
     const parsed = bridgeWorkingDirectoriesSchema.parse([
@@ -181,8 +235,10 @@ describe("createProjectOnBridges", () => {
       },
     ]);
     expect(updateMock).toHaveBeenCalledTimes(1);
-    const [, targetConnection, input, key] = updateMock.mock.calls[0]!;
+    const [, targetConnection, platform, input, key] =
+      updateMock.mock.calls[0]!;
     expect(targetConnection).toBe(connectionId);
+    expect(platform).toBe("codex");
     expect(input).toMatchObject({
       expected_version: 4,
       working_directories: [
@@ -195,7 +251,7 @@ describe("createProjectOnBridges", () => {
         },
       ],
     });
-    expect(key).toBe(`web/projects/test:${connectionId}`);
+    expect(key).toBe(`web/projects/test:${connectionId}:codex`);
   });
 
   it("prefers the desired list over the effective report", async () => {
@@ -211,7 +267,7 @@ describe("createProjectOnBridges", () => {
 
     await createProjectOnBridges(ownerContext, baseInput, "k");
 
-    const [, , input] = updateMock.mock.calls[0]!;
+    const [, , , input] = updateMock.mock.calls[0]!;
     expect(
       input.working_directories.map(
         (directory: { directory_key: string }) => directory.directory_key,
@@ -271,7 +327,9 @@ describe("createProjectOnBridges", () => {
 
     expect(response.results[0]?.status).toBe("submitted");
     expect(updateMock).toHaveBeenCalledTimes(2);
-    expect(updateMock.mock.calls[1]![3]).toBe(`k:${connectionId}:retry`);
+    expect(updateMock.mock.calls[1]![4]).toBe(
+      `k:${connectionId}:codex:retry`,
+    );
   });
 
   it("fails unknown connections without touching the RPC", async () => {
@@ -287,6 +345,190 @@ describe("createProjectOnBridges", () => {
       connection_id: missingId,
       status: "failed",
     });
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateProjectOnBridges", () => {
+  const updateInput = {
+    working_directory: "/srv/main",
+    name: "Main app renamed",
+    new_working_directory: "/srv/main-app",
+  };
+
+  function managedSettingsRow(directories: Record<string, unknown>[]) {
+    return settingsRow({
+      desired_working_directories: directories,
+    });
+  }
+
+  beforeEach(() => {
+    adminState.settingsRow = managedSettingsRow([
+      {
+        directory_key: "main",
+        name: "Main",
+        working_directory: "/srv/main",
+      },
+      {
+        directory_key: "default",
+        name: "Default",
+        working_directory: "/srv/default",
+      },
+    ]);
+  });
+
+  it("renames the entry in place while preserving its directory_key", async () => {
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      updateInput,
+      "web/projects/update",
+    );
+
+    expect(response.results).toEqual([
+      {
+        connection_id: connectionId,
+        connection_name: "Laptop",
+        status: "submitted",
+      },
+    ]);
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    const [, targetConnection, platform, input, key] =
+      updateMock.mock.calls[0]!;
+    expect(targetConnection).toBe(connectionId);
+    expect(platform).toBe("codex");
+    expect(input).toMatchObject({
+      expected_version: 4,
+      working_directories: [
+        {
+          directory_key: "main",
+          name: "Main app renamed",
+          working_directory: "/srv/main-app",
+        },
+        {
+          directory_key: "default",
+          name: "Default",
+          working_directory: "/srv/default",
+        },
+      ],
+    });
+    expect(key).toBe(`web/projects/update:${connectionId}:codex`);
+    expect(planningMocks.migrateProjectPlanningNote).toHaveBeenCalledWith(
+      ownerContext,
+      "/srv/main",
+      "/srv/main-app",
+    );
+  });
+
+  it("preserves create_if_missing and skips planning-note migration for name-only edits", async () => {
+    adminState.settingsRow = managedSettingsRow([
+      {
+        directory_key: "main",
+        name: "Main",
+        working_directory: "/srv/main",
+        create_if_missing: true,
+      },
+    ]);
+
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      { ...updateInput, new_working_directory: "/srv/main" },
+      "k",
+    );
+
+    expect(response.results[0]?.status).toBe("submitted");
+    const [, , , input] = updateMock.mock.calls[0]!;
+    expect(input.working_directories).toEqual([
+      {
+        directory_key: "main",
+        name: "Main app renamed",
+        working_directory: "/srv/main",
+        create_if_missing: true,
+      },
+    ]);
+    expect(planningMocks.migrateProjectPlanningNote).not.toHaveBeenCalled();
+  });
+
+  it("skips bridges whose list does not contain the project path", async () => {
+    adminState.settingsRow = managedSettingsRow([
+      {
+        directory_key: "default",
+        name: "Default",
+        working_directory: "/srv/default",
+      },
+    ]);
+
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      updateInput,
+      "k",
+    );
+
+    expect(response.results[0]).toMatchObject({
+      status: "skipped",
+      reason: "该项目不在该 Bridge 的目录清单中",
+    });
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(planningMocks.migrateProjectPlanningNote).not.toHaveBeenCalled();
+  });
+
+  it("skips the bridge when the target path is already taken", async () => {
+    adminState.settingsRow = managedSettingsRow([
+      {
+        directory_key: "main",
+        name: "Main",
+        working_directory: "/srv/main",
+      },
+      {
+        directory_key: "renamed",
+        name: "Renamed",
+        working_directory: "/srv/main-app",
+      },
+    ]);
+
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      updateInput,
+      "k",
+    );
+
+    expect(response.results[0]).toMatchObject({
+      status: "skipped",
+      reason: "目标路径已在目录清单中",
+    });
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("retries once with a fresh idempotency key on version conflict", async () => {
+    updateMock
+      .mockRejectedValueOnce(new AppError("VERSION_CONFLICT", "conflict"))
+      .mockResolvedValueOnce({});
+
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      updateInput,
+      "k",
+    );
+
+    expect(response.results[0]?.status).toBe("submitted");
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(updateMock.mock.calls[1]![4]).toBe(
+      `k:${connectionId}:codex:retry`,
+    );
+  });
+
+  it("skips bridges without a reported directory list", async () => {
+    adminState.settingsRow = settingsRow({
+      desired_working_directories: null,
+      effective_working_directories: null,
+    });
+
+    const response = await updateProjectOnBridges(
+      ownerContext,
+      updateInput,
+      "k",
+    );
+
+    expect(response.results[0]?.status).toBe("skipped");
     expect(updateMock).not.toHaveBeenCalled();
   });
 });

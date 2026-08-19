@@ -6,7 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
 import {
+  isUnifiedPlatform,
   isAntigravityPlatform,
+  isClaudeCodePlatform,
   isKimiPlatform,
 } from "@/lib/agent-platforms";
 import type {
@@ -41,11 +43,12 @@ export function supportsBridgeSettings(connection: {
   platform: string;
 }): boolean {
   // Any Bridge that has reported a capability version exposes the dialog.
-  // Codex/Kimi/Antigravity connections expose it from the start so a device
+  // Codex/Kimi/Antigravity/Claude connections expose it from the start so a device
   // can be onboarded even before its first status report.
   return (
     connection.bridge_version !== null ||
-    ["codex", "kimi", "antigravity"].some((platform) =>
+    isUnifiedPlatform(connection.platform) ||
+    ["codex", "kimi", "antigravity", "claude"].some((platform) =>
       connection.platform.toLowerCase().includes(platform),
     )
   );
@@ -55,12 +58,13 @@ export function supportsHistorySyncStatus(connection: {
   bridge_version: string | null;
   platform: string;
 }): boolean {
-  // Only the Codex runtime implements thread history import. Kimi and
-  // Antigravity must not show the Codex-specific history banner.
+  // Only the Codex runtime implements thread history import. Kimi,
+  // Antigravity, and Claude Code must not show the Codex-specific banner.
   return (
     supportsBridgeSettings(connection) &&
     !isKimiPlatform(connection.platform) &&
-    !isAntigravityPlatform(connection.platform)
+    !isAntigravityPlatform(connection.platform) &&
+    !isClaudeCodePlatform(connection.platform)
   );
 }
 
@@ -173,8 +177,13 @@ export function bridgeConfigSyncState(
   return configuration.applied.error ? "error" : "applied";
 }
 
-export function bridgeConfigKey(connectionId: string) {
-  return ["connections", connectionId, "bridge-config"] as const;
+export function bridgeConfigKey(connectionId: string, platform?: string) {
+  return [
+    "connections",
+    connectionId,
+    "bridge-config",
+    platform ?? "",
+  ] as const;
 }
 
 /**
@@ -183,10 +192,12 @@ export function bridgeConfigKey(connectionId: string) {
  */
 export function bridgeConfigMutationFingerprint(
   connectionId: string,
+  platform: string | undefined,
   input: UpdateBridgeConfigurationInput,
 ): string {
   return [
     connectionId,
+    platform ?? "",
     input.expected_version,
     input.enabled ? 1 : 0,
     input.include_thread_titles ? 1 : 0,
@@ -204,12 +215,19 @@ export function bridgeConfigMutationFingerprint(
   ].join("\0");
 }
 
-export function useBridgeConfig(connectionId: string, enabled: boolean) {
+export function useBridgeConfig(
+  connectionId: string,
+  platform: string | undefined,
+  enabled: boolean,
+) {
+  const suffix = platform
+    ? `?platform=${encodeURIComponent(platform)}`
+    : "";
   return useQuery({
-    queryKey: bridgeConfigKey(connectionId),
+    queryKey: bridgeConfigKey(connectionId, platform),
     queryFn: () =>
       apiFetch<BridgeConfigurationResponse>(
-        `/api/user/connections/${encodeURIComponent(connectionId)}/bridge-config`,
+        `/api/user/connections/${encodeURIComponent(connectionId)}/bridge-config${suffix}`,
       ),
     enabled,
     // While the dialog is open, surface Bridge acknowledgements without a
@@ -218,7 +236,10 @@ export function useBridgeConfig(connectionId: string, enabled: boolean) {
   });
 }
 
-export function useUpdateBridgeConfig(connectionId: string) {
+export function useUpdateBridgeConfig(
+  connectionId: string,
+  platform?: string,
+) {
   const queryClient = useQueryClient();
   const idempotency = useRef<
     ReturnType<typeof createPendingIdempotencyTracker> | undefined
@@ -233,12 +254,18 @@ export function useUpdateBridgeConfig(connectionId: string) {
 
   return useMutation({
     mutationFn: (input: UpdateBridgeConfigurationInput) => {
-      const fingerprint = bridgeConfigMutationFingerprint(connectionId, input);
+      const fingerprint = bridgeConfigMutationFingerprint(
+        connectionId,
+        platform,
+        input,
+      );
       const idempotencyKey = idempotency.current!.keyFor(fingerprint);
       requestKeys.current.set(input, { fingerprint, key: idempotencyKey });
 
       return apiFetch<BridgeConfigurationResponse>(
-        `/api/user/connections/${encodeURIComponent(connectionId)}/bridge-config`,
+        `/api/user/connections/${encodeURIComponent(connectionId)}/bridge-config${
+          platform ? `?platform=${encodeURIComponent(platform)}` : ""
+        }`,
         {
           method: "PATCH",
           json: input,
@@ -251,7 +278,10 @@ export function useUpdateBridgeConfig(connectionId: string) {
       if (request) {
         idempotency.current!.confirm(request.fingerprint, request.key);
       }
-      queryClient.setQueryData(bridgeConfigKey(connectionId), result);
+      queryClient.setQueryData(
+        bridgeConfigKey(connectionId, platform),
+        result,
+      );
     },
     onSettled: (_result, _error, input) => {
       requestKeys.current.delete(input);

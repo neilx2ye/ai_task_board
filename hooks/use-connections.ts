@@ -6,6 +6,7 @@ import { apiFetch } from "@/hooks/api-client";
 import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
 import {
   isAntigravityPlatform,
+  isClaudeCodePlatform,
   isKimiPlatform,
 } from "@/lib/agent-platforms";
 import type { AgentModelCatalogEntry } from "@/lib/codex-models";
@@ -17,6 +18,12 @@ export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
   model_catalog_updated_at?: string | null;
   quota?: Json | null;
   quota_updated_at?: string | null;
+  /** Per-runtime quota snapshots for a unified device connection. */
+  quotas?: Array<{
+    platform: string;
+    quota: Json | null;
+    quota_updated_at: string | null;
+  }> | null;
   /** Bridge 自上报的稳定设备标识；旧 Bridge 未上报时为 null。 */
   device_id?: string | null;
   device_label?: string | null;
@@ -67,7 +74,8 @@ export function supportsWebThreadRename(
   return (
     supportsWebThreadManagement(connection) &&
     !isKimiPlatform(connection.platform) &&
-    !isAntigravityPlatform(connection.platform)
+    !isAntigravityPlatform(connection.platform) &&
+    !isClaudeCodePlatform(connection.platform)
   );
 }
 

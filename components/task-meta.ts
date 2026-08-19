@@ -1,4 +1,6 @@
 import type { SessionStatus, TaskStatus } from "@/lib/types/database";
+import type { SessionListItem } from "@/lib/types/domain";
+import { effectiveSessionStatus } from "@/lib/domain/session-presence";
 
 type StatusMeta = {
   label: string;
@@ -66,6 +68,39 @@ export const SESSION_STATUS_META: Record<
     badgeClass: "border-stone-200 bg-stone-100 text-stone-600",
   },
 };
+
+/**
+ * Thread 列表徽标状态：优先展示“完成未查看（待查看）”，用户查看过最近一次
+ * 完成且当前空闲时展示“已完成”，否则回落为在线/忙碌/等待用户/离线。
+ */
+export function sessionStatusMeta(
+  session: Pick<
+    SessionListItem,
+    | "unviewed_completed_count"
+    | "last_completed_task"
+    | "current_task"
+    | "status"
+    | "archived_at"
+    | "inventory_active"
+    | "last_seen_at"
+  >,
+  now = Date.now(),
+): StatusMeta {
+  const unviewedCount = session.unviewed_completed_count ?? 0;
+  if (unviewedCount > 0) {
+    return {
+      label: unviewedCount > 1 ? `待查看 ×${unviewedCount}` : "待查看",
+      badgeClass: "border-amber-200 bg-amber-50 text-amber-800",
+    };
+  }
+  if (!session.current_task && session.last_completed_task) {
+    return {
+      label: "已完成",
+      badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  return SESSION_STATUS_META[effectiveSessionStatus(session, now)];
+}
 
 export const ACTOR_TYPE_LABEL: Record<"user" | "ai" | "system", string> = {
   user: "用户",

@@ -69,7 +69,7 @@ export type FileCommand = {
 export type InventoryThread = {
   external_conversation_ref: string;
   name: string;
-  platform: "kimi-code";
+  platform: "kimi";
   model: string | null;
   working_directory: string;
   directory_key: string;
@@ -269,6 +269,7 @@ export class BoardClient {
         idempotencyKey: idempotencyKey("sync-sessions"),
         body: {
           bridge_version: KIMI_BRIDGE_CAPABILITY_VERSION,
+          platform: "kimi",
           device_id: this.deviceIdentity.deviceId,
           device_label: this.deviceIdentity.deviceLabel,
           ...(quota === undefined ? {} : { quota }),
@@ -314,7 +315,11 @@ export class BoardClient {
       "/api/ai/thread-commands/claim",
       {
         method: "POST",
-        body: { runtime_instance_id: runtimeInstanceId, lease_seconds: 60 },
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          platform: "kimi",
+          lease_seconds: 60,
+        },
         signal,
         timeoutMs: 5_000,
         maxAttempts: 1,

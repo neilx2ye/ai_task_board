@@ -2,14 +2,14 @@
 
 AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT、Claude、Codex、Kimi Code、Gemini 或自定义 Agent 在 CLI / APP 中建立上下文并完成推理与工具调用，通过 REST API、可选 MCP 或本机 Bridge 注册会话、接收预留任务并回传 AI 回复；网页端按连接组织会话，可直接发送下一任务并查看回复。
 
-项目的控制面是一个 Next.js 单体应用，正式数据存储只依赖 **Supabase Hosted**：Auth、PostgreSQL/RPC、Realtime、RLS 与私有 Storage。不包含 SQLite、Docker Compose、自托管 Supabase 或消息队列。可选的 Codex Bridge 与 Kimi Bridge 分别在设备上通过本地 App Server / ACP 管理会话；Next.js 服务本身不运行模型。
+项目的控制面是一个 Next.js 单体应用，正式数据存储只依赖 **Supabase Hosted**：Auth、PostgreSQL/RPC、Realtime、RLS 与私有 Storage。不包含 SQLite、Docker Compose、自托管 Supabase 或消息队列。可选的 Codex、Kimi、Antigravity 与 Claude Code Bridge 分别在设备上通过本地 App Server / ACP / CLI 管理会话；Next.js 服务本身不运行模型。
 
 ## 功能概览
 
 - 会话优先工作台：先确认存活会话及其对话引用，再向指定会话预留任务。
-- 任务规划工作台：按「设备 → 项目目录 → Thread」组织规划页；项目级思考笔记按路径跨 Bridge 共享一份，与单个 Thread 的 Turn 规划链完全分开。每个 Thread 可把任务拆成有序 Turn 草稿链，一键派发为依赖链任务——前一个 Turn 完成后下一个自动放行并被 Bridge 领取执行，也可随时追加；从这里新建的 Thread 同样出现在会话与上下文页。
+- 任务规划工作台：按「设备 → 项目目录 → Thread」组织规划页；项目级思考笔记按路径跨 Bridge 共享一份，每个 Thread 另有只属于该会话的独立思考笔记，两者数据与界面完全分开。Thread 还可把任务拆成有序 Turn 草稿链，一键派发为依赖链任务——前一个 Turn 完成后下一个自动放行并被 Bridge 领取执行，也可随时追加；从这里新建的 Thread 同样出现在会话与上下文页。
 - 项目 Tab 链：会话与规划两页顶部按「项目 → Bridges → Threads → Turns」过滤，同一工作目录跨 Bridge 自动合并为一个项目；Owner 可直接在 Web 新建项目——选定设备后该目录会下发到设备上所有支持托管目录的 Bridge（不存在时由设备自动创建），也可在「管理项目」里隐藏/恢复项目（浏览器本地）。
-- 会话目录展示当前任务状态与排队数量，对话面板集中呈现 AI 回复和执行记录。
+- 会话目录展示当前任务状态与排队数量，对话面板集中呈现 AI 回复和执行记录；任务完成后 Thread 先显示「待查看」，在侧栏点击打开即转为「已完成」，顶部项目 Tab 同步汇总各项目正在运行与待查看的任务数。
 - 每个 Bridge 会把本机 Codex / Kimi Code / Antigravity 的套餐额度或模型配额快照回传看板，AI 连接页的对应卡片直接展示剩余百分比、窗口与重置时间。
 - AI 连接页展示每个 Bridge 的当前版本与 npm 最新版；Owner 可单个或批量下发目标版本，运行在 systemd 下的 Bridge 1.5.0+ 会在下次配置交换后自动从 npm 下载、校验完整性并重启到该版本（远程升级默认开启），下载前也可随时在网页取消。
 - 父子 Task 统一建模；AI 只能读取分配给自身且依赖已完成的叶子任务，父任务自动聚合状态和进度。
@@ -21,12 +21,13 @@ AI Task Board 是面向个人和小团队的 AI 会话任务控制台。ChatGPT�
 - 可选的设备级 Codex Bridge 通过 stdio App Server 自动发现多个顶层 thread，通过认证 SSE 接收任务唤醒，并只把 AI 回复增量同步到各自的会话对话框；Workspace Owner 还可从网页新建、重命名和删除受管 Thread。
 - 独立的 Kimi Bridge 通过 Kimi ACP 发现真实 Kimi Sessions，上报 Kimi 模型与思考强度，并支持网页新建、执行和删除；ACP 不支持可靠改名，因此 Kimi 连接不会展示改名入口。
 - 独立的 Antigravity Bridge 通过 Antigravity CLI 官方 headless `stream-json` 接口驱动本机 `agy`，按 Thread 保持真实 conversation 上下文并回传最终回复；不读取 Google 未公开的会话数据库。
+- 独立的 Claude Code Bridge 通过 Anthropic 官方 `@agentclientprotocol/claude-agent-acp` 适配器驱动本机 Claude Code Sessions，上报 Claude 模型与思考强度，并支持网页新建、执行、删除和 Goal 模式。
 
 ## 技术组成
 
 - Next.js App Router、React、TypeScript、Tailwind CSS
 - `@supabase/supabase-js` 与 `@supabase/ssr`
-- `ai-task-board-bridge` 统一 npm CLI，内含 Codex App Server、Kimi ACP 与 Antigravity CLI 三套独立运行时
+- `ai-task-board-bridge` 统一 npm CLI，内含 Codex App Server、Kimi ACP、Antigravity CLI 与 Claude Code ACP 四套独立运行时
 - Supabase Hosted PostgreSQL、Auth、Realtime、Storage、RLS
 - Zod、TanStack Query
 - Vitest、Playwright
@@ -113,14 +114,19 @@ npx --yes ai-task-board-bridge@1.6.0 setup
 npx --yes ai-task-board-bridge@1.6.0 run
 ```
 
-`setup` 与 `run` 是两个统一命令：`setup` 安装并启动**执行 npx 的当前有效用户**
-自己的 systemd 用户服务（后台常驻）；`run` 直接前台运行，`npx` 进程结束后 Bridge
-随之下线。两个命令都可显式指定平台 `codex`、`kimi`、`antigravity`（`setup` 还支持
-`both`、`all`），未指定时交互式询问。三种 Bridge 的交互流程完全一致：只询问 Board
+`setup` 与 `run` 是两个统一命令：一个系统用户只需要**一个 Bridge、一个命令、
+一个 Token**。`setup` 安装并启动**执行 npx 的当前有效用户**自己的唯一 systemd
+用户服务（后台常驻），Codex、Kimi、Antigravity 与 Claude Code 四种运行时在该
+服务内并行常驻；`run all` 直接前台运行同一套运行时，`npx` 进程结束后随之下线。
+两个命令都可显式指定平台 `codex`、`kimi`、`antigravity`、`claude`
+（`setup` 还支持 `both`、`all`），未指定时交互式询问。四种 Bridge 的交互流程完全
+一致：只询问 Board
 地址（留空使用 `https://task.neilx.online`）与 Connection Token，工作目录、
 thread/并发上限、权限与审批策略等其余配置都到「AI 连接 → Bridge 设置」中管理，
-新安装默认由 Web 端管理目录。不带子命令的旧式调用保持兼容：配置齐全时前台运行
-Codex，缺少配置且处于交互终端时进入 setup。
+新安装默认由 Web 端管理目录。**再次运行 setup 会把新加入的 Bridge 类型并入现有
+服务，保留已保存的 Token 与配置**；统一设备连接在「Bridge 设置」里按运行时分别
+管理。不带子命令的旧式调用保持兼容：配置齐全时前台运行 Codex，缺少配置且处于
+交互终端时进入 setup。
 
 只要环境变量里提供了 `AI_TASK_BOARD_CONNECTION_TOKEN`，两个命令就直接按环境变量
 非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时同样使用默认地址。非 TTY 环境
@@ -134,8 +140,8 @@ npx --yes ai-task-board-bridge@1.6.0 setup codex
 
 Codex 的安装器显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的
 Codex 登录、`config.toml`、provider 和模型配置；新安装使用 `safe` + `decline`
-等安全默认值。三套运行时仍使用独立的 Board Connection、令牌和 systemd 服务，Kimi
-与 Antigravity 运行时已嵌入这个公开包，不需要再发布或安装第二个 npm 包。前台模式
+等安全默认值。Kimi、Antigravity 与 Claude Code 运行时已嵌入这个公开包，不需要
+再发布或安装第二个 npm 包。前台模式
 未显式配置时继续使用 `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、
 无沙箱）和 `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）；需要限制写入与
 网络时请显式设置 `CODEX_BRIDGE_PERMISSION_MODE=safe`。
@@ -203,6 +209,40 @@ Web 会话上传的图片（PNG/JPEG/WebP/GIF，单张 10 MiB、合计 20 MiB）
 `--dangerously-skip-permissions`，自动批准全部工具调用，属于高风险配置；可用
 `ANTIGRAVITY_BRIDGE_SANDBOX=true` 额外启用 agy 终端沙箱。完整变量、安全策略和
 systemd 说明见 [Antigravity Bridge 包文档](packages/antigravity-bridge/README.md)。
+
+### Claude Code Bridge
+
+先在「AI 连接」中新建平台为 **Claude Code** 的独立连接，再在已登录 Claude Code 的
+设备上安装 Anthropic 官方的 ACP 适配器并运行：
+
+```bash
+npm install -g @agentclientprotocol/claude-agent-acp
+npx --yes ai-task-board-bridge@1.6.0 setup claude
+```
+
+订阅用户请先用同一系统用户运行 `claude login`；API / 自定义网关用户请设置
+`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `CLAUDE_CODE_OAUTH_TOKEN`。前台
+或自动化部署可使用环境变量：
+
+```bash
+AI_TASK_BOARD_URL='https://task.neilx.online' \
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
+CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
+CLAUDE_BRIDGE_MODE='default' \
+CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
+npx --yes ai-task-board-bridge@1.6.0 run claude
+```
+
+Claude Code Bridge 启动独立的 `claude-agent-acp` 子进程，Board 令牌不会传入该子
+进程。它按精确 cwd 白名单同步 Claude Code Sessions，并从 ACP 会话配置项动态上报
+可用模型与思考强度。Web 可新建、执行和删除真实 Session，也可开启 Goal 模式
+（映射到 Claude Code 原生的 `/goal` 会话目标）；Claude ACP 没有可靠的改名接口，
+因此网页会隐藏 Claude Code Thread 的改名入口。Claude 订阅与 API 用量没有公开的
+本地额度接口，因此 Claude Code 连接不回报额度快照。
+`CLAUDE_BRIDGE_MODE=bypass-permissions` 与
+`CLAUDE_BRIDGE_APPROVAL_MODE=accept` 会扩大自动执行范围，属于高风险配置，请只在
+可信工作区显式开启。完整变量、安全策略和 systemd 说明见
+[Claude Code Bridge 包文档](packages/claude-code-bridge/README.md)。
 
 ## 单会话上下文演示
 
@@ -278,7 +318,7 @@ PLAYWRIGHT_BASE_URL=https://preview.example.com npm run test:e2e
 ## 当前限制
 
 - MVP 面向个人或小团队，没有组织计费、复杂角色、自定义工作流或 DAG 可视化编辑器。
-- Next.js 控制面不内置模型或通用 Agent 执行环境；Codex、Kimi 与 Antigravity Bridge 都是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
+- Next.js 控制面不内置模型或通用 Agent 执行环境；Codex、Kimi、Antigravity 与 Claude Code Bridge 都是设备/Connection 级的可选 companion，其他 Harness 仍需自行接入 REST/MCP 或实现对应 adapter。
 - 浏览器 Realtime 用于界面失效和重拉；客户端维护最新 `TaskEvent` ID，断线重订阅后按游标补拉遗漏事件并全量重拉，以 30 秒轮询兜底。Bridge 则使用独立的认证 SSE 唤醒端点，SSE 只发送固定空事件，任务内容仍从 REST 领取。
 - Codex Bridge 只会近实时回传 AI 回复，不同步思考、命令、工具或用量；当前没有可靠的运行中 steering、网页审批或远程进程中断，SSE 不可用时会自适应轮询，最长约 60 秒发现新任务。
 - Bridge 会从 App Server 子进程环境删除 Board Connection Token，但同一 OS UID 并不是令牌强隔离；强隔离需使用独立 UID 和/或 token proxy。默认 `danger-full-access` + `accept` 会无沙箱执行并自动同意关联当前活跃 turn 的受支持审批，属于高风险配置；需要限制写入和网络时应显式选择 `safe`，而 `inherit` 的实际边界取决于 thread 与本机 Codex 设置。
@@ -304,6 +344,7 @@ scripts/demo.ts        单会话上下文可执行演示
 packages/codex-bridge/ 可通过 npx 运行的统一 Bridge npm 包与 Codex 运行时
 packages/kimi-bridge/  嵌入统一 npm 包的私有 Kimi ACP 运行时
 packages/antigravity-bridge/ 嵌入统一 npm 包的私有 Antigravity CLI 运行时
+packages/claude-code-bridge/ 嵌入统一 npm 包的私有 Claude Code ACP 运行时
 scripts/codex-bridge.ts 仓库开发环境的 Bridge 兼容入口
 tests/                 Vitest 单元/集成测试与 Playwright E2E
 ```

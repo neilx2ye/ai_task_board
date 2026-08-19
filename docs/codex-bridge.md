@@ -1,6 +1,6 @@
 # Codex Bridge
 
-Codex Bridge 0.7 是运行在 Codex 设备上的常驻 companion。一个 Bridge 进程对应一台设备上的一个 AI Connection；它通过 stdio 启动本机 `codex app-server`，自动发现一个或多个本机工作目录下未归档的顶层 Codex thread，并为每个 thread 在 AI Task Board 中同步一个独立 Session。
+Codex Bridge 0.7 是运行在 Codex 设备上的常驻 companion。一个 Bridge 进程对应一台设备上的一个 AI Connection；统一安装时 Codex 运行时与 Kimi、Antigravity、Claude Code 共用同一个 systemd 服务与 Connection Token，每种运行时在 Board 中保留各自独立的一套设置。它通过 stdio 启动本机 `codex app-server`，自动发现一个或多个本机工作目录下未归档的顶层 Codex thread，并为每个 thread 在 AI Task Board 中同步一个独立 Session。
 
 网页向某个 Session 发送消息后，Bridge 会把任务交给对应的本地 thread，并近实时回传 AI 回复增量。思考摘要、命令输出、工具过程和用量不会同步到 Board。Bridge 直接使用 Board REST API 与认证 SSE，不依赖 Board MCP。
 
@@ -43,9 +43,10 @@ Linux 上推荐直接启动交互式安装器：
 npx --yes ai-task-board-bridge@1.6.0 setup codex
 ```
 
-`ai-task-board-bridge` 也是 Kimi Bridge 的唯一公开安装包。不带 `codex` 目标时，
-安装器会先询问安装 Codex、Kimi，还是两者；选择 `both` 会依次安装两个隔离服务，
-并分别索取对应平台的 Connection Token。
+`ai-task-board-bridge` 也是 Kimi、Antigravity 与 Claude Code Bridge 的唯一公开
+安装包。不带 `codex` 目标时，安装器会先询问安装 Codex、Kimi、Antigravity、
+Claude Code 还是组合；选择 `both` 会依次安装 Codex 与 Kimi 两个隔离服务，
+`all` 会安装四个隔离服务，并分别索取对应平台的 Connection Token。
 
 不带参数运行且当前终端是 TTY、同时缺少 Board URL 或 Connection Token 时，也会自动
 进入相同的 setup。安装器依次确认当前有效 UID、Board 地址、隐藏输入的 Connection

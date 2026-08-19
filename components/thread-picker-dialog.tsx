@@ -18,11 +18,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { SESSION_STATUS_META } from "@/components/task-meta";
+import { sessionStatusMeta } from "@/components/task-meta";
 import { cn } from "@/components/utils";
-import { effectiveSessionStatus } from "@/lib/domain/session-presence";
 import type { SessionDirectoryGroup } from "@/lib/domain/session-directory-groups";
-import { agentDisplayName } from "@/lib/agent-platforms";
+import { connectionPlatformLabel } from "@/lib/agent-platforms";
 import type {
   SessionConnectionSummary,
   SessionListItem,
@@ -98,8 +97,7 @@ export function ThreadPickerList({
         const visible = visibleIds.has(session.id);
         const deletable = canDeleteThread(session);
         const model = session.configured_model ?? session.model;
-        const statusMeta =
-          SESSION_STATUS_META[effectiveSessionStatus(session)];
+        const statusMeta = sessionStatusMeta(session);
         return (
           <li
             key={session.id}
@@ -231,7 +229,7 @@ export function ThreadPickerDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const sessions = project?.sessions ?? [];
-  const agentName = agentDisplayName(connection?.platform);
+  const agentName = connectionPlatformLabel(connection?.platform);
   const deletePlan = getUnselectedThreadDeletePlan(sessions, visibleIds);
   const [bulkDeleteTarget, setBulkDeleteTarget] =
     useState<BulkDeleteTarget | null>(null);

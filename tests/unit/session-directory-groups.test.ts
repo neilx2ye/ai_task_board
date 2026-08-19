@@ -229,6 +229,44 @@ describe("Session project tabs", () => {
     ]);
   });
 
+  it("aggregates running and unviewed-completed task counts per project", () => {
+    const groups = twoConnectionGroups();
+    const alphaThreads = groups.flatMap((group) =>
+      group.directories
+        .filter((item) => item.workingDirectory === "/workspace/alpha")
+        .flatMap((item) => item.sessions),
+    );
+    for (const thread of alphaThreads) {
+      Object.assign(thread, {
+        running_task_count: 2,
+        unviewed_completed_count: 3,
+      });
+    }
+
+    const projects = listSessionProjects(groups);
+
+    expect(projects).toEqual([
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        sessionCount: 2,
+        runningTaskCount: 4,
+        unviewedCompletedCount: 6,
+      }),
+      expect.objectContaining({
+        id: "path:/workspace/beta",
+        sessionCount: 1,
+        runningTaskCount: 0,
+        unviewedCompletedCount: 0,
+      }),
+      expect.objectContaining({
+        id: "unassigned",
+        sessionCount: 1,
+        runningTaskCount: 0,
+        unviewedCompletedCount: 0,
+      }),
+    ]);
+  });
+
   it("returns every group unchanged when no project is selected", () => {
     const groups = twoConnectionGroups();
 

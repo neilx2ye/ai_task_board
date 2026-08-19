@@ -26,6 +26,7 @@ import {
   type PublicConnection,
 } from "@/hooks/use-connections";
 import { groupConnectionsByDevice } from "@/lib/domain/device-groups";
+import { connectionPlatformLabel } from "@/lib/agent-platforms";
 import {
   directoryNameFromPath,
   sessionProjectIdForDirectory,
@@ -205,7 +206,7 @@ export function CreateProjectDialog({
                     value={connection.id}
                     disabled={!capable}
                   >
-                    {connection.name}（{connection.platform}）
+                    {connection.name}（{connectionPlatformLabel(connection.platform)}）
                     {capable ? "" : " · 需升级 1.3.0"}
                   </SelectItem>
                 ))}

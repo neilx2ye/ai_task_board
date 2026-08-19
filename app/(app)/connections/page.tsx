@@ -55,8 +55,15 @@ import {
 } from "@/hooks/use-connections";
 import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
+import { connectionPlatformLabel } from "@/lib/agent-platforms";
 
-const SUPPORTED_CONNECTION_PLATFORMS = ["Codex", "Kimi Code", "Antigravity"];
+const SUPPORTED_CONNECTION_PLATFORMS = [
+  { value: "Codex", label: "Codex" },
+  { value: "Kimi Code", label: "Kimi Code" },
+  { value: "Antigravity", label: "Antigravity" },
+  { value: "Claude Code", label: "Claude Code" },
+  { value: "All", label: "统一设备 Bridge（四种运行时、一个 Token）" },
+];
 
 function RenameConnectionDialog({
   connection,
@@ -145,7 +152,7 @@ function CreateConnectionDialog({
   const createConnection = useCreateConnection();
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState(
-    SUPPORTED_CONNECTION_PLATFORMS[0],
+    SUPPORTED_CONNECTION_PLATFORMS[0].value,
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -196,8 +203,8 @@ function CreateConnectionDialog({
               </SelectTrigger>
               <SelectContent>
                 {SUPPORTED_CONNECTION_PLATFORMS.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -279,7 +286,7 @@ function ConnectionCard({
             {connection.name}
           </span>
           <span className="text-xs text-muted-foreground">
-            {connection.platform}
+            {connectionPlatformLabel(connection.platform)}
           </span>
         </div>
         <Badge className="border border-teal-200 bg-teal-50 text-teal-700">
@@ -556,7 +563,7 @@ export default function ConnectionsPage() {
         <EmptyState
           icon={<CableIcon className="size-6" />}
           title="还没有 AI 连接"
-          description="创建 Codex、Kimi Code 或 Antigravity 连接，再把令牌配置到对应 Bridge 中即可接入看板。"
+          description="创建 Codex、Kimi Code、Antigravity 或 Claude Code 连接，再把令牌配置到对应 Bridge 中即可接入看板。"
           action={
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />

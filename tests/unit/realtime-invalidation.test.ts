@@ -178,12 +178,29 @@ describe("Planning workspace Realtime invalidation", () => {
     ).toEqual(["exact:turn-plans/session-1", "exact:turn-plans/session-9"]);
   });
 
+  it("targets the thread planning note of the affected session", () => {
+    expect(
+      labels(
+        realtimeInvalidations("thread_planning_notes", {
+          new: { session_id: "session-1" },
+          old: { session_id: "session-9" },
+        }),
+      ),
+    ).toEqual([
+      "exact:thread-planning-notes/session-1",
+      "exact:thread-planning-notes/session-9",
+    ]);
+  });
+
   it("ignores planning rows without usable identifiers", () => {
     expect(
       realtimeInvalidations("planning_notes", { new: {} }),
     ).toEqual([]);
     expect(
       realtimeInvalidations("session_turn_plans", { new: {} }),
+    ).toEqual([]);
+    expect(
+      realtimeInvalidations("thread_planning_notes", { new: {} }),
     ).toEqual([]);
   });
 });

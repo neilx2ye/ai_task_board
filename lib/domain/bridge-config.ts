@@ -2,6 +2,7 @@ import "server-only";
 
 import { hashRequest } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import { canonicalBridgeKind } from "@/lib/agent-platforms";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import { callDomainRpc } from "@/lib/domain/rpc";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -23,9 +24,9 @@ import {
 } from "@/lib/validation/bridge-config";
 
 const BRIDGE_SETTINGS_COLUMNS =
-  "connection_id, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
+  "connection_id, platform, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 const LEGACY_BRIDGE_SETTINGS_COLUMNS =
-  "connection_id, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
+  "connection_id, platform, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 
 type DatabaseErrorLike = {
   code?: string;
@@ -77,6 +78,7 @@ function withWorkingDirectoryDefaults(
 ): AIConnectionBridgeSettingsRow {
   return {
     ...row,
+    platform: row.platform ?? "codex",
     desired_working_directories: null,
     effective_working_directories: null,
     constraint_allow_working_directory_configuration: false,
@@ -210,6 +212,7 @@ export function bridgeConfigurationDto(
 ): BridgeConfigurationResponse {
   const configuration: BridgeConfiguration = {
     connection_id: row.connection_id,
+    platform: row.platform,
     version: row.version,
     desired: desiredConfiguration(row),
     applied: appliedConfiguration(row),
@@ -234,12 +237,13 @@ function requireOwnerContext(context: UserWorkspaceContext) {
 export async function getBridgeConfiguration(
   context: UserWorkspaceContext,
   connectionId: string,
+  platform?: string,
 ): Promise<BridgeConfigurationResponse> {
   requireOwnerContext(context);
   const admin = createAdminClient();
   const { data: connection, error: connectionError } = await admin
     .from("ai_connections")
-    .select("id")
+    .select("id, platform")
     .eq("workspace_id", context.workspaceId)
     .eq("id", connectionId)
     .is("revoked_at", null)
@@ -248,12 +252,14 @@ export async function getBridgeConfiguration(
   if (!connection) {
     throw new AppError("FORBIDDEN", "The Bridge connection is not accessible");
   }
+  const platformKey = canonicalBridgeKind(platform ?? connection.platform);
 
   let { data, error } = await admin
     .from("ai_connection_bridge_settings")
     .select(BRIDGE_SETTINGS_COLUMNS)
     .eq("workspace_id", context.workspaceId)
     .eq("connection_id", connectionId)
+    .eq("platform", platformKey)
     .maybeSingle();
   if (error && isMissingWorkingDirectorySchema(error)) {
     const legacyResult = await admin
@@ -261,6 +267,7 @@ export async function getBridgeConfiguration(
       .select(LEGACY_BRIDGE_SETTINGS_COLUMNS)
       .eq("workspace_id", context.workspaceId)
       .eq("connection_id", connectionId)
+      .eq("platform", platformKey)
       .maybeSingle();
     data = legacyResult.data
       ? withWorkingDirectoryDefaults(
@@ -271,7 +278,10 @@ export async function getBridgeConfiguration(
   }
   if (error) throw mapDatabaseError(error);
   if (!data) {
-    throw new AppError("INTERNAL_ERROR", "Bridge configuration was not initialized");
+    throw new AppError(
+      "INTERNAL_ERROR",
+      "Bridge configuration was not initialized for this platform",
+    );
   }
   return bridgeConfigurationDto(data);
 }
@@ -279,14 +289,36 @@ export async function getBridgeConfiguration(
 export async function updateBridgeConfiguration(
   context: UserWorkspaceContext,
   connectionId: string,
+  platform: string | undefined,
   input: UpdateBridgeConfigurationInput,
   idempotencyKey: string,
 ): Promise<BridgeConfigurationResponse> {
   requireOwnerContext(context);
+  const admin = createAdminClient();
+  const platformKey = platform
+    ? canonicalBridgeKind(platform)
+    : await (async () => {
+        const { data: connection, error } = await admin
+          .from("ai_connections")
+          .select("platform")
+          .eq("workspace_id", context.workspaceId)
+          .eq("id", connectionId)
+          .is("revoked_at", null)
+          .maybeSingle();
+        if (error) throw mapDatabaseError(error);
+        if (!connection) {
+          throw new AppError(
+            "FORBIDDEN",
+            "The Bridge connection is not accessible",
+          );
+        }
+        return canonicalBridgeKind(connection.platform);
+      })();
   const parameters = {
     p_workspace_id: context.workspaceId,
     p_user_id: context.userId,
     p_connection_id: connectionId,
+    p_platform: platformKey,
     p_expected_version: input.expected_version,
     p_enabled: input.enabled,
     p_include_thread_titles: input.include_thread_titles,
@@ -298,10 +330,10 @@ export async function updateBridgeConfiguration(
     p_idempotency_key: idempotencyKey,
     p_request_hash: hashRequest("update_ai_connection_bridge_config", {
       connectionId,
+      platform: platformKey,
       ...input,
     }),
   };
-  const admin = createAdminClient();
   const result = await admin.rpc(
     "update_ai_connection_bridge_config",
     parameters,
@@ -346,6 +378,7 @@ export async function updateBridgeConfiguration(
 async function attachDesiredBridgeVersion(
   auth: AIAuthContext,
   response: BridgeConfigurationResponse,
+  platform: string,
 ): Promise<BridgeConfigurationResponse> {
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -353,6 +386,7 @@ async function attachDesiredBridgeVersion(
     .select("desired_bridge_version")
     .eq("workspace_id", auth.workspaceId)
     .eq("connection_id", auth.connectionId)
+    .eq("platform", canonicalBridgeKind(platform))
     .maybeSingle();
   if (error) {
     if (isMissingWorkingDirectorySchema(error)) return response;
@@ -372,10 +406,12 @@ export async function exchangeBridgeConfiguration(
   auth: AIAuthContext,
   input: ExchangeBridgeConfigurationInput,
 ): Promise<BridgeConfigurationResponse> {
+  const platform = canonicalBridgeKind(input.platform ?? auth.platform);
   const parameters = {
     p_workspace_id: auth.workspaceId,
     p_connection_id: auth.connectionId,
     p_api_token_hash: auth.tokenHash,
+    p_platform: platform,
     p_runtime_instance_id: input.runtime_instance_id,
     p_report_sequence: input.report_sequence,
     p_lease_seconds: input.lease_seconds,
@@ -389,6 +425,7 @@ export async function exchangeBridgeConfiguration(
     return await attachDesiredBridgeVersion(
       auth,
       await callDomainRpc("exchange_ai_connection_bridge_config", parameters),
+      platform,
     );
   } catch (error) {
     if (!(error instanceof AppError) || error.code !== "INVALID_REQUEST") {
@@ -412,6 +449,7 @@ export async function exchangeBridgeConfiguration(
         p_effective: legacyEffective as Json | null,
         p_constraints: legacyConstraints as Json,
       }),
+      platform,
     );
   }
 }

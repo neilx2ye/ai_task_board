@@ -200,6 +200,7 @@ function splitSystemdCommand(value: string): string[] {
 
 type CurrentUnitSettings = {
   nodeBinary: string;
+  runArgs: string | undefined;
   workingDirectory: string;
   homeDirectory: string;
   codexHome: string;
@@ -211,6 +212,7 @@ type CurrentUnitSettings = {
 // path changes to the newly installed version.
 function parseCurrentUnit(contents: string): CurrentUnitSettings {
   let nodeBinary: string | undefined;
+  let runArgs: string | undefined;
   let workingDirectory: string | undefined;
   let homeDirectory: string | undefined;
   let codexHome: string | undefined;
@@ -235,8 +237,15 @@ function parseCurrentUnit(contents: string): CurrentUnitSettings {
         if (assignment.slice(0, separator) === "CODEX_HOME") codexHome = value;
       }
     } else if (line.startsWith("ExecStart=")) {
-      const [firstToken] = splitSystemdCommand(line.slice("ExecStart=".length));
+      const tokens = splitSystemdCommand(line.slice("ExecStart=".length));
+      const [firstToken] = tokens;
       if (firstToken) nodeBinary = unquoteSystemdArgument(firstToken);
+      const runIndex = tokens.findIndex(
+        (token) => unquoteSystemdArgument(token) === "run",
+      );
+      if (runIndex >= 0 && tokens[runIndex + 1]) {
+        runArgs = unquoteSystemdArgument(tokens[runIndex + 1]);
+      }
     }
   }
   const missing = [
@@ -253,7 +262,14 @@ function parseCurrentUnit(contents: string): CurrentUnitSettings {
       `现有 systemd unit 缺少 ${missing.join("、")}，无法安全重写`,
     );
   }
-  return { nodeBinary, workingDirectory, homeDirectory, codexHome, environmentFile };
+  return {
+    nodeBinary,
+    runArgs,
+    workingDirectory,
+    homeDirectory,
+    codexHome,
+    environmentFile,
+  };
 }
 
 async function atomicWrite(
@@ -318,6 +334,21 @@ export async function maybeApplyDesiredBridgeUpdate(
       log(
         `看板请求将 Bridge 升级到 ${desired}，但当前进程不在 systemd 下运行` +
           "；已跳过，请手动升级",
+      );
+    }
+    return null;
+  }
+  // 统一设备 Bridge 下只有 update-role=leader 的运行时执行自更新；
+  // 其余运行时与 supervisor 一起随 systemd 服务重启到新版本。
+  if (
+    environment.AI_TASK_BOARD_BRIDGE_SUPERVISED === "1" &&
+    environment.AI_TASK_BOARD_BRIDGE_UPDATE_ROLE !== "leader"
+  ) {
+    if (noticedSkipTarget !== desired) {
+      noticedSkipTarget = desired;
+      log(
+        `看板请求将 Bridge 升级到 ${desired}，但统一设备 Bridge 的升级由 leader 运行时执行` +
+          "；本运行时随服务一起重启",
       );
     }
     return null;
@@ -414,6 +445,7 @@ async function applyDesiredBridgeUpdate(
         homeDirectory: currentUnit.homeDirectory,
         codexHome: currentUnit.codexHome,
         environmentFile: currentUnit.environmentFile,
+        runArgs: currentUnit.runArgs,
       }),
       0o644,
     );

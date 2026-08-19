@@ -81,6 +81,12 @@ export const upsertPlanningNotesSchema = z
   })
   .strict();
 
+export const upsertThreadPlanningNotesSchema = z
+  .object({
+    content: z.string().max(100_000),
+  })
+  .strict();
+
 export const createTurnPlanStepSchema = z
   .object({
     content: nonEmptyText.max(100_000),
@@ -201,6 +207,8 @@ export const createThreadSchema = z
     directory_key: bridgeDirectoryKeySchema.nullable().optional(),
     model: z.string().trim().min(1).max(200).nullable().optional(),
     reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+    /** Canonical Bridge kind that owns the created Thread (unified devices). */
+    platform: nonEmptyText.max(100).optional(),
   })
   .strict();
 
@@ -297,6 +305,9 @@ export type RenameThreadInput = z.infer<typeof renameThreadSchema>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
 export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;
 export type UpsertPlanningNotesInput = z.infer<typeof upsertPlanningNotesSchema>;
+export type UpsertThreadPlanningNotesInput = z.infer<
+  typeof upsertThreadPlanningNotesSchema
+>;
 export type CreateTurnPlanStepInput = z.infer<typeof createTurnPlanStepSchema>;
 export type UpdateTurnPlanStepInput = z.infer<typeof updateTurnPlanStepSchema>;
 export type CreateDeviceFileCommandInput = z.infer<

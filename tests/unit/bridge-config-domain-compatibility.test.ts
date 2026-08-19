@@ -47,6 +47,7 @@ const auth = {
   connectionId: "11111111-1111-4111-8111-111111111111",
   tokenHash: "connection-token-hash",
   workspaceId: "22222222-2222-4222-8222-222222222222",
+  platform: "codex",
 };
 const ownerContext = {
   role: "owner" as const,
@@ -252,6 +253,7 @@ describe("Bridge configuration migration compatibility", () => {
       updateBridgeConfiguration(
         ownerContext,
         auth.connectionId,
+        "codex",
         {
           expected_version: 5,
           enabled: true,
@@ -290,6 +292,7 @@ describe("Bridge configuration migration compatibility", () => {
       updateBridgeConfiguration(
         ownerContext,
         auth.connectionId,
+        "codex",
         {
           expected_version: 5,
           enabled: true,

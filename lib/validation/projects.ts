@@ -16,3 +16,21 @@ export const createProjectSchema = z
   .strict();
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+
+/** Web 修改项目：working_directory 定位现有目录，new_working_directory 为目标路径。 */
+export const updateProjectSchema = z
+  .object({
+    working_directory: nonEmptyText
+      .max(4096)
+      .regex(ABSOLUTE_PATH_PATTERN, "working_directory 必须是绝对路径"),
+    name: nonEmptyText.max(200),
+    new_working_directory: nonEmptyText
+      .max(4096)
+      .regex(
+        ABSOLUTE_PATH_PATTERN,
+        "new_working_directory 必须是绝对路径",
+      ),
+  })
+  .strict();
+
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;

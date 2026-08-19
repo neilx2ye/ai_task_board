@@ -9,6 +9,7 @@ const ownerContext = { role: "owner" as const, userId, workspaceId };
 
 const domainMocks = vi.hoisted(() => ({
   createProjectOnBridges: vi.fn(),
+  updateProjectOnBridges: vi.fn(),
 }));
 const authMocks = vi.hoisted(() => ({
   ownerContextForRequest: vi.fn(),
@@ -16,12 +17,16 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/domain/projects", () => ({
   createProjectOnBridges: domainMocks.createProjectOnBridges,
+  updateProjectOnBridges: domainMocks.updateProjectOnBridges,
 }));
 vi.mock("@/lib/http/user-route", () => ({
   ownerContextForRequest: authMocks.ownerContextForRequest,
 }));
 
-import { POST as createProject } from "@/app/api/user/projects/route";
+import {
+  PATCH as updateProject,
+  POST as createProject,
+} from "@/app/api/user/projects/route";
 import { AppError } from "@/lib/domain/errors";
 
 function jsonRequest(
@@ -46,6 +51,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   authMocks.ownerContextForRequest.mockResolvedValue(ownerContext);
   domainMocks.createProjectOnBridges.mockResolvedValue({
+    results: [
+      {
+        connection_id: connectionId,
+        connection_name: "Laptop",
+        status: "submitted",
+      },
+    ],
+  });
+  domainMocks.updateProjectOnBridges.mockResolvedValue({
     results: [
       {
         connection_id: connectionId,
@@ -119,5 +133,78 @@ describe("owner project creation API", () => {
 
     expect(response.status).toBe(403);
     expect(domainMocks.createProjectOnBridges).not.toHaveBeenCalled();
+  });
+});
+
+const validUpdateBody = {
+  working_directory: "/srv/main",
+  name: "Main app renamed",
+  new_working_directory: "/srv/main-app",
+};
+
+describe("owner project update API", () => {
+  it("dispatches the validated update through the owner-only data layer", async () => {
+    const request = jsonRequest("/api/user/projects", validUpdateBody, {
+      headers: { "Idempotency-Key": " web/projects/update " },
+    });
+    const response = await updateProject(request);
+
+    expect(response.status).toBe(200);
+    expect(authMocks.ownerContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.updateProjectOnBridges).toHaveBeenCalledWith(
+      ownerContext,
+      validUpdateBody,
+      "web/projects/update",
+    );
+    expect(await response.json()).toEqual({
+      data: {
+        results: [
+          expect.objectContaining({
+            connection_id: connectionId,
+            status: "submitted",
+          }),
+        ],
+      },
+    });
+  });
+
+  it("requires an idempotency key", async () => {
+    const response = await updateProject(
+      jsonRequest("/api/user/projects", validUpdateBody),
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.updateProjectOnBridges).not.toHaveBeenCalled();
+  });
+
+  it("rejects relative paths and empty names", async () => {
+    for (const body of [
+      { ...validUpdateBody, working_directory: "srv/main" },
+      { ...validUpdateBody, new_working_directory: "srv/main-app" },
+      { ...validUpdateBody, name: "  " },
+    ]) {
+      const response = await updateProject(
+        jsonRequest("/api/user/projects", body, {
+          headers: { "Idempotency-Key": "web/projects/update" },
+        }),
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(domainMocks.updateProjectOnBridges).not.toHaveBeenCalled();
+  });
+
+  it("maps non-owner access to 403", async () => {
+    authMocks.ownerContextForRequest.mockRejectedValue(
+      new AppError("FORBIDDEN", "Workspace owner access is required"),
+    );
+
+    const response = await updateProject(
+      jsonRequest("/api/user/projects", validUpdateBody, {
+        headers: { "Idempotency-Key": "web/projects/update" },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(domainMocks.updateProjectOnBridges).not.toHaveBeenCalled();
   });
 });

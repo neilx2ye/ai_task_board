@@ -150,6 +150,7 @@ describe("Web Thread management REST API", () => {
     expect(routeMocks.authenticateAIRequest).toHaveBeenCalledWith(request);
     expect(domainMocks.listCreatedThreadIds).toHaveBeenCalledWith(
       expect.objectContaining({ connectionId }),
+      null,
     );
     await expect(response.json()).resolves.toMatchObject({
       data: { thread_ids: ["local-thread-42"] },

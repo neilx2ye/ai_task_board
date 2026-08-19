@@ -315,7 +315,11 @@ export class BoardClient {
       "/api/ai/thread-commands/claim",
       {
         method: "POST",
-        body: { runtime_instance_id: runtimeInstanceId, lease_seconds: 60 },
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          platform: "antigravity",
+          lease_seconds: 60,
+        },
         signal,
         timeoutMs: 5_000,
         maxAttempts: 1,

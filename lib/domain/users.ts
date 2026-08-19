@@ -9,6 +9,7 @@ import {
   hashToken,
 } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import { canonicalBridgeKind } from "@/lib/agent-platforms";
 import { parseCodexModelCatalog } from "@/lib/codex-models";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import {
@@ -151,19 +152,69 @@ function isMissingDeviceSchema(error: {
   );
 }
 
+function isMissingPlatformSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("platform");
+}
+
 async function loadConnectionModelSettings(
   admin: AdminClient,
   workspaceId: string,
-  connectionIds: readonly string[],
+  connections: readonly { id: string; platform: string }[],
 ) {
+  const connectionIds = connections.map((connection) => connection.id);
+  const platformByConnectionId = new Map(
+    connections.map((connection) => [
+      connection.id,
+      canonicalBridgeKind(connection.platform),
+    ]),
+  );
+  const withPlatformDefaults = <T extends { connection_id: string }>(
+    rows: T[],
+  ): (T & { platform: string })[] =>
+    rows.map((row) => ({
+      ...row,
+      platform: platformByConnectionId.get(row.connection_id) ?? "codex",
+    }));
+
   return collectChunkedRows(connectionIds, async (ids) => {
     let { data, error } = await admin
       .from("ai_connection_bridge_settings")
       .select(
-        "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
       )
       .eq("workspace_id", workspaceId)
       .in("connection_id", [...ids]);
+    if (error && isMissingPlatformSchema(error)) {
+      // Rolling deployment: the platform-scoping migration may land after the
+      // Web release. Re-query without the column and derive it from the
+      // connection platform.
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? withPlatformDefaults(fallback.data)
+        : null;
+      error = fallback.error;
+    }
     if (error && isMissingDeviceSchema(error)) {
       // 滚动部署：设备标识/期望版本迁移可能落后于 Web 发布，先退回旧查询。
       const fallback = await admin
@@ -174,12 +225,14 @@ async function loadConnectionModelSettings(
         .eq("workspace_id", workspaceId)
         .in("connection_id", [...ids]);
       data = fallback.data
-        ? fallback.data.map((row) => ({
+        ? withPlatformDefaults(
+          fallback.data.map((row) => ({
             ...row,
             device_id: null,
             device_label: null,
             desired_bridge_version: null,
-          }))
+          })),
+        )
         : null;
       error = fallback.error;
     }
@@ -191,14 +244,16 @@ async function loadConnectionModelSettings(
           .eq("workspace_id", workspaceId)
           .in("connection_id", [...ids]);
         if (legacy.error) throw mapDatabaseError(legacy.error);
-        return (legacy.data ?? []).map((row) => ({
-          ...row,
-          quota: null,
-          quota_updated_at: null,
-          device_id: null,
-          device_label: null,
-          desired_bridge_version: null,
-        }));
+        return withPlatformDefaults(
+          (legacy.data ?? []).map((row) => ({
+            ...row,
+            quota: null,
+            quota_updated_at: null,
+            device_id: null,
+            device_label: null,
+            desired_bridge_version: null,
+          })),
+        );
       }
       throw mapDatabaseError(error);
     }
@@ -275,9 +330,12 @@ async function loadSessionListItems(
   const connectionIds = [...new Set(sessions.map((session) => session.connection_id))];
   const currentTaskIds = [
     ...new Set(
-      sessions
-        .map((session) => session.current_task_id)
-        .filter((taskId): taskId is string => Boolean(taskId)),
+      sessions.flatMap((session) => [
+        ...(session.current_task_id ? [session.current_task_id] : []),
+        ...(session.last_completed_task_id
+          ? [session.last_completed_task_id]
+          : []),
+      ]),
     ),
   ];
   const sessionIds = sessions.map((session) => session.id);
@@ -290,24 +348,24 @@ async function loadSessionListItems(
       ),
     ),
   ];
+  const connectionRows = await collectChunkedRows(connectionIds, async (ids) => {
+    const { data, error } = await admin
+      .from("ai_connections")
+      .select("id, name, platform, last_seen_at, bridge_version, revoked_at")
+      .eq("workspace_id", workspaceId)
+      .in("id", [...ids]);
+    if (error) throw mapDatabaseError(error);
+    return data ?? [];
+  });
   const [
-    connections,
     connectionSettings,
     currentTasks,
     pendingTasks,
+    runningTasks,
     threadSettingCommands,
   ] =
     await Promise.all([
-    collectChunkedRows(connectionIds, async (ids) => {
-      const { data, error } = await admin
-        .from("ai_connections")
-        .select("id, name, platform, last_seen_at, bridge_version, revoked_at")
-        .eq("workspace_id", workspaceId)
-        .in("id", [...ids]);
-      if (error) throw mapDatabaseError(error);
-      return data ?? [];
-    }),
-    loadConnectionModelSettings(admin, workspaceId, connectionIds),
+    loadConnectionModelSettings(admin, workspaceId, connectionRows),
     collectChunkedRows(currentTaskIds, async (ids) => {
       const { data, error } = await admin
         .from("tasks")
@@ -326,6 +384,21 @@ async function loadSessionListItems(
           .in("status", ["ready", "waiting_user"])
           .in("assigned_session_id", [...ids])
           .order("priority", { ascending: false })
+          .order("created_at")
+          .order("id")
+          .range(from, to);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      }),
+    ),
+    collectChunkedRows(sessionIds, (ids) =>
+      collectRangePages(async (from, to) => {
+        const { data, error } = await admin
+          .from("tasks")
+          .select("id, assigned_session_id")
+          .eq("workspace_id", workspaceId)
+          .in("status", ["claimed", "running"])
+          .in("assigned_session_id", [...ids])
           .order("created_at")
           .order("id")
           .range(from, to);
@@ -354,14 +427,25 @@ async function loadSessionListItems(
   ]);
 
   const connectionById = new Map(
-    connections.map((connection) => [connection.id, connection]),
+    connectionRows.map((connection) => [connection.id, connection]),
   );
   const connectionSettingsById = new Map(
-    connectionSettings.map((settings) => [settings.connection_id, settings]),
+    connectionSettings.map((settings) => [
+      `${settings.connection_id}:${settings.platform}`,
+      settings,
+    ]),
   );
   const currentTaskById = new Map(
     currentTasks.map((task) => [task.id, sessionTaskSummary(task)]),
   );
+  const runningCountBySession = new Map<string, number>();
+  for (const row of runningTasks) {
+    if (!row.assigned_session_id) continue;
+    runningCountBySession.set(
+      row.assigned_session_id,
+      (runningCountBySession.get(row.assigned_session_id) ?? 0) + 1,
+    );
+  }
   const queuedCountBySession = new Map<string, number>();
   const waitingTaskBySession = new Map<string, SessionCurrentTaskSummary>();
   const nextTaskBySession = new Map<string, SessionCurrentTaskSummary>();
@@ -389,12 +473,17 @@ async function loadSessionListItems(
     const settings = session.external_conversation_ref
       ? threadSettings.get(session.external_conversation_ref)
       : undefined;
-    const connectionModelSettings = connectionSettingsById.get(
-      session.connection_id,
-    );
+    const connectionModelSettings =
+      connectionSettingsById.get(
+        `${session.connection_id}:${canonicalBridgeKind(session.platform)}`,
+      ) ??
+      connectionSettings.find(
+        (row) => row.connection_id === session.connection_id,
+      );
     return {
       ...session,
       status: currentTask?.awaiting_user_input ? "waiting" : session.status,
+      unviewed_completed_count: session.unviewed_completed_count ?? 0,
       name: session.user_name ?? session.name,
       connection: connection
         ? {
@@ -420,6 +509,10 @@ async function loadSessionListItems(
         waitingTaskBySession.get(session.id) ??
         nextTaskBySession.get(session.id) ??
         null,
+      last_completed_task: session.last_completed_task_id
+        ? currentTaskById.get(session.last_completed_task_id) ?? null
+        : null,
+      running_task_count: runningCountBySession.get(session.id) ?? 0,
       queued_task_count: queuedCountBySession.get(session.id) ?? 0,
       configured_model: settings?.model ?? null,
       configured_reasoning_effort: settings?.reasoningEffort ?? null,
@@ -668,14 +761,27 @@ export async function listConnections(context: UserWorkspaceContext) {
   const settings = await loadConnectionModelSettings(
     admin,
     context.workspaceId,
-    connections.map((connection) => connection.id),
-  );
-  const settingsByConnectionId = new Map(
-    settings.map((row) => [row.connection_id, row]),
+    connections.map((connection) => ({
+      id: connection.id,
+      platform: connection.platform,
+    })),
   );
   return {
     connections: connections.map((connection) => {
-      const modelSettings = settingsByConnectionId.get(connection.id);
+      const connectionSettings = settings.filter(
+        (row) => row.connection_id === connection.id,
+      );
+      const modelSettings =
+        connectionSettings.find(
+          (row) => row.platform === canonicalBridgeKind(connection.platform),
+        ) ?? connectionSettings[0];
+      const quotas = connectionSettings
+        .filter((row) => row.quota !== null && row.quota !== undefined)
+        .map((row) => ({
+          platform: row.platform,
+          quota: row.quota,
+          quota_updated_at: row.quota_updated_at,
+        }));
       return {
         ...connection,
         model_catalog: parseCodexModelCatalog(modelSettings?.model_catalog),
@@ -683,6 +789,7 @@ export async function listConnections(context: UserWorkspaceContext) {
           modelSettings?.model_catalog_updated_at ?? null,
         quota: modelSettings?.quota ?? null,
         quota_updated_at: modelSettings?.quota_updated_at ?? null,
+        quotas: quotas.length > 1 ? quotas : null,
         device_id: modelSettings?.device_id ?? null,
         device_label: modelSettings?.device_label ?? null,
         desired_bridge_version: modelSettings?.desired_bridge_version ?? null,
@@ -774,6 +881,7 @@ async function enqueueThreadCommand(
     directoryKey: string | null;
     model: string | null;
     reasoningEffort: string | null;
+    platform: string | null;
   },
   idempotencyKey: string,
 ) {
@@ -788,6 +896,7 @@ async function enqueueThreadCommand(
     p_directory_key: input.directoryKey,
     p_model: input.model,
     p_reasoning_effort: input.reasoningEffort,
+    p_platform: input.platform,
     ...commandMetadata(
       "enqueue_ai_thread_command_with_settings",
       input,
@@ -812,6 +921,7 @@ export function createThread(
       directoryKey: input.directory_key ?? null,
       model: input.model ?? null,
       reasoningEffort: input.reasoning_effort ?? null,
+      platform: input.platform ?? null,
     },
     idempotencyKey,
   );
@@ -851,6 +961,7 @@ export async function renameThread(
       directoryKey: null,
       model: input.model ?? null,
       reasoningEffort: input.reasoning_effort ?? null,
+      platform: null,
     },
     idempotencyKey,
   );
@@ -872,9 +983,30 @@ export async function deleteThread(
       directoryKey: null,
       model: null,
       reasoningEffort: null,
+      platform: null,
     },
     idempotencyKey,
   );
+}
+
+/** 用户打开 Thread 控制台后，把“完成未查看”的任务全部标记为已查看。 */
+export async function markSessionCompletionsViewed(
+  context: UserWorkspaceContext,
+  sessionId: string,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("ai_sessions")
+    .update({ unviewed_completed_count: 0 })
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", sessionId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!data) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+  return { session_id: sessionId, unviewed_completed_count: 0 };
 }
 
 export async function listSessions(context: UserWorkspaceContext) {

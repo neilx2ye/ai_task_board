@@ -7,14 +7,25 @@ import {
   promptForConnectionBasics,
   TerminalPrompter,
 } from "./interactive.js";
+import {
+  runUnifiedSupervisor,
+  type UnifiedBridgeKind,
+} from "./supervisor.js";
+import { runUnifiedSetup } from "./unified-setup.js";
 
 export type BridgeSetupTarget =
   | "codex"
   | "kimi"
   | "antigravity"
+  | "claude"
   | "both"
   | "all";
-export type BridgeRunTarget = Exclude<BridgeSetupTarget, "both" | "all">;
+export type BridgeRunTarget =
+  | "codex"
+  | "kimi"
+  | "antigravity"
+  | "claude"
+  | "all";
 
 export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
   value: BridgeSetupTarget;
@@ -26,14 +37,26 @@ export const BRIDGE_SETUP_CHOICES: ReadonlyArray<{
     value: "antigravity",
     label: "Antigravity Bridge（Google Antigravity CLI）",
   },
+  {
+    value: "claude",
+    label: "Claude Code Bridge（claude-agent-acp）",
+  },
   { value: "both", label: "Codex Bridge 和 Kimi Bridge" },
-  { value: "all", label: "Codex、Kimi 和 Antigravity Bridge" },
+  {
+    value: "all",
+    label: "统一设备 Bridge（一个服务运行全部四种 Bridge）",
+  },
 ];
 
-const BRIDGE_RUN_CHOICES = BRIDGE_SETUP_CHOICES.filter(
-  (choice): choice is { value: BridgeRunTarget; label: string } =>
-    choice.value !== "both" && choice.value !== "all",
-);
+const BRIDGE_RUN_CHOICES: ReadonlyArray<{
+  value: BridgeRunTarget;
+  label: string;
+}> = [
+  ...BRIDGE_SETUP_CHOICES.filter(
+    (choice): choice is { value: BridgeRunTarget; label: string } =>
+      choice.value !== "both",
+  ),
+];
 
 export function parseBridgeSetupTarget(
   value: string | undefined,
@@ -45,6 +68,9 @@ export function parseBridgeSetupTarget(
   if (normalized === "antigravity" || normalized === "agy") {
     return "antigravity";
   }
+  if (normalized === "claude" || normalized === "claude-code") {
+    return "claude";
+  }
   if (normalized === "both") return "both";
   if (normalized === "all") return "all";
   return null;
@@ -53,10 +79,20 @@ export function parseBridgeSetupTarget(
 export function parseBridgeRunTarget(
   value: string | undefined,
 ): BridgeRunTarget | null {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === "all" ||
+    normalized === "supervisor" ||
+    normalized === "supervise" ||
+    normalized === "unified"
+  ) {
+    return "all";
+  }
   const target = parseBridgeSetupTarget(value);
   return target === "codex" ||
     target === "kimi" ||
-    target === "antigravity"
+    target === "antigravity" ||
+    target === "claude"
     ? target
     : null;
 }
@@ -122,90 +158,19 @@ export function promptForBridgeRunTarget(
 ): Promise<BridgeRunTarget> {
   return promptForTarget(
     BRIDGE_RUN_CHOICES,
-    "codex",
-    "要运行哪个 Bridge？",
+    "all",
+    "要运行哪个 Bridge？默认统一设备 Bridge 同时运行全部已启用类型。",
     input,
     output,
   ) as Promise<BridgeRunTarget>;
 }
 
-type InteractiveSetupRunner = (options: {
-  packageVersion: string;
-}) => Promise<void>;
-
-async function setupCodexInteractive(
-  packageVersion: string,
-): Promise<void> {
-  const { runInteractiveSetup } = await import("./setup.js");
-  await runInteractiveSetup({ packageVersion });
-}
-
-async function setupCodexNonInteractive(
-  packageVersion: string,
-): Promise<void> {
-  const { runNonInteractiveSetup } = await import("./setup.js");
-  await runNonInteractiveSetup({ packageVersion });
-}
-
-async function setupKimi(
-  packageVersion: string,
-  interactive: boolean,
-): Promise<void> {
-  const runtimeModule = "./kimi-runtime/index.js";
-  const { runKimiInteractiveSetup, runKimiNonInteractiveSetup } =
-    (await import(runtimeModule)) as {
-      runKimiInteractiveSetup: InteractiveSetupRunner;
-      runKimiNonInteractiveSetup: InteractiveSetupRunner;
-    };
-  if (interactive) {
-    await runKimiInteractiveSetup({ packageVersion });
-    return;
-  }
-  await runKimiNonInteractiveSetup({ packageVersion });
-}
-
-async function setupAntigravity(
-  packageVersion: string,
-  interactive: boolean,
-): Promise<void> {
-  const runtimeModule = "./antigravity-runtime/index.js";
-  const { runAntigravityInteractiveSetup, runAntigravityNonInteractiveSetup } =
-    (await import(runtimeModule)) as {
-      runAntigravityInteractiveSetup: InteractiveSetupRunner;
-      runAntigravityNonInteractiveSetup: InteractiveSetupRunner;
-    };
-  if (interactive) {
-    await runAntigravityInteractiveSetup({ packageVersion });
-    return;
-  }
-  await runAntigravityNonInteractiveSetup({ packageVersion });
-}
-
-async function runSingleTargetSetup(
-  target: BridgeRunTarget,
-  packageVersion: string,
-  interactive: boolean,
-): Promise<void> {
-  if (target === "codex") {
-    if (interactive) {
-      await setupCodexInteractive(packageVersion);
-    } else {
-      await setupCodexNonInteractive(packageVersion);
-    }
-    return;
-  }
-  if (target === "kimi") {
-    await setupKimi(packageVersion, interactive);
-    return;
-  }
-  await setupAntigravity(packageVersion, interactive);
-}
-
 /**
  * Unified setup entrypoint. A single explicit target runs interactively only
  * when no Connection Token is configured; with a token it installs directly
- * from the environment. both/all always run interactively because each
- * platform has its own token.
+ * from the environment. Every target installs the same single user service,
+ * one environment file and one token; re-running a target merges the new
+ * Bridge kinds into the existing install.
  */
 export async function runBridgeSetup(
   target: BridgeSetupTarget,
@@ -213,40 +178,25 @@ export async function runBridgeSetup(
 ): Promise<void> {
   applyDefaultBoardUrl();
 
-  if (target === "codex" || target === "kimi" || target === "antigravity") {
-    const interactive = !hasConnectionEnvironment(process.env);
-    if (!interactive) {
-      await runSingleTargetSetup(target, packageVersion, false);
-      return;
-    }
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
-      throw new Error(
-        "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
-      );
-    }
-    await runSingleTargetSetup(target, packageVersion, true);
-    return;
-  }
-
-  // both/all need one token per platform, so non-interactive installation is
-  // ambiguous and interactive prompting is always required.
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  const interactive = !hasConnectionEnvironment(process.env);
+  if (interactive && (!process.stdin.isTTY || !process.stdout.isTTY)) {
     throw new Error(
-      "setup 需要交互式终端；非交互安装请分别运行 setup codex、setup kimi 或 setup antigravity 并提供 AI_TASK_BOARD_CONNECTION_TOKEN",
+      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
     );
   }
-  const targets: readonly BridgeRunTarget[] =
-    target === "both"
-      ? (["codex", "kimi"] as const)
-      : (["codex", "kimi", "antigravity"] as const);
-  process.stdout.write(
-    target === "both"
-      ? "\n将依次安装两个独立服务。Codex 与 Kimi 需要各自在看板中创建的 Connection Token。\n"
-      : "\n将依次安装三个独立服务。Codex、Kimi 与 Antigravity 需要各自在看板中创建的 Connection Token。\n",
-  );
-  for (const singleTarget of targets) {
-    await runSingleTargetSetup(singleTarget, packageVersion, true);
-  }
+  const targets: readonly UnifiedBridgeKind[] =
+    target === "codex"
+      ? ["codex"]
+      : target === "kimi"
+        ? ["kimi"]
+        : target === "antigravity"
+          ? ["antigravity"]
+          : target === "claude"
+            ? ["claude"]
+            : target === "both"
+              ? ["codex", "kimi"]
+              : ["codex", "kimi", "antigravity", "claude"];
+  await runUnifiedSetup({ packageVersion, targets }, interactive);
 }
 
 /**
@@ -279,6 +229,11 @@ export async function runAgentBridgeConfigured(
 }
 
 export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {
+  if (target === "all") {
+    await runUnifiedSupervisor();
+    return;
+  }
+
   if (target === "codex") {
     const { runBridgeCli } = await import("./bridge.js");
     await runBridgeCli();
@@ -294,9 +249,18 @@ export async function runAgentBridge(target: BridgeRunTarget): Promise<void> {
     return;
   }
 
-  const runtimeModule = "./antigravity-runtime/index.js";
-  const { runAntigravityBridgeCli } = (await import(runtimeModule)) as {
-    runAntigravityBridgeCli: () => Promise<void>;
+  if (target === "antigravity") {
+    const runtimeModule = "./antigravity-runtime/index.js";
+    const { runAntigravityBridgeCli } = (await import(runtimeModule)) as {
+      runAntigravityBridgeCli: () => Promise<void>;
+    };
+    await runAntigravityBridgeCli();
+    return;
+  }
+
+  const runtimeModule = "./claude-runtime/index.js";
+  const { runClaudeBridgeCli } = (await import(runtimeModule)) as {
+    runClaudeBridgeCli: () => Promise<void>;
   };
-  await runAntigravityBridgeCli();
+  await runClaudeBridgeCli();
 }

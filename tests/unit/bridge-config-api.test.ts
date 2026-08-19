@@ -105,6 +105,7 @@ describe("owner Bridge configuration API", () => {
     expect(domainMocks.getBridgeConfiguration).toHaveBeenCalledWith(
       ownerContext,
       connectionId,
+      undefined,
     );
     expect(await responseJson(response)).toEqual({ data: configuration });
   });
@@ -146,6 +147,7 @@ describe("owner Bridge configuration API", () => {
     expect(domainMocks.updateBridgeConfiguration).toHaveBeenCalledWith(
       ownerContext,
       connectionId,
+      undefined,
       {
         expected_version: 3,
         enabled: false,

@@ -124,6 +124,7 @@ export type AIConnectionInsert = {
 
 export type AIConnectionBridgeSettingsRow = {
   connection_id: string;
+  platform: string;
   workspace_id: string;
   version: number;
   desired_enabled: boolean;
@@ -175,6 +176,7 @@ export type AIConnectionBridgeSettingsRow = {
 
 export type AIConnectionBridgeSettingsInsert = {
   connection_id: string;
+  platform?: string;
   workspace_id: string;
   version?: number;
   desired_enabled?: boolean;
@@ -227,6 +229,7 @@ export type AIConnectionBridgeSettingsInsert = {
 export type AIConnectionBridgeRuntimeRow = {
   workspace_id: string;
   connection_id: string;
+  platform: string;
   runtime_instance_id: string;
   last_report_sequence: number;
   retired_at: string | null;
@@ -237,6 +240,7 @@ export type AIConnectionBridgeRuntimeRow = {
 export type AIConnectionBridgeRuntimeInsert = {
   workspace_id: string;
   connection_id: string;
+  platform?: string;
   runtime_instance_id: string;
   last_report_sequence: number;
   retired_at?: string | null;
@@ -247,6 +251,7 @@ export type AIConnectionBridgeRuntimeInsert = {
 export type AIBridgeDirectoryRow = {
   workspace_id: string;
   connection_id: string;
+  platform: string;
   directory_key: string;
   name: string;
   working_directory: string;
@@ -259,6 +264,7 @@ export type AIBridgeDirectoryRow = {
 export type AIBridgeDirectoryInsert = {
   workspace_id: string;
   connection_id: string;
+  platform?: string;
   directory_key: string;
   name: string;
   working_directory: string;
@@ -279,6 +285,10 @@ export type AISessionRow = {
   capabilities: string[];
   status: SessionStatus;
   current_task_id: string | null;
+  /** 本 Thread 已完成但用户尚未查看的叶子任务数。 */
+  unviewed_completed_count: number;
+  /** 最近一次完成的任务，用于在查看后继续展示“已完成”。 */
+  last_completed_task_id: string | null;
   last_seen_at: string;
   working_directory: string | null;
   bridge_directory_key: string | null;
@@ -302,6 +312,8 @@ export type AISessionInsert = {
   capabilities?: string[];
   status?: SessionStatus;
   current_task_id?: string | null;
+  unviewed_completed_count?: number;
+  last_completed_task_id?: string | null;
   last_seen_at?: string;
   working_directory?: string | null;
   bridge_directory_key?: string | null;
@@ -318,6 +330,7 @@ export type AIThreadCommandRow = {
   id: string;
   workspace_id: string;
   connection_id: string;
+  platform: string;
   session_id: string | null;
   action: AIThreadCommandAction;
   name: string | null;
@@ -341,6 +354,7 @@ export type AIThreadCommandInsert = {
   id?: string;
   workspace_id: string;
   connection_id: string;
+  platform?: string;
   session_id?: string | null;
   action: AIThreadCommandAction;
   name?: string | null;
@@ -778,6 +792,24 @@ export type PlanningNoteInsert = {
   updated_at?: string;
 };
 
+export type ThreadPlanningNoteRow = {
+  workspace_id: string;
+  session_id: string;
+  content: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ThreadPlanningNoteInsert = {
+  workspace_id: string;
+  session_id: string;
+  content?: string;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type SessionTurnPlanRow = {
   id: string;
   workspace_id: string;
@@ -930,6 +962,8 @@ export type BridgeRuntimeStatus = {
 
 export type BridgeConfiguration = {
   connection_id: string;
+  /** Canonical runtime kind owning this configuration row. */
+  platform?: string;
   version: number;
   desired: BridgeDesiredConfiguration;
   applied: BridgeAppliedConfiguration | null;
@@ -1054,10 +1088,10 @@ export interface Database {
         [
           {
             foreignKeyName: "ai_connection_bridge_runtimes_settings_fk";
-            columns: ["workspace_id", "connection_id"];
+            columns: ["workspace_id", "connection_id", "platform"];
             isOneToOne: false;
             referencedRelation: "ai_connection_bridge_settings";
-            referencedColumns: ["workspace_id", "connection_id"];
+            referencedColumns: ["workspace_id", "connection_id", "platform"];
           },
         ]
       >;
@@ -1124,12 +1158,18 @@ export interface Database {
           },
           {
             foreignKeyName: "ai_sessions_bridge_directory_fk";
-            columns: ["workspace_id", "connection_id", "bridge_directory_key"];
+            columns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "bridge_directory_key",
+            ];
             isOneToOne: false;
             referencedRelation: "ai_bridge_directories";
             referencedColumns: [
               "workspace_id",
               "connection_id",
+              "platform",
               "directory_key",
             ];
           },
@@ -1156,12 +1196,18 @@ export interface Database {
           },
           {
             foreignKeyName: "ai_thread_commands_directory_fk";
-            columns: ["workspace_id", "connection_id", "directory_key"];
+            columns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "directory_key",
+            ];
             isOneToOne: false;
             referencedRelation: "ai_bridge_directories";
             referencedColumns: [
               "workspace_id",
               "connection_id",
+              "platform",
               "directory_key",
             ];
           },
@@ -1447,6 +1493,27 @@ export interface Database {
           },
         ]
       >;
+      thread_planning_notes: TableDefinition<
+        ThreadPlanningNoteRow,
+        ThreadPlanningNoteInsert,
+        Partial<ThreadPlanningNoteRow>,
+        [
+          {
+            foreignKeyName: "thread_planning_notes_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "thread_planning_notes_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
       session_turn_plans: TableDefinition<
         SessionTurnPlanRow,
         SessionTurnPlanInsert,
@@ -1501,6 +1568,7 @@ export interface Database {
         Args: AIConnectionArgs &
           IdempotencyArgs & {
             p_bridge_version: string;
+            p_platform: string | null;
             p_directories: Json | null;
             p_threads: Json;
           };
@@ -1872,6 +1940,7 @@ export interface Database {
             p_directory_key: string | null;
             p_model: string | null;
             p_reasoning_effort: string | null;
+            p_platform: string | null;
           };
         Returns: AIThreadCommandResponse;
       };
@@ -1879,6 +1948,7 @@ export interface Database {
         Args: AIConnectionArgs & {
           p_runtime_instance_id: string;
           p_lease_seconds: number;
+          p_platform: string | null;
         };
         Returns: AIThreadCommandResponse;
       };
@@ -1922,6 +1992,7 @@ export interface Database {
         Args: UserArgs &
           IdempotencyArgs & {
             p_connection_id: string;
+            p_platform: string;
             p_expected_version: number;
             p_enabled: boolean;
             p_include_thread_titles: boolean;
@@ -1935,6 +2006,7 @@ export interface Database {
       };
       exchange_ai_connection_bridge_config: {
         Args: AIConnectionArgs & {
+          p_platform: string;
           p_runtime_instance_id: string;
           p_report_sequence: number;
           p_lease_seconds: number;

@@ -22,6 +22,7 @@ const domainMocks = vi.hoisted(() => ({
   getSessionConversation: vi.fn(),
   renameThread: vi.fn(),
   deleteThread: vi.fn(),
+  markSessionCompletionsViewed: vi.fn(),
   reportSessionActivity: vi.fn(),
   syncSessions: vi.fn(),
 }));
@@ -37,6 +38,7 @@ vi.mock("@/lib/domain/users", () => ({
   getSessionConversation: domainMocks.getSessionConversation,
   renameThread: domainMocks.renameThread,
   deleteThread: domainMocks.deleteThread,
+  markSessionCompletionsViewed: domainMocks.markSessionCompletionsViewed,
 }));
 vi.mock("@/lib/domain/bridge-directories", () => ({
   listBridgeDirectories: domainMocks.listBridgeDirectories,
@@ -66,6 +68,7 @@ import {
   GET as getConversation,
   PATCH as renameThread,
 } from "@/app/api/user/sessions/[sessionId]/route";
+import { POST as markCompletionsViewed } from "@/app/api/user/sessions/[sessionId]/viewed/route";
 import { POST as createTurn } from "@/app/api/user/sessions/[sessionId]/turns/route";
 import { AppError } from "@/lib/domain/errors";
 import {
@@ -126,6 +129,10 @@ beforeEach(() => {
   domainMocks.listBridgeDirectories.mockResolvedValue({ directories: [] });
   domainMocks.renameThread.mockResolvedValue({ command: { id: "rename" } });
   domainMocks.deleteThread.mockResolvedValue({ command: { id: "delete" } });
+  domainMocks.markSessionCompletionsViewed.mockResolvedValue({
+    session_id: sessionId,
+    unviewed_completed_count: 0,
+  });
   domainMocks.createSessionTurn.mockResolvedValue({ task: { id: taskId } });
   domainMocks.reportSessionActivity.mockResolvedValue({
     activity: { id: 1, kind: "reasoning" },
@@ -133,6 +140,38 @@ beforeEach(() => {
   domainMocks.syncSessions.mockResolvedValue({
     connection: { id: connectionId },
     sessions: [{ id: sessionId }],
+  });
+});
+
+describe("session completion viewed REST API", () => {
+  it("marks completed tasks as viewed for the authenticated workspace", async () => {
+    const request = new Request(
+      `http://localhost/api/user/sessions/${sessionId}/viewed`,
+      { method: "POST" },
+    );
+    const response = await markCompletionsViewed(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(routeMocks.userContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.markSessionCompletionsViewed).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+    );
+  });
+
+  it("rejects an invalid session path before touching the domain", async () => {
+    const response = await markCompletionsViewed(
+      new Request("http://localhost/api/user/sessions/not-a-uuid/viewed", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ sessionId: "not-a-uuid" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(routeMocks.userContextForRequest).not.toHaveBeenCalled();
+    expect(domainMocks.markSessionCompletionsViewed).not.toHaveBeenCalled();
   });
 });
 

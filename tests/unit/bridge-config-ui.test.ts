@@ -106,7 +106,7 @@ describe("Bridge configuration UI model", () => {
     ).toBe(true);
     expect(
       supportsBridgeSettings({ bridge_version: null, platform: "Claude" }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       supportsBridgeSettings({ bridge_version: null, platform: "Kimi Code" }),
     ).toBe(true);
@@ -118,7 +118,7 @@ describe("Bridge configuration UI model", () => {
     ).toBe(true);
   });
 
-  it("limits the Codex history banner to non-Kimi/Antigravity Bridges", () => {
+  it("limits the Codex history banner to non-Kimi/Antigravity/Claude Bridges", () => {
     expect(
       supportsHistorySyncStatus({ bridge_version: "1.1.0", platform: "Codex CLI" }),
     ).toBe(true);
@@ -132,6 +132,12 @@ describe("Bridge configuration UI model", () => {
       supportsHistorySyncStatus({
         bridge_version: "1.1.0-antigravity.1",
         platform: "Antigravity",
+      }),
+    ).toBe(false);
+    expect(
+      supportsHistorySyncStatus({
+        bridge_version: "1.1.0-claude.1",
+        platform: "Claude Code",
       }),
     ).toBe(false);
   });
@@ -198,22 +204,27 @@ describe("Bridge configuration UI model", () => {
       history_turn_limit: 50,
       working_directories: null,
     };
-    const first = bridgeConfigMutationFingerprint("conn-1", input);
-    expect(bridgeConfigMutationFingerprint("conn-1", { ...input })).toBe(first);
+    const first = bridgeConfigMutationFingerprint("conn-1", "codex", input);
     expect(
-      bridgeConfigMutationFingerprint("conn-1", {
+      bridgeConfigMutationFingerprint("conn-1", "codex", { ...input }),
+    ).toBe(first);
+    expect(
+      bridgeConfigMutationFingerprint("conn-1", "kimi", input),
+    ).not.toBe(first);
+    expect(
+      bridgeConfigMutationFingerprint("conn-1", "codex", {
         ...input,
         expected_version: 4,
       }),
     ).not.toBe(first);
     expect(
-      bridgeConfigMutationFingerprint("conn-1", {
+      bridgeConfigMutationFingerprint("conn-1", "codex", {
         ...input,
         history_turn_limit: 40,
       }),
     ).not.toBe(first);
     expect(
-      bridgeConfigMutationFingerprint("conn-1", {
+      bridgeConfigMutationFingerprint("conn-1", "codex", {
         ...input,
         working_directories: [
           {

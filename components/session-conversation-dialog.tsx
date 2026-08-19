@@ -93,6 +93,7 @@ import {
 import {
   agentDisplayName,
   isAntigravityPlatform,
+  isClaudeCodePlatform,
   isKimiPlatform,
 } from "@/lib/agent-platforms";
 import type {
@@ -903,15 +904,16 @@ function SessionConversationContent({
     () =>
       agentModelOptions(
         session?.connection.model_catalog,
-        session?.connection.platform,
+        session?.platform,
       ),
-    [session?.connection.model_catalog, session?.connection.platform],
+    [session?.connection.model_catalog, session?.platform],
   );
   const recordedModel = session?.configured_model ?? session?.model;
   const initialModel =
     recordedModel ??
-    (!isKimiPlatform(session?.connection.platform) &&
-      !isAntigravityPlatform(session?.connection.platform) &&
+    (!isKimiPlatform(session?.platform) &&
+      !isAntigravityPlatform(session?.platform) &&
+      !isClaudeCodePlatform(session?.platform) &&
       modelOptions.length
       ? defaultCodexModel(modelOptions)
       : INHERIT_AGENT_SETTING);
@@ -1100,7 +1102,7 @@ function SessionConversationContent({
   const selectedModel = codexModelOption(model, modelOptions);
   const availableEfforts =
     selectedModel?.efforts ??
-    (session?.connection.platform?.toLowerCase().includes("codex")
+    (session?.platform?.toLowerCase().includes("codex")
       ? Object.keys(REASONING_EFFORT_LABELS)
       : []);
   const customModel =
@@ -1196,7 +1198,10 @@ function SessionConversationContent({
       >
         {details &&
         currentSession &&
-        supportsHistorySyncStatus(currentSession.connection) ? (
+        supportsHistorySyncStatus({
+          bridge_version: currentSession.connection.bridge_version,
+          platform: currentSession.platform,
+        }) ? (
           <div className="mx-auto mb-4 w-full max-w-4xl">
             <HistorySyncStatus
               historySync={details?.history_sync ?? null}
@@ -1421,7 +1426,7 @@ function SessionConversationContent({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={INHERIT_AGENT_SETTING}>
-                      使用 {agentDisplayName(session?.connection.platform)} 默认
+                      使用 {agentDisplayName(session?.platform)} 默认
                     </SelectItem>
                     {customModel ? (
                       <SelectItem value={customModel}>{customModel}</SelectItem>
@@ -1466,7 +1471,7 @@ function SessionConversationContent({
                     ))}
                   </SelectContent>
                 </Select>
-                {!isAntigravityPlatform(session?.connection.platform) && (
+                {!isAntigravityPlatform(session?.platform) && (
                   <Button
                     type="button"
                     variant="ghost"

@@ -24,6 +24,7 @@ const context: AISessionContext = {
   sessionId: "22222222-2222-4222-8222-222222222222",
   tokenHash: "connection-token-hash",
   workspaceId: "33333333-3333-4333-8333-333333333333",
+  platform: "codex",
 };
 
 const activity: ReportSessionActivityInput = {

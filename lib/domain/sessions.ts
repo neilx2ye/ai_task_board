@@ -1,6 +1,7 @@
 import "server-only";
 
 import { hashRequest } from "@/lib/auth/ai-token";
+import { canonicalBridgeKind } from "@/lib/agent-platforms";
 import { compareBridgeVersions } from "@/lib/bridge-version";
 import { mapDatabaseError } from "@/lib/domain/errors";
 import { callDomainRpc } from "@/lib/domain/rpc";
@@ -42,6 +43,7 @@ export async function syncSessions(
     p_connection_id: auth.connectionId,
     p_api_token_hash: auth.tokenHash,
     p_bridge_version: input.bridge_version,
+    p_platform: input.platform ?? auth.platform,
     p_directories: input.directories
       ? (JSON.parse(JSON.stringify(input.directories)) as Json)
       : null,
@@ -56,10 +58,16 @@ export async function syncSessions(
     parameters,
   );
   if (!error) {
-    await persistModelCatalog(admin, auth, input);
-    await persistConnectionQuota(admin, auth, input);
-    await persistDeviceIdentity(admin, auth, input);
-    await clearSatisfiedBridgeUpdate(admin, auth, input.bridge_version);
+    const platform = canonicalBridgeKind(input.platform ?? auth.platform);
+    await persistModelCatalog(admin, auth, platform, input);
+    await persistConnectionQuota(admin, auth, platform, input);
+    await persistDeviceIdentity(admin, auth, platform, input);
+    await clearSatisfiedBridgeUpdate(
+      admin,
+      auth,
+      platform,
+      input.bridge_version,
+    );
     return data;
   }
   if (!isMissingDirectorySyncFunction(error)) throw mapDatabaseError(error);
@@ -86,10 +94,16 @@ export async function syncSessions(
     p_idempotency_key: idempotencyKey,
     p_request_hash: hashRequest("sync_ai_sessions", legacyInput),
   });
-  await persistModelCatalog(admin, auth, input);
-  await persistConnectionQuota(admin, auth, input);
-  await persistDeviceIdentity(admin, auth, input);
-  await clearSatisfiedBridgeUpdate(admin, auth, input.bridge_version);
+  const platform = canonicalBridgeKind(input.platform ?? auth.platform);
+  await persistModelCatalog(admin, auth, platform, input);
+  await persistConnectionQuota(admin, auth, platform, input);
+  await persistDeviceIdentity(admin, auth, platform, input);
+  await clearSatisfiedBridgeUpdate(
+    admin,
+    auth,
+    platform,
+    input.bridge_version,
+  );
   return result;
 }
 
@@ -100,6 +114,7 @@ export async function syncSessions(
 async function clearSatisfiedBridgeUpdate(
   admin: ReturnType<typeof createAdminClient>,
   auth: AIAuthContext,
+  platform: string,
   reportedVersion: string,
 ): Promise<void> {
   const { data, error } = await admin
@@ -107,6 +122,7 @@ async function clearSatisfiedBridgeUpdate(
     .select("desired_bridge_version")
     .eq("workspace_id", auth.workspaceId)
     .eq("connection_id", auth.connectionId)
+    .eq("platform", platform)
     .maybeSingle();
   if (error) {
     if (isMissingDeviceSchema(error)) return;
@@ -124,6 +140,7 @@ async function clearSatisfiedBridgeUpdate(
     .update({ desired_bridge_version: null })
     .eq("workspace_id", auth.workspaceId)
     .eq("connection_id", auth.connectionId)
+    .eq("platform", platform)
     .eq("desired_bridge_version", desired);
   if (clearError && !isMissingDeviceSchema(clearError)) {
     throw mapDatabaseError(clearError);
@@ -133,6 +150,7 @@ async function clearSatisfiedBridgeUpdate(
 async function persistDeviceIdentity(
   admin: ReturnType<typeof createAdminClient>,
   auth: AIAuthContext,
+  platform: string,
   input: SyncSessionsInput,
 ): Promise<void> {
   // 成对持久化：只上报一个字段时视为未上报，避免违反成对约束。
@@ -146,7 +164,8 @@ async function persistDeviceIdentity(
       device_label: input.device_label,
     })
     .eq("workspace_id", auth.workspaceId)
-    .eq("connection_id", auth.connectionId);
+    .eq("connection_id", auth.connectionId)
+    .eq("platform", platform);
   if (!error || isMissingDeviceSchema(error)) return;
   throw mapDatabaseError(error);
 }
@@ -154,6 +173,7 @@ async function persistDeviceIdentity(
 async function persistModelCatalog(
   admin: ReturnType<typeof createAdminClient>,
   auth: AIAuthContext,
+  platform: string,
   input: SyncSessionsInput,
 ): Promise<void> {
   if (input.model_catalog === undefined) return;
@@ -164,7 +184,8 @@ async function persistModelCatalog(
       model_catalog_updated_at: new Date().toISOString(),
     })
     .eq("workspace_id", auth.workspaceId)
-    .eq("connection_id", auth.connectionId);
+    .eq("connection_id", auth.connectionId)
+    .eq("platform", platform);
   if (!error || isMissingModelCatalogSchema(error)) return;
   throw mapDatabaseError(error);
 }
@@ -172,6 +193,7 @@ async function persistModelCatalog(
 async function persistConnectionQuota(
   admin: ReturnType<typeof createAdminClient>,
   auth: AIAuthContext,
+  platform: string,
   input: SyncSessionsInput,
 ): Promise<void> {
   if (input.quota === undefined) return;
@@ -182,7 +204,8 @@ async function persistConnectionQuota(
       quota_updated_at: new Date().toISOString(),
     })
     .eq("workspace_id", auth.workspaceId)
-    .eq("connection_id", auth.connectionId);
+    .eq("connection_id", auth.connectionId)
+    .eq("platform", platform);
   if (!error || isMissingQuotaSchema(error)) return;
   throw mapDatabaseError(error);
 }
