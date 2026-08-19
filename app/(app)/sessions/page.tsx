@@ -21,8 +21,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
+import { useDeleteProject } from "@/hooks/use-delete-project";
 import { useHiddenProjects } from "@/hooks/use-hidden-projects";
-import { useRemovedProjects } from "@/hooks/use-removed-projects";
 import { sessionQueryKey } from "@/hooks/query-keys";
 import { useSelectedSessionIds } from "@/hooks/use-selected-session-ids";
 import { useSelectedProject } from "@/hooks/use-selected-project";
@@ -49,7 +49,10 @@ import {
   type SessionDirectoryGroup,
   type SessionProjectGroup,
 } from "@/lib/domain/session-directory-groups";
-import { summarizeProjectUpdateResults } from "@/lib/domain/project-dispatch-summary";
+import {
+  summarizeProjectDeleteResults,
+  summarizeProjectUpdateResults,
+} from "@/lib/domain/project-dispatch-summary";
 import {
   findCreatedWebThread,
   type PendingWebThreadCreation,
@@ -80,9 +83,8 @@ export default function SessionsPage() {
   const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   // 「管理项目」里隐藏的项目：从 Tab 链与「全部」视图剔除（浏览器本地）。
   const { hiddenProjectIds, setProjectHidden } = useHiddenProjects();
-  // 「管理项目」里删除的项目：隐藏之外，还从管理弹窗中移除（浏览器本地）。
-  const { removedProjectIds, setProjectRemoved } = useRemovedProjects();
   const updateProject = useUpdateProject();
+  const deleteProject = useDeleteProject();
   const markCompletionsViewed = useMarkSessionCompletionsViewed();
   const [pickerTarget, setPickerTarget] =
     useState<ThreadPickerTarget | null>(null);
@@ -134,6 +136,16 @@ export default function SessionsPage() {
     ],
   );
 
+  const handleProjectDelete = useCallback(
+    async (project: SessionProjectGroup) => {
+      const response = await deleteProject.mutateAsync({
+        working_directory: project.workingDirectory ?? "",
+      });
+      setNotice(summarizeProjectDeleteResults(response));
+    },
+    [deleteProject, setNotice],
+  );
+
   const sessionCandidates = useMemo(
     () =>
       (sessionsQuery.data ?? []).filter(
@@ -170,10 +182,7 @@ export default function SessionsPage() {
     () => listSessionProjects(connectionGroups),
     [connectionGroups],
   );
-  const dismissedProjectIds = useMemo(
-    () => new Set([...hiddenProjectIds, ...removedProjectIds]),
-    [hiddenProjectIds, removedProjectIds],
-  );
+  const dismissedProjectIds = hiddenProjectIds;
   const projects = useMemo(
     () =>
       allProjects.filter((project) => !dismissedProjectIds.has(project.id)),
@@ -451,9 +460,8 @@ export default function SessionsPage() {
             projects={projects}
             allProjects={allProjects}
             hiddenProjectIds={hiddenProjectIds}
-            removedProjectIds={removedProjectIds}
             onToggleHiddenProject={setProjectHidden}
-            onToggleRemovedProject={setProjectRemoved}
+            onDeleteProject={handleProjectDelete}
             onUpdateProject={handleProjectUpdate}
             selectedProjectId={selectedProjectId}
             onSelect={setSelectedProjectId}

@@ -10,10 +10,12 @@ import type {
   BridgeWorkingDirectory,
   CreateProjectResponse,
   ProjectDispatchResult,
+  ProjectDeletionResponse,
 } from "@/lib/types/database";
 import { bridgeWorkingDirectoriesSchema } from "@/lib/validation/bridge-config";
 import type {
   CreateProjectInput,
+  DeleteProjectInput,
   UpdateProjectInput,
 } from "@/lib/validation/projects";
 
@@ -460,4 +462,279 @@ export async function updateProjectOnBridges(
     );
   }
   return { results };
+}
+
+/**
+ * 把项目从看板数据库中移除：删除目录清单记录，并把引用它的 Session 从项目
+ * 摘除后隐藏。这里只删 Board 侧的目录记录，不会下发任何删除本机文件或
+ * Thread 的命令；Session 审计数据仍保留，设备文件保持原样。
+ */
+async function removeProjectDatabaseRecords(
+  context: UserWorkspaceContext,
+  workingDirectory: string,
+): Promise<Pick<ProjectDeletionResponse, "deleted_directory_rows" | "detached_sessions">> {
+  const admin = createAdminClient();
+  const { data: directories, error: directoriesError } = await admin
+    .from("ai_bridge_directories")
+    .select("connection_id, platform, directory_key")
+    .eq("workspace_id", context.workspaceId)
+    .eq("working_directory", workingDirectory);
+  if (directoriesError) throw mapDatabaseError(directoriesError);
+
+  // 旧 Bridge 的 Session 可能只有 working_directory、没有 directory_key。
+  // 先处理这类记录，再按 directory_key 处理，避免重复计数。
+  let detachedSessions = 0;
+  const { data: legacySessions, error: legacySessionsError } = await admin
+    .from("ai_sessions")
+    .update({
+      bridge_directory_key: null,
+      inventory_active: false,
+      status: "offline" as const,
+    })
+    .eq("workspace_id", context.workspaceId)
+    .eq("working_directory", workingDirectory)
+    .is("bridge_directory_key", null)
+    .select("id");
+  if (legacySessionsError) throw mapDatabaseError(legacySessionsError);
+  detachedSessions += (legacySessions ?? []).length;
+
+  for (const directory of directories ?? []) {
+    const { data: sessions, error: sessionsError } = await admin
+      .from("ai_sessions")
+      .update({
+        bridge_directory_key: null,
+        inventory_active: false,
+        status: "offline" as const,
+      })
+      .eq("workspace_id", context.workspaceId)
+      .eq("connection_id", directory.connection_id)
+      .eq("platform", directory.platform)
+      .eq("bridge_directory_key", directory.directory_key)
+      .select("id");
+    if (sessionsError) throw mapDatabaseError(sessionsError);
+    detachedSessions += (sessions ?? []).length;
+
+    const { error: commandsError } = await admin
+      .from("ai_thread_commands")
+      .update({ directory_key: null })
+      .eq("workspace_id", context.workspaceId)
+      .eq("connection_id", directory.connection_id)
+      .eq("platform", directory.platform)
+      .eq("directory_key", directory.directory_key);
+    if (commandsError) throw mapDatabaseError(commandsError);
+  }
+
+  const { data: deleted, error: deletedError } = await admin
+    .from("ai_bridge_directories")
+    .delete()
+    .eq("workspace_id", context.workspaceId)
+    .eq("working_directory", workingDirectory)
+    .select("connection_id, platform, directory_key");
+  if (deletedError) throw mapDatabaseError(deletedError);
+
+  return {
+    deleted_directory_rows: (deleted ?? []).length,
+    detached_sessions: detachedSessions,
+  };
+}
+
+/**
+ * 把项目从每个 Bridge 的托管目录清单中移除。设备只会停止管理该路径，
+ * 不会删除本机目录或其中的文件。仅剩这一个目录时，期望清单回退为 null，
+ * 让设备恢复启动配置。
+ */
+async function dispatchProjectDelete(
+  context: UserWorkspaceContext,
+  connection: { id: string; name: string },
+  input: DeleteProjectInput,
+  idempotencyKey: string,
+): Promise<ProjectDispatchResult[]> {
+  const admin = createAdminClient();
+  const base = {
+    connection_id: connection.id,
+    connection_name: connection.name,
+  };
+  const { data: rows, error } = await admin
+    .from("ai_connection_bridge_settings")
+    .select(SETTINGS_SNAPSHOT_COLUMNS)
+    .eq("workspace_id", context.workspaceId)
+    .eq("connection_id", connection.id);
+  if (error) throw mapDatabaseError(error);
+  if (!rows?.length) {
+    return [
+      { ...base, status: "skipped", reason: "Bridge 配置尚未初始化" },
+    ];
+  }
+
+  const results: ProjectDispatchResult[] = [];
+  for (const row of rows) {
+    let snapshot = row as unknown as BridgeSettingsSnapshot;
+    const label =
+      rows.length > 1
+        ? `${connection.name}（${bridgeKindDisplayName(snapshot.platform)}）`
+        : connection.name;
+    const resultBase = {
+      connection_id: connection.id,
+      connection_name: label,
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) {
+        const refreshed = await admin
+          .from("ai_connection_bridge_settings")
+          .select(SETTINGS_SNAPSHOT_COLUMNS)
+          .eq("workspace_id", context.workspaceId)
+          .eq("connection_id", connection.id)
+          .eq("platform", snapshot.platform)
+          .maybeSingle();
+        if (refreshed.error) throw mapDatabaseError(refreshed.error);
+        if (!refreshed.data) {
+          results.push({
+            ...resultBase,
+            status: "failed",
+            reason: "Bridge 配置不可用",
+          });
+          break;
+        }
+        snapshot = refreshed.data as unknown as BridgeSettingsSnapshot;
+      }
+
+      let desired: BridgeWorkingDirectory[] | null;
+      let effective: BridgeWorkingDirectory[] | null;
+      try {
+        desired = parseDirectoryList(snapshot.desired_working_directories);
+        effective = parseDirectoryList(snapshot.effective_working_directories);
+      } catch {
+        results.push({
+          ...resultBase,
+          status: "failed",
+          reason: "现有目录配置数据无效",
+        });
+        break;
+      }
+
+      const desiredHasProject =
+        desired?.some(
+          (directory) =>
+            directory.working_directory === input.working_directory,
+        ) ?? false;
+      const effectiveHasProject =
+        effective?.some(
+          (directory) =>
+            directory.working_directory === input.working_directory,
+        ) ?? false;
+      if (!desiredHasProject && !effectiveHasProject) {
+        results.push({
+          ...resultBase,
+          status: "skipped",
+          reason: "该项目不在该 Bridge 的目录清单中",
+        });
+        break;
+      }
+
+      const source = desired ?? effective;
+      const remaining =
+        source?.filter(
+          (directory) =>
+            directory.working_directory !== input.working_directory,
+        ) ?? [];
+      if (remaining.length === source?.length) {
+        results.push({
+          ...resultBase,
+          status: "skipped",
+          reason: "该 Bridge 已停止托管这个项目",
+        });
+        break;
+      }
+
+      // 清单不能为空：删除最后一个项目时回退到设备启动配置。
+      const nextDirectories: BridgeWorkingDirectory[] | null =
+        remaining.length > 0 ? remaining : null;
+      if (desired === null && nextDirectories === null) {
+        results.push({
+          ...resultBase,
+          status: "skipped",
+          reason:
+            "该项目是最后一个托管目录；已回退设备启动配置，若启动配置仍包含该路径，设备同步后可能重新出现",
+        });
+        break;
+      }
+
+      try {
+        await updateBridgeConfiguration(
+          context,
+          connection.id,
+          snapshot.platform,
+          {
+            expected_version: snapshot.version,
+            enabled: snapshot.desired_enabled,
+            include_thread_titles: snapshot.desired_include_thread_titles,
+            max_threads: snapshot.desired_max_threads,
+            max_concurrent_turns: snapshot.desired_max_concurrent_turns,
+            sync_history: snapshot.desired_sync_history,
+            history_turn_limit: snapshot.desired_history_turn_limit,
+            working_directories: nextDirectories,
+          },
+          `${idempotencyKey.slice(0, 110)}:${connection.id}:${
+            snapshot.platform
+          }:delete${attempt === 0 ? "" : ":retry"}`,
+        );
+        results.push({ ...resultBase, status: "submitted" });
+        break;
+      } catch (updateError) {
+        if (
+          updateError instanceof AppError &&
+          updateError.code === "VERSION_CONFLICT" &&
+          attempt === 0
+        ) {
+          continue;
+        }
+        results.push({
+          ...resultBase,
+          status: "failed",
+          reason:
+            updateError instanceof AppError
+              ? updateError.message
+              : "下发失败，请稍后重试",
+        });
+        break;
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * Web 删除项目：删除 Board 数据库中的目录记录，并停止各 Bridge 对该路径的
+ * 托管。整个过程不会创建删除本机文件/目录的命令。
+ */
+export async function deleteProjectOnBridges(
+  context: UserWorkspaceContext,
+  input: DeleteProjectInput,
+  idempotencyKey: string,
+): Promise<ProjectDeletionResponse> {
+  const removal = await removeProjectDatabaseRecords(
+    context,
+    input.working_directory,
+  );
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("ai_connections")
+    .select("id, name")
+    .eq("workspace_id", context.workspaceId)
+    .is("revoked_at", null);
+  if (error) throw mapDatabaseError(error);
+
+  const results: ProjectDispatchResult[] = [];
+  for (const connection of data ?? []) {
+    results.push(
+      ...(await dispatchProjectDelete(
+        context,
+        connection,
+        input,
+        idempotencyKey,
+      )),
+    );
+  }
+  return { ...removal, results };
 }

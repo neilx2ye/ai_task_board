@@ -25,9 +25,9 @@ type ProjectTabBarProps = {
   /** 全部项目（含隐藏），供管理对话框使用。 */
   allProjects: SessionProjectGroup[];
   hiddenProjectIds: ReadonlySet<string>;
-  removedProjectIds: ReadonlySet<string>;
   onToggleHiddenProject: (projectId: string, hidden: boolean) => void;
-  onToggleRemovedProject: (projectId: string, removed: boolean) => void;
+  /** 管理对话框中删除项目的服务端操作。 */
+  onDeleteProject: (project: SessionProjectGroup) => Promise<void>;
   /** 管理对话框中保存项目名称/路径的编辑结果。 */
   onUpdateProject: (
     project: SessionProjectGroup,
@@ -122,9 +122,8 @@ export function ProjectTabBar({
   projects,
   allProjects,
   hiddenProjectIds,
-  removedProjectIds,
   onToggleHiddenProject,
-  onToggleRemovedProject,
+  onDeleteProject,
   onUpdateProject,
   selectedProjectId,
   onSelect,
@@ -207,9 +206,8 @@ export function ProjectTabBar({
       <ProjectVisibilityDialog
         projects={allProjects}
         hiddenProjectIds={hiddenProjectIds}
-        removedProjectIds={removedProjectIds}
         onToggle={onToggleHiddenProject}
-        onToggleRemoved={onToggleRemovedProject}
+        onDelete={onDeleteProject}
         onUpdate={onUpdateProject}
         open={manageOpen}
         onOpenChange={setManageOpen}

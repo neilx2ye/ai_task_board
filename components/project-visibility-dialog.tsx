@@ -6,10 +6,10 @@ import {
   EyeOffIcon,
   FolderIcon,
   PencilIcon,
-  RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,23 +31,21 @@ export type ProjectEditInput = {
 /**
  * 项目管理：隐藏的项目从 Tab 链和「全部」视图剔除（可随时恢复），
  * 也可以就地修改项目名称与绝对路径（路径跨 Bridge 同步，key 保持稳定）。
- * 「删除」只移除本弹窗与 Tab 链中的展示，不影响 Bridge 上的真实项目。
+ * 「删除」会真正删除看板数据库中的项目记录，但不会删除设备上的项目文件。
  */
 export function ProjectVisibilityDialog({
   projects,
   hiddenProjectIds,
-  removedProjectIds,
   onToggle,
-  onToggleRemoved,
+  onDelete,
   onUpdate,
   open,
   onOpenChange,
 }: {
   projects: SessionProjectGroup[];
   hiddenProjectIds: ReadonlySet<string>;
-  removedProjectIds: ReadonlySet<string>;
   onToggle: (projectId: string, hidden: boolean) => void;
-  onToggleRemoved: (projectId: string, removed: boolean) => void;
+  onDelete: (project: SessionProjectGroup) => Promise<void>;
   onUpdate: (
     project: SessionProjectGroup,
     input: ProjectEditInput,
@@ -60,6 +58,10 @@ export function ProjectVisibilityDialog({
   const [workingDirectory, setWorkingDirectory] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pendingDelete, setPendingDelete] =
+    useState<SessionProjectGroup | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const startEditing = (project: SessionProjectGroup) => {
     setEditingId(project.id);
@@ -71,6 +73,22 @@ export function ProjectVisibilityDialog({
   const cancelEditing = () => {
     setEditingId(null);
     setError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(pendingDelete);
+      setPendingDelete(null);
+    } catch (cause) {
+      setDeleteError(
+        cause instanceof Error ? cause.message : "删除失败，请重试",
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const save = async (
@@ -108,39 +126,37 @@ export function ProjectVisibilityDialog({
     }
   };
 
-  const manageableProjects = projects.filter(
-    (project) => !removedProjectIds.has(project.id),
-  );
-  const removedProjects = projects.filter((project) =>
-    removedProjectIds.has(project.id),
-  );
-
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) cancelEditing();
-        onOpenChange(next);
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>管理项目</DialogTitle>
-          <DialogDescription>
-            可隐藏/恢复或删除项目（仅影响当前浏览器），也可编辑项目名称与
-            绝对路径；修改会同步到拥有该路径的所有 Bridge，Bridge 应用后生效。
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) {
+            cancelEditing();
+            setPendingDelete(null);
+            setDeleteError(null);
+          }
+          onOpenChange(next);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>管理项目</DialogTitle>
+            <DialogDescription>
+              可隐藏/恢复项目，也可编辑项目名称与绝对路径；修改会同步到拥有该
+              路径的所有 Bridge。删除会从看板数据库移除项目记录，但不会删除
+              设备上的项目文件。
+            </DialogDescription>
+          </DialogHeader>
 
-        {projects.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
-            还没有任何项目。
-          </p>
-        ) : (
-          <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
-            {manageableProjects.length > 0 ? (
+          {projects.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+              还没有任何项目。
+            </p>
+          ) : (
+            <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
               <ul className="flex flex-col gap-1.5">
-                {manageableProjects.map((project, index) => {
+                {projects.map((project, index) => {
                   const hidden = hiddenProjectIds.has(project.id);
                   const editing = editingId === project.id;
                   const editable = project.workingDirectory !== null;
@@ -275,9 +291,17 @@ export function ProjectVisibilityDialog({
                             variant="ghost"
                             size="sm"
                             className="shrink-0 gap-1 text-muted-foreground hover:text-destructive"
-                            title="只移除展示，不会改动 Bridge 上的真实项目"
+                            disabled={!editable}
+                            title={
+                              editable
+                                ? "从看板数据库删除项目记录，不会删除设备上的项目文件"
+                                : "该项目没有路径信息，无法删除"
+                            }
                             aria-label={`删除项目「${project.name}」`}
-                            onClick={() => onToggleRemoved(project.id, true)}
+                            onClick={() => {
+                              setDeleteError(null);
+                              setPendingDelete(project);
+                            }}
                           >
                             <Trash2Icon className="size-3.5" />
                             删除
@@ -288,50 +312,31 @@ export function ProjectVisibilityDialog({
                   );
                 })}
               </ul>
-            ) : null}
-
-            {removedProjects.length > 0 ? (
-              <section
-                aria-label="已删除的项目"
-                className="flex flex-col gap-1.5"
-              >
-                <p className="px-1 text-xs text-muted-foreground">
-                  已删除的项目（只移除了展示，可随时恢复）
-                </p>
-                <ul className="flex flex-col gap-1.5">
-                  {removedProjects.map((project) => (
-                    <li
-                      key={project.id}
-                      className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 opacity-70"
-                    >
-                      <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {project.name}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {project.workingDirectory ?? "无工作目录信息"}
-                        </span>
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="shrink-0 gap-1"
-                        aria-label={`恢复项目「${project.name}」`}
-                        onClick={() => onToggleRemoved(project.id, false)}
-                      >
-                        <RotateCcwIcon className="size-3.5" />
-                        恢复
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => {
+          if (!next && !deleting) {
+            setPendingDelete(null);
+            setDeleteError(null);
+          }
+        }}
+        title={`删除项目「${pendingDelete?.name ?? ""}」？`}
+        description="项目记录会从看板数据库删除，Bridge 随后停止托管该目录。本机目录与项目文件不会被删除；此操作无法在 Console 中恢复。"
+        confirmLabel="删除项目记录"
+        destructive
+        pending={deleting}
+        onConfirm={() => void confirmDelete()}
+      >
+        {deleteError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {deleteError}
+          </p>
+        ) : null}
+      </ConfirmDialog>
+    </>
   );
 }

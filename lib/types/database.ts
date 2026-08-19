@@ -990,6 +990,14 @@ export type CreateProjectResponse = {
   results: ProjectDispatchResult[];
 };
 
+export type ProjectDeletionResponse = {
+  results: ProjectDispatchResult[];
+  /** 本次从 ai_bridge_directories 删除的项目目录记录数。 */
+  deleted_directory_rows: number;
+  /** 因目录记录删除而解除绑定的 Session 数（Session 数据本身保留）。 */
+  detached_sessions: number;
+};
+
 type IdempotencyArgs = {
   p_idempotency_key: string;
   p_request_hash: string;

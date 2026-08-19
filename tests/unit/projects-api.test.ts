@@ -9,6 +9,7 @@ const ownerContext = { role: "owner" as const, userId, workspaceId };
 
 const domainMocks = vi.hoisted(() => ({
   createProjectOnBridges: vi.fn(),
+  deleteProjectOnBridges: vi.fn(),
   updateProjectOnBridges: vi.fn(),
 }));
 const authMocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/domain/projects", () => ({
   createProjectOnBridges: domainMocks.createProjectOnBridges,
+  deleteProjectOnBridges: domainMocks.deleteProjectOnBridges,
   updateProjectOnBridges: domainMocks.updateProjectOnBridges,
 }));
 vi.mock("@/lib/http/user-route", () => ({
@@ -24,6 +26,7 @@ vi.mock("@/lib/http/user-route", () => ({
 }));
 
 import {
+  DELETE as deleteProject,
   PATCH as updateProject,
   POST as createProject,
 } from "@/app/api/user/projects/route";
@@ -32,10 +35,10 @@ import { AppError } from "@/lib/domain/errors";
 function jsonRequest(
   pathname: string,
   body: unknown,
-  options: { headers?: Record<string, string> } = {},
+  options: { headers?: Record<string, string>; method?: string } = {},
 ) {
   return new Request(`http://localhost${pathname}`, {
-    method: "POST",
+    method: options.method ?? "POST",
     headers: { "Content-Type": "application/json", ...options.headers },
     body: JSON.stringify(body),
   });
@@ -67,6 +70,17 @@ beforeEach(() => {
         status: "submitted",
       },
     ],
+  });
+  domainMocks.deleteProjectOnBridges.mockResolvedValue({
+    results: [
+      {
+        connection_id: connectionId,
+        connection_name: "Laptop",
+        status: "submitted",
+      },
+    ],
+    deleted_directory_rows: 1,
+    detached_sessions: 2,
   });
 });
 
@@ -206,5 +220,86 @@ describe("owner project update API", () => {
 
     expect(response.status).toBe(403);
     expect(domainMocks.updateProjectOnBridges).not.toHaveBeenCalled();
+  });
+});
+
+const validDeleteBody = {
+  working_directory: "/srv/main",
+};
+
+describe("owner project deletion API", () => {
+  it("dispatches the validated deletion through the owner-only data layer", async () => {
+    const request = jsonRequest(
+      "/api/user/projects",
+      validDeleteBody,
+      {
+        method: "DELETE",
+        headers: { "Idempotency-Key": " web/projects/delete " },
+      },
+    );
+    const response = await deleteProject(request);
+
+    expect(response.status).toBe(200);
+    expect(authMocks.ownerContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.deleteProjectOnBridges).toHaveBeenCalledWith(
+      ownerContext,
+      validDeleteBody,
+      "web/projects/delete",
+    );
+    expect(await response.json()).toEqual({
+      data: {
+        results: [
+          expect.objectContaining({
+            connection_id: connectionId,
+            status: "submitted",
+          }),
+        ],
+        deleted_directory_rows: 1,
+        detached_sessions: 2,
+      },
+    });
+  });
+
+  it("requires an idempotency key", async () => {
+    const response = await deleteProject(
+      jsonRequest("/api/user/projects", validDeleteBody, {
+        method: "DELETE",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.deleteProjectOnBridges).not.toHaveBeenCalled();
+  });
+
+  it("rejects relative paths", async () => {
+    const response = await deleteProject(
+      jsonRequest(
+        "/api/user/projects",
+        { working_directory: "srv/main" },
+        {
+          method: "DELETE",
+          headers: { "Idempotency-Key": "web/projects/delete" },
+        },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.deleteProjectOnBridges).not.toHaveBeenCalled();
+  });
+
+  it("maps non-owner access to 403", async () => {
+    authMocks.ownerContextForRequest.mockRejectedValue(
+      new AppError("FORBIDDEN", "Workspace owner access is required"),
+    );
+
+    const response = await deleteProject(
+      jsonRequest("/api/user/projects", validDeleteBody, {
+        method: "DELETE",
+        headers: { "Idempotency-Key": "web/projects/delete" },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(domainMocks.deleteProjectOnBridges).not.toHaveBeenCalled();
   });
 });

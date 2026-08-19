@@ -34,3 +34,14 @@ export const updateProjectSchema = z
   .strict();
 
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+
+/** Web 删除项目：按工作目录路径删除看板中的项目记录。 */
+export const deleteProjectSchema = z
+  .object({
+    working_directory: nonEmptyText
+      .max(4096)
+      .regex(ABSOLUTE_PATH_PATTERN, "working_directory 必须是绝对路径"),
+  })
+  .strict();
+
+export type DeleteProjectInput = z.infer<typeof deleteProjectSchema>;

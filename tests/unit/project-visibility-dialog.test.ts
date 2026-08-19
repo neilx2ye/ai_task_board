@@ -32,24 +32,21 @@ const projects: SessionProjectGroup[] = [
 function renderDialog({
   onUpdate = vi.fn(),
   onToggle = vi.fn(),
-  onToggleRemoved = vi.fn(),
-  removedProjectIds = new Set<string>(),
+  onDelete = vi.fn().mockResolvedValue(undefined),
 }: {
   onUpdate?: (
     project: SessionProjectGroup,
     input: ProjectEditInput,
   ) => Promise<void>;
   onToggle?: (projectId: string, hidden: boolean) => void;
-  onToggleRemoved?: (projectId: string, removed: boolean) => void;
-  removedProjectIds?: ReadonlySet<string>;
+  onDelete?: (project: SessionProjectGroup) => Promise<void>;
 } = {}) {
   return render(
     createElement(ProjectVisibilityDialog, {
       projects,
       hiddenProjectIds: new Set<string>(),
-      removedProjectIds,
       onToggle,
-      onToggleRemoved,
+      onDelete,
       onUpdate,
       open: true,
       onOpenChange: vi.fn(),
@@ -75,6 +72,11 @@ describe("project management dialog", () => {
     ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "编辑项目「未归类」" }).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "删除项目「未归类」" }).hasAttribute(
         "disabled",
       ),
     ).toBe(true);
@@ -131,34 +133,44 @@ describe("project management dialog", () => {
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
-  it("removes a project from the manage list without touching the real project", () => {
-    const onToggleRemoved = vi.fn();
-    renderDialog({ onToggleRemoved });
+  it("asks for confirmation and deletes the project record through the server", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    renderDialog({ onDelete });
 
     fireEvent.click(
       screen.getByRole("button", { name: "删除项目「主应用」" }),
     );
-    expect(onToggleRemoved).toHaveBeenCalledWith("path:/workspace/app", true);
-  });
-
-  it("lists removed projects with a restore action", () => {
-    const onToggleRemoved = vi.fn();
-    renderDialog({
-      onToggleRemoved,
-      removedProjectIds: new Set(["path:/workspace/app"]),
-    });
-
+    expect(onDelete).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("button", { name: "编辑项目「主应用」" }),
-    ).toBeNull();
-    expect(screen.getByLabelText("已删除的项目")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "恢复项目「主应用」" }),
+      screen.getByRole("heading", { name: "删除项目「主应用」？" }),
     ).toBeTruthy();
+    expect(screen.getByText(/本机目录与项目文件不会被删除/)).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "恢复项目「主应用」" }),
+      screen.getByRole("button", { name: "删除项目记录" }),
     );
-    expect(onToggleRemoved).toHaveBeenCalledWith("path:/workspace/app", false);
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith(projects[0]);
+    });
+  });
+
+  it("keeps the confirmation open when deletion fails", async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error("数据库删除失败"));
+    renderDialog({ onDelete });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "删除项目「主应用」" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "删除项目记录" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain(
+        "数据库删除失败",
+      );
+    });
+    expect(
+      screen.getByRole("heading", { name: "删除项目「主应用」？" }),
+    ).toBeTruthy();
   });
 });
