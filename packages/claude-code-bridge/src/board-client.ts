@@ -21,7 +21,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const CLAUDE_BRIDGE_CAPABILITY_VERSION = "1.7.0-claude.1";
+export const CLAUDE_BRIDGE_CAPABILITY_VERSION = "1.7.1-claude.1";
 
 export type BoardSession = {
   id: string;

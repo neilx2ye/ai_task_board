@@ -206,8 +206,8 @@ describe("Claude Code Bridge session sync device identity", () => {
     });
     await client.syncSessions([], baseConfiguration().workingDirectories, []);
     const body = syncBody(fetchMock);
-    expect(body.bridge_version).toBe("1.7.0-claude.1");
-    expect(CLAUDE_BRIDGE_CAPABILITY_VERSION).toBe("1.7.0-claude.1");
+    expect(body.bridge_version).toBe("1.7.1-claude.1");
+    expect(CLAUDE_BRIDGE_CAPABILITY_VERSION).toBe("1.7.1-claude.1");
     expect(body.device_id).toBe("2f4b91c0-0000-4000-8000-0000000000ab");
     expect(body.device_label).toBe("test-host");
     expect(body.directories).toEqual([
