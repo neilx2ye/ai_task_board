@@ -93,12 +93,24 @@ describe("Unified device Bridge migration", () => {
   });
 
   it("creates a codex settings row for an All connection and adds kinds lazily", async () => {
-    const initial = await database.query<{ platform: string }>(
-      `select platform from public.ai_connection_bridge_settings
+    const initial = await database.query<{
+      platform: string;
+      desired_include_thread_titles: boolean;
+      desired_sync_history: boolean;
+    }>(
+      `select platform, desired_include_thread_titles,
+              desired_sync_history
+       from public.ai_connection_bridge_settings
        where connection_id = $1`,
       [unifiedId],
     );
-    expect(initial.rows.map((row) => row.platform)).toEqual(["codex"]);
+    expect(initial.rows).toEqual([
+      {
+        platform: "codex",
+        desired_include_thread_titles: true,
+        desired_sync_history: true,
+      },
+    ]);
 
     const kimiRuntimeId = randomUUID();
     const exchange = await database.query<{
@@ -136,6 +148,19 @@ describe("Unified device Bridge migration", () => {
       ],
     );
     expect(exchange.rows[0].response.configuration.platform).toBe("kimi");
+    const kimiDefaults = await database.query<{
+      desired_include_thread_titles: boolean;
+      desired_sync_history: boolean;
+    }>(
+      `select desired_include_thread_titles, desired_sync_history
+       from public.ai_connection_bridge_settings
+       where connection_id = $1 and platform = 'kimi'`,
+      [unifiedId],
+    );
+    expect(kimiDefaults.rows[0]).toEqual({
+      desired_include_thread_titles: true,
+      desired_sync_history: false,
+    });
 
     await database.query(
       `select public.exchange_ai_connection_bridge_config(

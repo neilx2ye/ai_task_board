@@ -137,15 +137,15 @@ npx --yes ai-task-board-bridge@1.7.1 run codex
 | `CODEX_WORKING_DIRECTORIES` | 否 | 空 | 最多 100 项的 JSON 数组，每项为 `{key,name?,path}`；设置后第一项作为默认目录，`cwd` scope 精确匹配数组内任一目录 |
 | `CODEX_THREAD_SCOPE` | 否 | `cwd` | `cwd` 仅管理本机目录白名单中 cwd 完全相同的顶层 thread；`all` 忽略白名单进行跨项目发现，属于高风险显式 opt-in |
 | `CODEX_SESSION_NAME` | 否 | `Codex · <cwd basename> · <thread ID 前 8 位>` | Board Session 名称前缀；单 thread 过滤模式下作为完整名称 |
-| `CODEX_BRIDGE_INCLUDE_THREAD_TITLES` | 否 | `false` | `true` 才把本地 thread 标题/首条 prompt 预览用于 Session 名称；会增加元数据泄露面 |
-| `CODEX_BRIDGE_WEB_CONFIG` | 否 | `false` | `true` 才允许 Web Console 动态启停、切换标题、调整受约束数量，并直接设置设备级并发上限 |
+| `CODEX_BRIDGE_INCLUDE_THREAD_TITLES` | 否 | `true`（安装时） | `true` 才把本地 thread 标题/首条 prompt 预览用于 Session 名称；会增加元数据泄露面 |
+| `CODEX_BRIDGE_WEB_CONFIG` | 否 | `false` | `true` 才允许 Web Console 动态启停、切换标题、调整 Thread/历史数量，并直接设置设备级 Thread 与并发上限 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES` | 否 | `false` | `true` 才允许 Web Console 开启标题上传；本机已设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` 时也视为已授权 |
-| `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | `false` | `true` 才允许 Web Console 开启旧历史同步；授权后仍需网页显式开启 |
+| `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | `true`（安装时） | `true` 才允许 Web Console 开启旧历史同步；授权后网页会默认开启 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | `false` | `true` 才允许 Web Console 用项目 key、名称和绝对路径替换运行时目录清单；Bridge 会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
 | `CODEX_BRIDGE_MAX_HISTORY_TURNS` | 否 | `50` | 每个 thread 可同步的最近完成 turn 本机上限，范围 `1..200` |
 | `CODEX_MODEL` | 否 | 空 | thread 未报告模型时使用的 Board 展示标签，不覆盖实际模型 |
 | `CODEX_CAPABILITIES` | 否 | `coding,shell,file-edit,multi-thread,app-server` | 用于 Board 任务能力匹配的列表 |
-| `CODEX_MAX_THREADS` | 否 | `50` | 所有目录合计最多管理的最近顶层 thread 数，范围 `1..500` |
+| `CODEX_MAX_THREADS` | 否 | `50` | Web 配置生效前的启动 thread 数，范围 `1..500`；Web 值生效后不再作为上限 |
 | `CODEX_MAX_CONCURRENT_TURNS` | 否 | `2` | 兼容的启动并发值，范围 `1..32`；启用 Web 配置后由网页值直接替换 |
 | `CODEX_BRIDGE_APPROVAL_MODE` | 否 | `accept` | App Server 审批策略；`accept` 自动同意与当前活跃 turn 关联的受支持请求（高风险），也可设为 `decline` 或 `accept-session` |
 | `CODEX_BRIDGE_PERMISSION_MODE` | 否 | `danger-full-access` | `danger-full-access` 完全访问且无沙箱（高风险）；`safe` 限制为该 thread cwd 的 `workspace-write` 并关闭网络；`inherit` 不发送覆盖、沿用本机设置，边界不确定时同样属于高风险 |
@@ -156,13 +156,13 @@ npx --yes ai-task-board-bridge@1.7.1 run codex
 | `AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS` | 否 | `60000` | 重新扫描完整 thread 清单的间隔，范围 `10000..600000` 毫秒 |
 | `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` | 否 | `10000` | 启用 Web 配置后的期望配置轮询间隔，范围 `1000..600000` 毫秒；运行租约仍独立且至少每 10 秒续租 |
 
-数值变量超出范围或不是整数时会回退到默认值。`CODEX_MAX_THREADS` 只是数量上限，不是安全边界；默认项目边界是 cwd 精确匹配，严格限定一个 thread 时使用 `CODEX_THREAD_ID`。
+数值变量超出范围或不是整数时会回退到默认值。`CODEX_MAX_THREADS` 只是 Web 配置生效前的启动数量，不是安全边界；默认项目边界是 cwd 精确匹配，严格限定一个 thread 时使用 `CODEX_THREAD_ID`。
 
 ## Web Console 动态配置
 
-设备显式设置 `CODEX_BRIDGE_WEB_CONFIG=true` 后，Workspace Owner 可以在“AI 连接 → Bridge 设置”调整 Bridge 启停、是否上传 thread 标题、是否同步历史、最大 thread 数、最大并行 turn 数和最近历史 turn 数。最大并行 turn 数在 `1..32` 内由网页直接设置为整台设备的运行上限，不再与本机上限做二次比较。Bridge 0.8 还可管理 1 到 100 个项目工作目录；该能力必须由设备额外设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用。Bridge 1.3.0 起，授权后 Web「新建项目」下发的条目可携带 `create_if_missing` 授权设备创建缺失路径，且 Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的 device id 与 hostname 标签），看板据此把同一台设备上的多个 Bridge 归为一组。Bridge 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
+设备显式设置 `CODEX_BRIDGE_WEB_CONFIG=true` 后，Workspace Owner 可以在“AI 连接 → Bridge 设置”调整 Bridge 启停、是否上传 thread 标题、是否同步历史、最大 thread 数、最大并行 turn 数和最近历史 turn 数。最大 thread 数在 `1..500`、最大并行 turn 数在 `1..32` 内由网页直接设置为整台设备的运行上限，不再与本机上限做二次比较；本机 `CODEX_MAX_THREADS` / `CODEX_MAX_CONCURRENT_TURNS` 只作为首次 Web 配置生效前的启动值。Bridge 0.8 还可管理 1 到 100 个项目工作目录；该能力必须由设备额外设置 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 才会应用。Bridge 1.3.0 起，授权后 Web「新建项目」下发的条目可携带 `create_if_missing` 授权设备创建缺失路径，且 Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的 device id 与 hostname 标签），看板据此把同一台设备上的多个 Bridge 归为一组。Bridge 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
 
-网页配置默认不能扩大本机目录边界：未开启远程目录授权时，Bridge 会忽略网页目录并继续使用启动时的 `CODEX_WORKING_DIRECTORY` / `CODEX_WORKING_DIRECTORIES`。设备明确授权后，网页可以提交稳定 key、显示名称和本机绝对路径；Bridge 会再次校验格式、重复项、绝对路径及目录存在性，再安全停止已被排除的 worker、更新实际清单并回报结果。这个 opt-in 允许 Workspace Owner 扩大同一 Bridge 进程的 Codex 工作范围，应只授予受信 Owner。`cwd/all` 范围、固定 thread、Codex 路径、Connection Token、权限模式与审批模式仍只由设备环境决定；Thread 数仍会夹紧到本机上限，最大并行 turn 数则由网页在 `1..32` 内统一设置，标题与历史仍各自需要本机授权。网页停用 Bridge 时，进程仍保持在线以接收后续配置，但会先安全停止 worker、释放任务，再提交空的权威 thread 清单并取消后台历史扫描。
+网页配置默认不能扩大本机目录边界：未开启远程目录授权时，Bridge 会忽略网页目录并继续使用启动时的 `CODEX_WORKING_DIRECTORY` / `CODEX_WORKING_DIRECTORIES`。设备明确授权后，网页可以提交稳定 key、显示名称和本机绝对路径；Bridge 会再次校验格式、重复项、绝对路径及目录存在性，再安全停止已被排除的 worker、更新实际清单并回报结果。这个 opt-in 允许 Workspace Owner 扩大同一 Bridge 进程的 Codex 工作范围，应只授予受信 Owner。`cwd/all` 范围、固定 thread、Codex 路径、Connection Token、权限模式与审批模式仍只由设备环境决定；Thread 数与并行 turn 数均由网页统一设置，标题与历史仍各自需要本机授权（安装时默认开启）。网页停用 Bridge 时，进程仍保持在线以接收后续配置，但会先安全停止 worker、释放任务，再提交空的权威 thread 清单并取消后台历史扫描。
 
 ## Web 触发 Bridge 自更新
 

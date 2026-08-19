@@ -898,12 +898,13 @@ export async function runKimiNonInteractiveSetup(options: {
     ["decline", "accept"],
     "decline",
   );
+  const configuredTitles = configuredValue(
+    existing,
+    process.env,
+    "KIMI_BRIDGE_INCLUDE_SESSION_TITLES",
+  );
   const includeTitles =
-    configuredValue(
-      existing,
-      process.env,
-      "KIMI_BRIDGE_INCLUDE_SESSION_TITLES",
-    ) === "true";
+    configuredTitles === undefined ? true : configuredTitles === "true";
   const webConfiguration =
     directoryManagement === "web" ||
     configuredValue(existing, process.env, "KIMI_BRIDGE_WEB_CONFIG") === "true";

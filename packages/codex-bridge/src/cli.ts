@@ -72,7 +72,7 @@ Optional environment variables:
   CODEX_BRIDGE_MAX_HISTORY_TURNS   Local history limit ceiling (1..200, default: 50)
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities
-  CODEX_MAX_THREADS               Maximum top-level threads to manage (1..500)
+  CODEX_MAX_THREADS               Startup thread fallback before Web applies (1..500)
   CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 2)
   CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session; accept is automatic
   CODEX_BRIDGE_PERMISSION_MODE    danger-full-access (default), safe, or inherit; full/inherit may be high risk
@@ -86,7 +86,7 @@ Optional environment variables:
 Kimi variables:
   KIMI_WORKING_DIRECTORY          Working directory (default: cwd)
   KIMI_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
-  KIMI_MAX_THREADS                Maximum Sessions to manage (1..500)
+  KIMI_MAX_THREADS                Startup Session fallback before Web applies (1..500)
   KIMI_MAX_CONCURRENT_TURNS       Device-wide concurrent turns (1..32)
   KIMI_BRIDGE_APPROVAL_MODE       accept or decline
   KIMI_BRIDGE_MODE                auto, default, plan, or yolo
@@ -95,7 +95,7 @@ Kimi variables:
 Antigravity variables:
   ANTIGRAVITY_WORKING_DIRECTORY   Working directory (default: cwd)
   ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
-  ANTIGRAVITY_MAX_THREADS         Maximum Threads to manage (1..500)
+  ANTIGRAVITY_MAX_THREADS         Startup Thread fallback before Web applies (1..500)
   ANTIGRAVITY_MAX_CONCURRENT_TURNS Device-wide concurrent turns (1..32)
   ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept or decline
   ANTIGRAVITY_BRIDGE_MODE         auto, default, accept-edits, or plan
@@ -107,7 +107,7 @@ Antigravity variables:
 Claude variables:
   CLAUDE_WORKING_DIRECTORY        Working directory (default: cwd)
   CLAUDE_WORKING_DIRECTORIES      JSON allowlist of {key,name,path} directories
-  CLAUDE_MAX_THREADS              Maximum Sessions to manage (1..500)
+  CLAUDE_MAX_THREADS              Startup Session fallback before Web applies (1..500)
   CLAUDE_MAX_CONCURRENT_TURNS     Device-wide concurrent turns (1..32)
   CLAUDE_BRIDGE_APPROVAL_MODE     accept or decline
   CLAUDE_BRIDGE_MODE              default, plan, accept-edits, or bypass-permissions

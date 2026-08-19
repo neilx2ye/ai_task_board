@@ -37,7 +37,7 @@ Optional environment variables:
   CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  true lets Web replace the
                                   working directory list
   CLAUDE_CAPABILITIES               Comma/space-separated Board capabilities
-  CLAUDE_MAX_THREADS                Local Session ceiling (1..500, default: 50)
+  CLAUDE_MAX_THREADS                Startup Session fallback (1..500, default: 50)
   CLAUDE_MAX_CONCURRENT_TURNS       Startup concurrency (1..32, default: 2)
   CLAUDE_BRIDGE_APPROVAL_MODE       accept or decline
   CLAUDE_BRIDGE_MODE                default, plan, accept-edits, or bypass-permissions

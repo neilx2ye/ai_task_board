@@ -74,8 +74,11 @@ directories default to Web-side management and are added later in "AI 连接 →
 Bridge 设置 / 新建项目", while the Codex home
 (`~/.codex` unless `CODEX_HOME` is set), the `codex` executable on `PATH`,
 thread limits, and permission/approval modes come from their defaults or the
-environment. It then installs and starts `ai-task-board-bridge.service` in the
-effective user's systemd user manager.
+environment. Fresh installs opt in to thread-title upload and Codex history
+sync; the Web console can later turn either off. Thread and concurrent-turn
+limits are owned by the Web settings after the first configuration exchange.
+It then installs and starts `ai-task-board-bridge.service` in the effective
+user's systemd user manager.
 
 Because Web-side directory management is the default, setup enables both
 `CODEX_BRIDGE_WEB_CONFIG=true` and
@@ -170,16 +173,17 @@ entry is the App Server startup and local fallback directory. The Board stores
 and returns only a selected key in Web create commands; the Bridge resolves that
 key against the currently effective list.
 
-`CODEX_MAX_THREADS` controls the device-wide inventory limit (default `50`,
-range `1..500` across all configured directories).
+`CODEX_MAX_THREADS` provides the startup thread count before Web configuration
+is applied (default `50`, range `1..500` across all configured directories).
+Once Web configuration is enabled, the Web value is authoritative and is not
+clamped to this local value.
 `CODEX_MAX_CONCURRENT_TURNS` remains a compatibility startup value (default
 `2`) before Web configuration is applied; once enabled, the Web value directly
-controls device-wide turn concurrency from `1..32`. Session names do not upload
-the local thread title or first prompt by default; they use the cwd basename plus
-a short thread ID. Set
-`CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true` only after explicitly accepting that
-metadata disclosure. Inventory still uploads each thread ID, absolute working
-directory, and model label to the Board Workspace.
+controls device-wide turn concurrency from `1..32`. The installer enables
+thread-title upload by default; set
+`CODEX_BRIDGE_INCLUDE_THREAD_TITLES=false` to disable that disclosure.
+Inventory still uploads each thread ID, absolute working directory, and model
+label to the Board Workspace.
 
 ## Optional Web configuration
 
@@ -190,8 +194,8 @@ interval can be set with `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` from `1000` to
 `600000` milliseconds.
 
 The Web console may enable or pause this Bridge, hide or show thread titles,
-enable bounded history sync, lower the thread and history limits, set device-wide
-turn concurrency directly,
+enable bounded history sync, set the thread and device-wide turn limits, and
+set the history limit,
 and—only after a separate local opt-in—replace the effective working-directory
 list. `enabled=false` stops all Session
 workers, releases their work, and uploads an authoritative empty inventory,
@@ -200,15 +204,16 @@ concurrency reduction lets active turns finish and only delays new turns.
 
 The device environment remains the immutable security boundary:
 
-- Web `max_threads` is clamped to the local `CODEX_MAX_THREADS` maximum.
-- Web `max_concurrent_turns` directly sets device-wide concurrency in the
-  supported `1..32` range; it is not clamped by a separate local maximum.
+- Web `max_threads` and `max_concurrent_turns` are authoritative in the
+  supported `1..500` and `1..32` ranges; neither is clamped by a local
+  `*_MAX_THREADS` or `*_MAX_CONCURRENT_TURNS` value.
 - Web title upload is denied unless
   `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` or the device already opted in
   with `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`.
 - Web history sync is denied unless the device explicitly sets
-  `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`. The requested recent-turn count is
-  clamped to `CODEX_BRIDGE_MAX_HISTORY_TURNS` (default `50`, maximum `200`).
+  `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` (the installer enables this by
+  default). The requested recent-turn count is clamped to
+  `CODEX_BRIDGE_MAX_HISTORY_TURNS` (default `50`, maximum `200`).
 - Web working-directory configuration is denied unless the device explicitly
   sets `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`. A remote list must
   contain 1 to 100 unique entries with absolute paths that already exist and are

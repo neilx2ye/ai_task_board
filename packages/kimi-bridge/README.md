@@ -80,15 +80,14 @@ settings from the Board UI:
 - enable/pause the Bridge (paused workers keep heartbeats but claim no new
   turns, and Web Thread creation is rejected);
 - change the thread cap and device-wide concurrent-turn cap;
-- toggle session-title upload, when the device authorizes it with
-  `KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true` or
-  `KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true`;
+- toggle session-title upload; the installer enables it by default, and an
+  explicit `KIMI_BRIDGE_INCLUDE_SESSION_TITLES=false` opts out;
 - replace the effective working-directory list, when the device authorizes it
   with `KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`.
 
-`KIMI_MAX_THREADS` remains the immutable local ceiling: Web can lower the
-runtime cap but never exceed it. `KIMI_MAX_CONCURRENT_TURNS` is the startup
-value; with Web configuration enabled the Board owns the live 1..32 limit.
+`KIMI_MAX_THREADS` is a startup fallback only. With Web configuration enabled
+the Board owns the live 1..500 thread limit and 1..32 turn limit; neither is
+clamped to the local environment value.
 Kimi does not implement thread-history import, so that Codex-specific control
 is hidden.
 

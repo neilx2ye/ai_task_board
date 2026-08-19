@@ -137,7 +137,7 @@ export const exchangeBridgeConfigurationSchema = z
     if (value.effective.max_threads > value.constraints.max_threads) {
       context.addIssue({
         code: "custom",
-        message: "Effective max_threads exceeds the local constraint",
+        message: "Effective max_threads exceeds the reported constraint",
         path: ["effective", "max_threads"],
       });
     }

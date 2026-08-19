@@ -270,7 +270,7 @@ describe("Antigravity Bridge remote configuration", () => {
     ANTIGRAVITY_MAX_THREADS: "6",
   });
 
-  it("clamps the thread cap to the local ceiling and ignores unsupported fields", () => {
+  it("applies the Web thread limit without a local ceiling and ignores unsupported fields", () => {
     const resolved = resolveRemoteConfiguration(base, {
       enabled: false,
       include_thread_titles: false,
@@ -289,13 +289,13 @@ describe("Antigravity Bridge remote configuration", () => {
     expect(resolved.effective).toEqual({
       enabled: false,
       includeThreadTitles: false,
-      maxThreads: 6,
+      maxThreads: 50,
       maxConcurrentTurns: 8,
       syncHistory: false,
       historyTurnLimit: 100,
       workingDirectories: base.localWorkingDirectories,
     });
-    expect(resolved.warnings.join("")).toContain("max_threads=50");
+    expect(resolved.warnings.join("")).not.toContain("max_threads");
     expect(resolved.warnings.join("")).toContain("历史同步");
     expect(resolved.warnings.join("")).toContain("工作目录");
   });
@@ -314,7 +314,7 @@ describe("Antigravity Bridge remote configuration", () => {
     ).toThrow("max_concurrent_turns 必须是整数");
   });
 
-  it("parses the Web config opt-in and keeps the local thread ceiling", () => {
+  it("parses the Web config opt-in and uses the local value only as startup fallback", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",

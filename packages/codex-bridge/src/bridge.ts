@@ -77,6 +77,7 @@ const STREAM_TRUNCATION_MARKER = "\n…[流式输出已截断]";
 const MAX_NOTIFICATION_BACKLOG = 256;
 const MAX_ACTIVITY_BACKLOG = 64;
 const USER_INPUT_POLL_INTERVAL_MS = 1_500;
+const MAX_THREADS = 500;
 const MAX_CONCURRENT_TURNS = 32;
 const MAX_MODEL_CATALOG_ENTRIES = 500;
 const MODEL_CATALOG_PAGE_SIZE = 100;
@@ -243,6 +244,7 @@ export type BridgeConfiguration = {
   allowRemoteThreadTitles: boolean;
   allowHistorySync: boolean;
   allowRemoteWorkingDirectories: boolean;
+  /** Startup cap before the Web-owned live thread limit is applied. */
   localMaxThreads: number;
   localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
@@ -827,10 +829,11 @@ export function bridgeConfigurationConstraints(
     allow_history_sync: configuration.allowHistorySync,
     allow_working_directory_configuration:
       configuration.allowRemoteWorkingDirectories,
-    max_threads: configuration.localMaxThreads,
-    // Kept in the compatibility envelope for older Boards/Bridges. Unlike
-    // the other local constraints, concurrency is now owned by the Web
-    // setting across the full supported product range.
+    // Thread count and turn concurrency are owned by the Web setting across
+    // the full supported product range. These fixed values mirror the
+    // Board-side schema caps for older Boards/Bridges and are not device
+    // ceilings.
+    max_threads: MAX_THREADS,
     max_concurrent_turns: MAX_CONCURRENT_TURNS,
     max_history_turns: configuration.localMaxHistoryTurns,
     thread_scope: configuration.threadScope,
@@ -922,7 +925,7 @@ export function resolveRemoteConfiguration(
       includeThreadTitles,
       maxThreads: clampedRemoteInteger(
         desired.max_threads,
-        configuration.localMaxThreads,
+        MAX_THREADS,
         "max_threads",
         warnings,
       ),

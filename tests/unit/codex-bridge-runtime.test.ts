@@ -270,7 +270,7 @@ describe("Codex Bridge runtime primitives", () => {
     ).toThrow("CODEX_BRIDGE_APPROVAL_MODE");
   });
 
-  it("keeps local safety gates while letting Web own device concurrency", () => {
+  it("keeps local safety gates while letting Web own thread and turn limits", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
@@ -303,7 +303,7 @@ describe("Codex Bridge runtime primitives", () => {
     expect(resolved.effective).toEqual({
       enabled: false,
       includeThreadTitles: false,
-      maxThreads: 5,
+      maxThreads: 500,
       maxConcurrentTurns: 32,
       syncHistory: false,
       historyTurnLimit: 50,
@@ -316,7 +316,7 @@ describe("Codex Bridge runtime primitives", () => {
         },
       ],
     });
-    expect(resolved.warnings).toHaveLength(3);
+    expect(resolved.warnings).toHaveLength(2);
     expect(resolved.warnings).toContainEqual(
       expect.stringContaining("CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES"),
     );
@@ -324,7 +324,7 @@ describe("Codex Bridge runtime primitives", () => {
       remote_configuration_enabled: false,
       allow_thread_titles: false,
       allow_working_directory_configuration: false,
-      max_threads: 5,
+      max_threads: 500,
       max_concurrent_turns: 32,
       allow_history_sync: false,
       max_history_turns: 50,

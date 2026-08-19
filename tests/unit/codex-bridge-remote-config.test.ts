@@ -375,10 +375,10 @@ describe("Codex Bridge Web configuration", () => {
       configurationStatuses.find((status) => status.applied_version === 1),
     ).toMatchObject({
       effective: {
-        max_threads: 4,
+        max_threads: 40,
         max_concurrent_turns: 20,
       },
-      error: expect.stringContaining("max_threads=40"),
+      error: null,
     });
     expect(finalStatus).toMatchObject({
       runtime_instance_id: expect.any(String),
@@ -403,7 +403,7 @@ describe("Codex Bridge Web configuration", () => {
         remote_configuration_enabled: true,
         allow_thread_titles: true,
         allow_working_directory_configuration: true,
-        max_threads: 4,
+        max_threads: 500,
         max_concurrent_turns: 32,
         thread_scope: "all",
         working_directory: temporaryDirectory,

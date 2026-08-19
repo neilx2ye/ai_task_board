@@ -84,7 +84,7 @@ describe("Bridge configuration UI model", () => {
   });
 
   it("presents device concurrency as one Web-controlled limit", () => {
-    expect(BRIDGE_CONCURRENCY_NOTICE).toContain("直接在 Web 设置");
+    expect(BRIDGE_CONCURRENCY_NOTICE).toContain("Web 设置的 1 到 32");
     expect(BRIDGE_CONCURRENCY_NOTICE).toContain("整台设备");
     expect(BRIDGE_CONCURRENCY_NOTICE).not.toContain("本机上限");
   });

@@ -60,7 +60,7 @@ type BridgeConnection = {
 export const BRIDGE_HISTORY_RETENTION_NOTICE =
   "关闭历史同步或降低 Turn 上限，只会停止或收窄后续导入，不会删除已经上传的历史。";
 export const BRIDGE_CONCURRENCY_NOTICE =
-  "直接在 Web 设置 1 到 32；Bridge 应用后会立即调整整台设备的并发上限。";
+  "Web 设置的 1 到 32 会直接作为整台设备上限，Bridge 应用后立即生效。";
 
 type WorkingDirectoryInput = NonNullable<
   BridgeDesiredConfig["working_directories"]
@@ -345,8 +345,10 @@ function LocalConstraints({
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">本机 Thread 上限</dt>
-        <dd className="mt-0.5 font-medium">{constraints.max_threads} threads</dd>
+        <dt className="text-muted-foreground">Thread 上限（Web 统一）</dt>
+        <dd className="mt-0.5 font-medium">
+          {constraints.max_threads} threads
+        </dd>
       </div>
       <div>
         <dt className="text-muted-foreground">Web 配置入口</dt>
@@ -908,8 +910,7 @@ function BridgeConfigForm({
               onChange={(event) => setMaxThreads(event.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Web 上限 500；本机上限
-              {constraints ? ` ${constraints.max_threads}` : "尚未上报"}。
+              Web 统一上限 500；Bridge 不再使用本机 Thread 上限。
             </p>
           </div>
           <div className="flex flex-col gap-1.5">

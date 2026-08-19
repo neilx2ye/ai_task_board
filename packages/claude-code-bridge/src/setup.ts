@@ -934,12 +934,13 @@ export async function runClaudeNonInteractiveSetup(options: {
     ["decline", "accept"],
     "decline",
   );
+  const configuredTitles = configuredValue(
+    existing,
+    process.env,
+    "CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES",
+  );
   const includeTitles =
-    configuredValue(
-      existing,
-      process.env,
-      "CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES",
-    ) === "true";
+    configuredTitles === undefined ? true : configuredTitles === "true";
   const webConfiguration =
     directoryManagement === "web" ||
     configuredValue(existing, process.env, "CLAUDE_BRIDGE_WEB_CONFIG") === "true";

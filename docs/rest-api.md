@@ -79,8 +79,9 @@ Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成
 
 Web 只控制运行时启停、thread 标题上传、历史同步以及 thread/并行 turn 数量。工作目录、
 thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex 可执行文件和受保护的本机边界
-始终由设备环境决定；服务端也会拒绝突破设备 `constraints` 的 effective 报告。并行 turn
-上限是例外：Web 可在 `1..32` 内直接设置整台设备的值，Bridge 的兼容约束字段会报告该统一范围。
+始终由设备环境决定；服务端也会拒绝突破设备 `constraints` 的 effective 报告。thread
+数（`1..500`）与并行 turn 数（`1..32`）由 Web 直接设置整台设备的值，Bridge 的兼容约束
+字段会报告该统一范围，不再与本机 `*_MAX_THREADS` / `*_MAX_CONCURRENT_TURNS` 做二次比较。
 历史同步还受 `constraints.allow_history_sync` 和 `max_history_turns` 限制；设备必须先以
 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` 明确授权。同步内容会进入当前 Workspace，所有成员
 都可查看，因此 Web 上的期望开关不能替代设备本机授权。服务端接受的

@@ -637,6 +637,10 @@ export function buildCodexInstallEnvironment(
     AI_TASK_BOARD_CONNECTION_TOKEN: input.connectionToken,
     CODEX_THREAD_SCOPE: input.threadScope,
     CODEX_MAX_THREADS: input.maxThreads,
+    CODEX_BRIDGE_INCLUDE_THREAD_TITLES:
+      input.existing.CODEX_BRIDGE_INCLUDE_THREAD_TITLES?.trim() || "true",
+    CODEX_BRIDGE_ALLOW_HISTORY_SYNC:
+      input.existing.CODEX_BRIDGE_ALLOW_HISTORY_SYNC?.trim() || "true",
     CODEX_BRIDGE_PERMISSION_MODE: input.permissionMode,
     CODEX_BRIDGE_APPROVAL_MODE: input.approvalMode,
     CODEX_BRIDGE_WEB_CONFIG: input.webConfiguration ? "true" : "false",

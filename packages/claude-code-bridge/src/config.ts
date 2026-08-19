@@ -37,9 +37,8 @@ export type ClaudeBridgeConfiguration = {
   capabilities: string[];
   pollIntervalMs: number;
   leaseSeconds: number;
-  /** Applied thread cap; Web may lower it but never exceed `localMaxThreads`. */
   maxThreads: number;
-  /** Device-wide ceiling parsed from CLAUDE_MAX_THREADS. */
+  /** Startup thread cap before the Web-owned live limit is applied. */
   localMaxThreads: number;
   maxConcurrentTurns: number;
   /** Inert for Claude: mirrors the Web desired value so applied state is exact. */

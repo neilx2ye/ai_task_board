@@ -152,7 +152,7 @@ describe("Kimi Bridge remote configuration", () => {
     KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
   });
 
-  it("clamps supported fields to the device ceiling and ignores unsupported ones", () => {
+  it("applies the Web thread limit without a local ceiling and ignores unsupported fields", () => {
     const resolved = resolveRemoteConfiguration(base, {
       enabled: false,
       include_thread_titles: true,
@@ -165,13 +165,13 @@ describe("Kimi Bridge remote configuration", () => {
     expect(resolved.effective).toEqual({
       enabled: false,
       includeThreadTitles: true,
-      maxThreads: 8,
+      maxThreads: 20,
       maxConcurrentTurns: 4,
       syncHistory: false,
       historyTurnLimit: 500,
       workingDirectories: base.localWorkingDirectories,
     });
-    expect(resolved.warnings.join("")).toContain("max_threads=20");
+    expect(resolved.warnings.join("")).not.toContain("max_threads");
     expect(resolved.warnings.join("")).toContain("历史同步");
     expect(resolved.warnings.join("")).toContain("工作目录");
   });
@@ -207,7 +207,7 @@ describe("Kimi Bridge remote configuration", () => {
     );
   });
 
-  it("parses the Web config opt-in and keeps the local thread ceiling", () => {
+  it("parses the Web config opt-in and uses the local value only as startup fallback", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",

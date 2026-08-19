@@ -90,11 +90,10 @@ Bridge settings from the Board UI:
 - replace the effective working-directory list, when the device authorizes it
   with `ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`.
 
-`ANTIGRAVITY_MAX_THREADS` remains the immutable local ceiling: Web can lower
-the runtime cap but never exceed it. `ANTIGRAVITY_MAX_CONCURRENT_TURNS` is the
-startup value; with Web configuration enabled the Board owns the live 1..32
-limit. Antigravity does not implement thread-history import, so that
-Codex-specific control is hidden.
+`ANTIGRAVITY_MAX_THREADS` is a startup fallback only. With Web configuration
+enabled the Board owns the live 1..500 Thread limit and 1..32 turn limit;
+neither is clamped to the local environment value. Antigravity does not
+implement thread-history import, so that Codex-specific control is hidden.
 
 With `ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true` a
 Board-provided list must contain 1 to 100 unique entries with absolute paths

@@ -59,6 +59,7 @@ const IMAGE_MIME_TYPES = new Set([
   "image/gif",
 ]);
 const IMAGE_STAGING_ROOT = ".ai-task-board/turn-images";
+const MAX_THREADS = 500;
 const MAX_CONCURRENT_TURNS = 32;
 const MAX_HISTORY_TURNS = 500;
 
@@ -264,7 +265,7 @@ export function resolveRemoteConfiguration(
       includeThreadTitles: desired.include_thread_titles,
       maxThreads: clampedRemoteInteger(
         desired.max_threads,
-        configuration.localMaxThreads,
+        MAX_THREADS,
         "max_threads",
         warnings,
       ),
@@ -857,7 +858,7 @@ export class AntigravityBridge {
         remote_configuration_enabled:
           this.configuration.webConfigurationEnabled,
         allow_thread_titles: true,
-        max_threads: this.configuration.localMaxThreads,
+        max_threads: MAX_THREADS,
         max_concurrent_turns: MAX_CONCURRENT_TURNS,
         thread_scope: "cwd",
         working_directory: firstDirectory?.workingDirectory ?? process.cwd(),

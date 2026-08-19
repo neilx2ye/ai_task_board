@@ -65,6 +65,7 @@ const IMAGE_MIME_TYPES = new Set([
   "image/webp",
   "image/gif",
 ]);
+const MAX_THREADS = 500;
 const MAX_CONCURRENT_TURNS = 32;
 const MAX_HISTORY_TURNS = 500;
 
@@ -222,7 +223,7 @@ export function resolveRemoteConfiguration(
       includeThreadTitles,
       maxThreads: clampedRemoteInteger(
         desired.max_threads,
-        configuration.localMaxThreads,
+        MAX_THREADS,
         "max_threads",
         warnings,
       ),
@@ -855,7 +856,9 @@ export class KimiBridge {
         remote_configuration_enabled:
           this.configuration.webConfigurationEnabled,
         allow_thread_titles: this.configuration.allowRemoteThreadTitles,
-        max_threads: this.configuration.localMaxThreads,
+        // Thread count and turn concurrency are owned by the Web setting; the
+        // fixed values mirror the Board-side schema caps for compatibility.
+        max_threads: MAX_THREADS,
         max_concurrent_turns: MAX_CONCURRENT_TURNS,
         thread_scope: "cwd",
         working_directory: firstDirectory?.workingDirectory ?? process.cwd(),
