@@ -55,10 +55,6 @@ type Choice<T extends string> = { value: T; label: string };
 
 type WorkingDirectoryManagement = "web" | "local";
 
-interface ReadlineWithOutputOverride extends ReadlineInterface {
-  _writeToOutput?: (value: string) => void;
-}
-
 function xdgDirectory(value: string | undefined, fallback: string): string {
   return value && path.isAbsolute(value) ? path.normalize(value) : fallback;
 }
@@ -338,9 +334,7 @@ export async function resolveExecutable(
 }
 
 class TerminalPrompter {
-  private readonly readline: ReadlineWithOutputOverride;
-  private readonly originalWriteToOutput?: (value: string) => void;
-  private muted = false;
+  private readline: ReadlineInterface;
 
   constructor(
     private readonly input: ReadStream,
@@ -350,13 +344,7 @@ class TerminalPrompter {
       input,
       output,
       terminal: Boolean(input.isTTY && output.isTTY),
-    }) as ReadlineWithOutputOverride;
-    this.originalWriteToOutput = this.readline._writeToOutput?.bind(this.readline);
-    if (this.originalWriteToOutput) {
-      this.readline._writeToOutput = (value: string) => {
-        if (!this.muted) this.originalWriteToOutput?.(value);
-      };
-    }
+    });
   }
 
   write(value: string): void {
@@ -392,18 +380,102 @@ class TerminalPrompter {
 
   async secret(label: string, existing?: string): Promise<string> {
     while (true) {
-      this.write(`${label}${existing ? "（回车保留现有值）" : ""}: `);
-      this.muted = Boolean(this.input.isTTY && this.output.isTTY);
-      let answer = "";
-      try {
-        answer = (await this.readline.question("")).trim();
-      } finally {
-        if (this.muted) this.write("\n");
-        this.muted = false;
-      }
+      const suffix = existing ? "（回车保留现有值）" : "";
+      const answer = (await this.readSecretLine(`${label}${suffix}: `)).trim();
       if (answer) return answer;
       if (existing) return existing;
       this.write("  该项不能为空。\n");
+    }
+  }
+
+  /**
+   * Reads one line without echoing the typed characters. readline redraws
+   * its current line with an erase-then-rewrite sequence that wipes prompt
+   * text written directly to the output, and Node 22 moved its echo hook
+   * from `_writeToOutput` to a Symbol, so hooking it neither renders the
+   * prompt nor mutes input there. On a TTY we therefore close readline
+   * (which restores terminal echo), consume raw bytes ourselves with echo
+   * disabled, and recreate readline for the questions that follow; on a
+   * pipe there is no echo to suppress and the value is read as a line.
+   */
+  private async readSecretLine(label: string): Promise<string> {
+    if (!this.input.isTTY) {
+      return this.readline.question(label);
+    }
+
+    this.readline.close();
+    const input = this.input;
+    const output = this.output;
+    const rawBefore = Boolean(input.isRaw);
+
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let line = "";
+        let settled = false;
+
+        const cleanup = (): void => {
+          input.off("data", onData);
+          input.off("end", onEnd);
+          input.off("error", onError);
+        };
+
+        const finish = (error: Error | null, value?: string): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          try {
+            input.setRawMode?.(rawBefore);
+          } catch {
+            // Restoring raw mode is best effort on non-TTY backing streams.
+          }
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(value ?? line);
+        };
+
+        const onData = (chunk: Buffer | string): void => {
+          const text =
+            typeof chunk === "string" ? chunk : chunk.toString("utf8");
+          for (const character of text) {
+            if (character === "\r" || character === "\n") {
+              output.write("\n");
+              finish(null, line);
+              return;
+            }
+            if (character === "\u0003") {
+              output.write("^C\n");
+              finish(new Error("Aborted with Ctrl+C"));
+              return;
+            }
+            if (character === "\u007f" || character === "\b") {
+              if (line.length > 0) {
+                line = line.slice(0, -1);
+              }
+              continue;
+            }
+            if (character < "\u0020") continue;
+            line += character;
+          }
+        };
+
+        const onEnd = (): void => finish(new Error("输入流已关闭"));
+        const onError = (error: Error): void => finish(error);
+
+        input.setRawMode?.(true);
+        this.write(label);
+        input.on("data", onData);
+        input.once("end", onEnd);
+        input.once("error", onError);
+        input.resume();
+      });
+    } finally {
+      this.readline = createInterface({
+        input: this.input,
+        output: this.output,
+        terminal: Boolean(this.input.isTTY && this.output.isTTY),
+      });
     }
   }
 
