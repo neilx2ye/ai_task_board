@@ -185,7 +185,7 @@ describe("Unified device Bridge migration", () => {
           workspaceId,
           unifiedId,
           tokenHash,
-          "1.6.0",
+          "1.7.0",
           kind,
           JSON.stringify([
             {
@@ -248,7 +248,7 @@ describe("Unified device Bridge migration", () => {
         workspaceId,
         unifiedId,
         tokenHash,
-        "1.6.0",
+        "1.7.0",
         JSON.stringify([
           {
             directory_key: "main",
@@ -281,7 +281,7 @@ describe("Unified device Bridge migration", () => {
         workspaceId,
         unifiedId,
         tokenHash,
-        "1.6.0",
+        "1.7.0",
         JSON.stringify([
           {
             directory_key: "main",

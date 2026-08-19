@@ -32,7 +32,7 @@ workspaces:
 
 ```bash
 npm install -g @agentclientprotocol/claude-agent-acp
-npx --yes ai-task-board-bridge@1.6.0 setup claude
+npx --yes ai-task-board-bridge@1.7.0 setup claude
 ```
 
 The wizard asks only for the Board URL (leave it empty to use
@@ -64,7 +64,7 @@ local allowlist instead. `AI_TASK_BOARD_URL` is optional and defaults to
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.6.0 setup claude
+npx --yes ai-task-board-bridge@1.7.0 setup claude
 ```
 
 ## Foreground mode
@@ -75,7 +75,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.6.0 run claude
+npx --yes ai-task-board-bridge@1.7.0 run claude
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -138,7 +138,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.6.0 setup claude`.
+rerunning `npx --yes ai-task-board-bridge@1.7.0 setup claude`.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Claude Code runtime

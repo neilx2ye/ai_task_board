@@ -1,6 +1,6 @@
 {
   "name": "ai-task-board-bridge",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Unified interactive installer and device bridge for Codex, Kimi Code, Antigravity, and Claude Code on AI Task Board",
   "type": "module",
   "types": "./dist/index.d.ts",

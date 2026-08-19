@@ -28,14 +28,14 @@ describe("Codex parseRemoteWorkingDirectories create_if_missing", () => {
     }
   });
 
-  it("ships Bridge version 1.6.0", () => {
+  it("ships Bridge version 1.7.0", () => {
     const manifest = JSON.parse(
       readFileSync(
         path.resolve("packages/codex-bridge/package.json"),
         "utf8",
       ),
     ) as { version: string };
-    expect(manifest.version).toBe("1.6.0");
+    expect(manifest.version).toBe("1.7.0");
   });
 
   it("parses an existing directory without the flag", () => {
