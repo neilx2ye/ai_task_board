@@ -19,6 +19,7 @@ import {
   renderSystemdUserUnit,
   resolveSetupPaths,
   serializeEnvironmentFile,
+  type SetupPaths,
 } from "./setup.js";
 import {
   parseEnabledKinds,
@@ -27,6 +28,60 @@ import {
 } from "./supervisor.js";
 
 export const UNIFIED_ENVIRONMENT_FILE = "ai-task-board-bridge.env";
+
+/**
+ * One shared device configuration for all four runtimes. The four Bridges are
+ * configured in a single pass and read the same environment file; per-Bridge
+ * prompts or separate configuration rounds are not needed. Values only fill
+ * fields the user has not already configured, and can be overridden through
+ * environment variables when automating the install.
+ */
+const UNIFIED_DEVICE_DEFAULTS: Readonly<Record<string, string>> = {
+  // Codex
+  CODEX_THREAD_SCOPE: "cwd",
+  CODEX_MAX_THREADS: "50",
+  CODEX_BRIDGE_PERMISSION_MODE: "safe",
+  CODEX_BRIDGE_APPROVAL_MODE: "decline",
+  CODEX_BRIDGE_WEB_CONFIG: "true",
+  CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES: "true",
+  CODEX_BINARY: "codex",
+  // Kimi Code
+  KIMI_BINARY: "kimi",
+  KIMI_BRIDGE_APPROVAL_MODE: "decline",
+  KIMI_BRIDGE_INCLUDE_SESSION_TITLES: "false",
+  KIMI_BRIDGE_MODE: "auto",
+  KIMI_BRIDGE_WEB_CONFIG: "true",
+  KIMI_MAX_THREADS: "50",
+  KIMI_MAX_CONCURRENT_TURNS: "2",
+  KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
+  // Antigravity
+  ANTIGRAVITY_BINARY: "agy",
+  ANTIGRAVITY_BRIDGE_APPROVAL_MODE: "decline",
+  ANTIGRAVITY_BRIDGE_MODE: "auto",
+  ANTIGRAVITY_BRIDGE_SANDBOX: "false",
+  ANTIGRAVITY_BRIDGE_WEB_CONFIG: "true",
+  ANTIGRAVITY_MAX_THREADS: "50",
+  ANTIGRAVITY_MAX_CONCURRENT_TURNS: "2",
+  ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
+  // Claude Code
+  CLAUDE_BINARY: "claude-agent-acp",
+  CLAUDE_BRIDGE_APPROVAL_MODE: "decline",
+  CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES: "false",
+  CLAUDE_BRIDGE_MODE: "default",
+  CLAUDE_BRIDGE_WEB_CONFIG: "true",
+  CLAUDE_MAX_THREADS: "50",
+  CLAUDE_MAX_CONCURRENT_TURNS: "2",
+  CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
+};
+
+const CLAUDE_CREDENTIAL_ENVIRONMENT = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+] as const;
+
+/** Anthropic's official ACP adapter installed on demand for Claude Code. */
+const CLAUDE_ACP_DEFAULT_PACKAGE = "@agentclientprotocol/claude-agent-acp@0.70.0";
 
 const LEGACY_SERVICES: ReadonlyArray<{
   kind: UnifiedBridgeKind;
@@ -123,6 +178,63 @@ async function atomicWrite(
   }
 }
 
+/**
+ * Fold the Claude Code ACP adapter into the single setup command: when the
+ * Claude runtime is enabled, install Anthropic's adapter into the managed
+ * data directory and point CLAUDE_BINARY at it, so `npx ... setup` is still
+ * the only command the user has to run. An explicit CLAUDE_BINARY or an
+ * already-installed adapter is left untouched.
+ */
+async function ensureClaudeAcpAdapter(
+  environment: Record<string, string | undefined>,
+  paths: SetupPaths,
+  output: (text: string) => void,
+): Promise<void> {
+  const configured = environment.CLAUDE_BINARY?.trim();
+  if (configured && configured !== "claude-agent-acp") return;
+
+  const adapterRoot = path.join(
+    path.dirname(path.dirname(paths.runtimeDirectory)),
+    "claude-acp",
+  );
+  const adapterBinary = path.join(
+    adapterRoot,
+    "node_modules",
+    ".bin",
+    "claude-agent-acp",
+  );
+  try {
+    await access(adapterBinary, fsConstants.X_OK);
+    environment.CLAUDE_BINARY = adapterBinary;
+    return;
+  } catch {
+    // Not installed yet; install below.
+  }
+
+  const packageSpec =
+    process.env.CLAUDE_ACP_PACKAGE?.trim() || CLAUDE_ACP_DEFAULT_PACKAGE;
+  try {
+    await mkdir(adapterRoot, { recursive: true, mode: 0o700 });
+    await runCommand("npm", [
+      "install",
+      "--prefix",
+      adapterRoot,
+      "--no-save",
+      "--omit=dev",
+      packageSpec,
+    ]);
+    await access(adapterBinary, fsConstants.X_OK);
+    environment.CLAUDE_BINARY = adapterBinary;
+    output(`已安装 Claude Code ACP 适配器：${adapterBinary}\n`);
+  } catch (error) {
+    output(
+      `警告：Claude Code ACP 适配器安装失败（${
+        error instanceof Error ? error.message : String(error)
+      }），将回退到 PATH 上的 claude-agent-acp。\n`,
+    );
+  }
+}
+
 function enabledKindsFrom(
   value: string | undefined,
 ): UnifiedBridgeKind[] | null {
@@ -157,7 +269,9 @@ async function prepareEnvironment(
   homeDirectory: string;
 }> {
   const identity = userInfo();
-  const homeDirectory = path.resolve(identity.homedir);
+  const homeDirectory = path.resolve(
+    process.env.HOME?.trim() || identity.homedir,
+  );
   const configDirectory = path.join(homeDirectory, ".config", "ai-task-board");
   const unifiedFile = path.join(configDirectory, UNIFIED_ENVIRONMENT_FILE);
   const existing = await readEnvironment(unifiedFile);
@@ -175,6 +289,17 @@ async function prepareEnvironment(
   }
   for (const [name, value] of Object.entries(existing)) {
     merged[name] = value;
+  }
+  // Explicit environment values override the saved configuration and persist
+  // into the single shared file; Claude API/custom-gateway credentials follow
+  // the same passthrough the standalone Claude setup used.
+  for (const name of Object.keys(UNIFIED_DEVICE_DEFAULTS)) {
+    const value = process.env[name]?.trim();
+    if (value) merged[name] = value;
+  }
+  for (const credential of CLAUDE_CREDENTIAL_ENVIRONMENT) {
+    const value = process.env[credential]?.trim();
+    if (value) merged[credential] = value;
   }
 
   const environmentValue = process.env.AI_TASK_BOARD_BRIDGES;
@@ -229,12 +354,13 @@ async function prepareEnvironment(
     }
   } else if (!connectionToken) {
     throw new Error(
-      "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；非交互安装需要 Connection Token",
+      "缺少 AI_TASK_BOARD_CONNECTION_TOKEN；请提供环境变量，或在交互式终端中运行 setup",
     );
   }
 
   boardUrl = normalizeBoardUrl(boardUrl);
   const environment: Record<string, string | undefined> = {
+    ...UNIFIED_DEVICE_DEFAULTS,
     ...merged,
     AI_TASK_BOARD_URL: boardUrl,
     AI_TASK_BOARD_CONNECTION_TOKEN: connectionToken,
@@ -284,6 +410,11 @@ export async function runUnifiedSetup(
   );
   const sourcePackageDirectory = fileURLToPath(new URL("../", import.meta.url));
   await installRuntime(sourcePackageDirectory, paths);
+  if (kinds.includes("claude")) {
+    await ensureClaudeAcpAdapter(environment, paths, (text) =>
+      process.stdout.write(text),
+    );
+  }
 
   await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
   await chmod(paths.configDirectory, 0o700);
@@ -313,6 +444,16 @@ export async function runUnifiedSetup(
   // A unified service replaces the four legacy per-Bridge services.
   const legacyWasActive: string[] = [];
   for (const legacy of LEGACY_SERVICES) {
+    const legacyUnitPath = path.join(
+      path.dirname(paths.unitFile),
+      legacy.service,
+    );
+    try {
+      await access(legacyUnitPath, fsConstants.F_OK);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
     try {
       const active = await captureCommand("systemctl", [
         "--user",
@@ -371,7 +512,7 @@ export async function runUnifiedSetup(
     `查看日志：journalctl --user -u ${BRIDGE_SYSTEMD_SERVICE} -f\n`,
   );
   process.stdout.write(
-    "再次运行 setup 可保留现有 Token 并启用新加入的 Bridge 类型。\n",
+    "再次运行 setup 时 Token 留空即保留现值、输入新值则替换，并可启用新加入的 Bridge 类型。\n",
   );
 
   const linger = await captureCommand("loginctl", [

@@ -1,4 +1,5 @@
 import { constants as fsConstants } from "node:fs";
+import { createRequire } from "node:module";
 import {
   access,
   chmod,
@@ -27,6 +28,53 @@ import {
 export const BRIDGE_SYSTEMD_SERVICE = "ai-task-board-bridge.service";
 export const LEGACY_BRIDGE_SYSTEMD_SERVICE =
   "ai-task-board-codex-bridge.service";
+
+/** Runtime packages required by the embedded Kimi/Claude runtimes. */
+const EMBEDDED_RUNTIME_DEPENDENCIES = [
+  "@agentclientprotocol/sdk",
+  // Peer dependency of the ACP SDK; copied so the versioned runtime directory
+  // resolves `zod/v4` without a global install.
+  "zod",
+] as const;
+
+/**
+ * Resolve one runtime dependency directory. The first base is the staged npm
+ * package (npx cache or workspace); the second is the currently installed
+ * runtime, which already carries the dependency after its first install, so
+ * the self-update path can rebuild node_modules from an npm tarball that
+ * deliberately ships no dependencies.
+ */
+async function runtimeDependencyDirectory(
+  packageName: string,
+  sourcePackageDirectory: string,
+): Promise<string> {
+  const bases = [
+    path.join(sourcePackageDirectory, "package.json"),
+    fileURLToPath(new URL("../package.json", import.meta.url)),
+  ];
+  for (const base of bases) {
+    try {
+      const require = createRequire(base);
+      let current = path.dirname(require.resolve(packageName));
+      while (current !== path.dirname(current)) {
+        try {
+          const manifest = JSON.parse(
+            await readFile(path.join(current, "package.json"), "utf8"),
+          ) as { name?: string };
+          if (manifest.name === packageName) return current;
+        } catch {
+          // Keep walking to the package root.
+        }
+        current = path.dirname(current);
+      }
+    } catch {
+      // Try the next resolution base.
+    }
+  }
+  throw new Error(
+    `找不到运行时依赖包目录：${packageName}。请从包含依赖的 npm 包运行 setup。`,
+  );
+}
 
 type ThreadScope = "cwd" | "all";
 type PermissionMode = "safe" | "danger-full-access" | "inherit";
@@ -406,6 +454,25 @@ export async function installRuntime(
       path.join(sourcePackageDirectory, "package.json"),
       path.join(staging, "package.json"),
     );
+    for (const dependency of EMBEDDED_RUNTIME_DEPENDENCIES) {
+      const dependencySource = await runtimeDependencyDirectory(
+        dependency,
+        sourcePackageDirectory,
+      );
+      const dependencyDestination = path.join(
+        staging,
+        "node_modules",
+        ...dependency.split("/"),
+      );
+      await mkdir(path.dirname(dependencyDestination), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await cp(dependencySource, dependencyDestination, {
+        recursive: true,
+        force: true,
+      });
+    }
     try {
       await copyFile(
         path.join(sourcePackageDirectory, "README.md"),

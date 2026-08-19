@@ -178,12 +178,9 @@ export async function runBridgeSetup(
 ): Promise<void> {
   applyDefaultBoardUrl();
 
-  const interactive = !hasConnectionEnvironment(process.env);
-  if (interactive && (!process.stdin.isTTY || !process.stdout.isTTY)) {
-    throw new Error(
-      "setup 需要交互式终端；非交互安装请提供 AI_TASK_BOARD_CONNECTION_TOKEN 环境变量",
-    );
-  }
+  // 交互式终端里每次都会重新询问 Token：留空保留已保存值，输入新值则替换；
+  // SSH / CI 等非交互环境读取环境变量或已保存的 Token，不再提问。
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const targets: readonly UnifiedBridgeKind[] =
     target === "codex"
       ? ["codex"]

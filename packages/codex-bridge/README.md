@@ -50,22 +50,28 @@ Connections when only one agent is used. The public tarball embeds the private
 Kimi, Antigravity, and Claude Code runtimes, so no second npm package needs to
 be published or installed.
 
+The four runtimes share one configuration file: setup writes the working
+directory allowlist, limits, permission/approval modes, and Web-configuration
+switches for Codex, Kimi, Antigravity, and Claude Code in a single pass, each
+under its own environment prefix.
+
 `setup` always finishes by installing and starting a systemd user service; it
-never leaves a Bridge running inside the `npx` process. When stdin/stdout is
-not a TTY (for example an SSH command or CI script), `setup codex`,
-`setup kimi`, `setup antigravity`, and `setup claude` install the same
-services from
-environment variables without prompting. With
-`AI_TASK_BOARD_CONNECTION_TOKEN` present, even the `both`/`all` targets install
-non-interactively because all runtimes share that one token.
+never leaves a Bridge running inside the `npx` process. In a terminal, every
+setup run re-asks the Board URL and Connection Token: leave the token blank to
+keep the saved value, or enter a new one to switch connections without touching
+anything else. When stdin/stdout is not a TTY (for example an SSH command or CI
+script), setup reads `AI_TASK_BOARD_CONNECTION_TOKEN` or the previously saved
+token and installs without prompting; with that token present, even the
+`both`/`all` targets install non-interactively because all runtimes share it.
 
 ### Codex setup
 
-The Codex setup wizard asks the same two questions as every Bridge: the Board
-URL (leave it empty to use `https://task.neilx.online`) and the hidden
-Connection Token. Everything else is kept as a safe default or left to the
-Board's Web console: working directories default to Web-side management and are
-added later in "AI 连接 → Bridge 设置 / 新建项目", while the Codex home
+The Codex setup wizard asks the same questions as every Bridge: the Board URL
+(leave it empty to use `https://task.neilx.online`), the hidden Connection
+Token (blank keeps the saved value), and the runtimes to enable. Everything
+else is kept as a safe default or left to the Board's Web console: working
+directories default to Web-side management and are added later in "AI 连接 →
+Bridge 设置 / 新建项目", while the Codex home
 (`~/.codex` unless `CODEX_HOME` is set), the `codex` executable on `PATH`,
 thread limits, and permission/approval modes come from their defaults or the
 environment. It then installs and starts `ai-task-board-bridge.service` in the
@@ -450,13 +456,15 @@ bounded completion metadata are uploaded.
 
 ## Claude Code Bridge
 
-Claude Code Bridge requires Anthropic's official ACP adapter
-(`npm install -g @agentclientprotocol/claude-agent-acp`) plus either a
-`claude login` for subscription users or an `ANTHROPIC_API_KEY` /
-`ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` credential, and a dedicated
-Board Connection whose platform is `Claude Code`. Interactive setup installs
-the separate `ai-task-board-claude-bridge.service`, stores its token in a
-`0600` environment file, and stages the embedded Claude Code runtime under the
+Claude Code Bridge requires either a `claude login` for subscription users or
+an `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`
+credential, and a dedicated Board Connection whose platform is `Claude Code`
+(or a unified `All` connection). When the Claude runtime is enabled, the
+unified setup installs Anthropic's official ACP adapter
+(`@agentclientprotocol/claude-agent-acp`) into the user's data directory and
+points `CLAUDE_BINARY` at it, so no separate `npm install -g` is required.
+Interactive setup stores its token in a `0600` environment file and stages the
+embedded Claude Code runtime under the
 current user's XDG data directory.
 
 Foreground or non-systemd operation uses the same public npm package:

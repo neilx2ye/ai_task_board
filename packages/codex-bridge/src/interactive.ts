@@ -160,9 +160,11 @@ export class TerminalPrompter {
 }
 
 /**
- * The unified, minimal interactive configuration shared by every Bridge:
- * Board address (optional, defaults when left empty) and Connection Token
- * (required). Everything else is configured from the Web console.
+ * The unified, minimal interactive configuration shared by every Bridge.
+ * Every interactive run re-asks the Board address and Connection Token:
+ * leaving the token blank keeps the saved value, while entering a new value
+ * replaces it for the next service restart. Everything else comes from one
+ * shared environment file or the Web console.
  */
 export async function promptForConnectionBasics(
   prompt: TerminalPrompter,
@@ -183,8 +185,8 @@ export async function promptForConnectionBasics(
   });
   const connectionToken = await prompt.secret(
     "Connection Token（输入内容不会回显）",
-    environment.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
-      existing.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+    existing.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
+      environment.AI_TASK_BOARD_CONNECTION_TOKEN?.trim() ||
       undefined,
   );
   return { boardUrl, connectionToken };

@@ -122,15 +122,17 @@ npx --yes ai-task-board-bridge@1.6.0 run
 （`setup` 还支持 `both`、`all`），未指定时交互式询问。四种 Bridge 的交互流程完全
 一致：只询问 Board
 地址（留空使用 `https://task.neilx.online`）与 Connection Token，工作目录、
-thread/并发上限、权限与审批策略等其余配置都到「AI 连接 → Bridge 设置」中管理，
-新安装默认由 Web 端管理目录。**再次运行 setup 会把新加入的 Bridge 类型并入现有
-服务，保留已保存的 Token 与配置**；统一设备连接在「Bridge 设置」里按运行时分别
-管理。不带子命令的旧式调用保持兼容：配置齐全时前台运行 Codex，缺少配置且处于
-交互终端时进入 setup。
+thread/并发上限、权限与审批策略等四种运行时的配置统一写入**同一份环境文件**
+（含 Claude Code），一次配置覆盖全部 Bridge；其余细调也可到「AI 连接 → Bridge
+设置」中按平台管理，新安装默认由 Web 端管理目录。**交互式终端里 setup 每次都会
+重新询问 Token：留空保留已保存的值，输入新值则替换**；再次运行 setup 会把新加入
+的 Bridge 类型并入现有服务，保留已保存的 Token 与配置。统一设备连接在
+「Bridge 设置」里按运行时分别管理。不带子命令的旧式调用保持兼容：配置齐全时
+前台运行 Codex，缺少配置且处于交互终端时进入 setup。
 
-只要环境变量里提供了 `AI_TASK_BOARD_CONNECTION_TOKEN`，两个命令就直接按环境变量
-非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时同样使用默认地址。非 TTY 环境
-（SSH 命令、CI 脚本）下需要提供 Token 并显式指定平台：
+SSH 命令、CI 脚本等非 TTY 环境读取 `AI_TASK_BOARD_CONNECTION_TOKEN` 或已保存的
+Token，直接非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时同样使用默认地址，
+并显式指定平台：
 
 ```bash
 AI_TASK_BOARD_URL='https://task.neilx.online' \
@@ -212,11 +214,12 @@ systemd 说明见 [Antigravity Bridge 包文档](packages/antigravity-bridge/REA
 
 ### Claude Code Bridge
 
-先在「AI 连接」中新建平台为 **Claude Code** 的独立连接，再在已登录 Claude Code 的
-设备上安装 Anthropic 官方的 ACP 适配器并运行：
+先在「AI 连接」中新建平台为 **Claude Code** 的独立连接（或使用统一设备连接），
+再在已登录 Claude Code 的设备上运行统一安装命令；启用 Claude Code 时 setup 会把
+Anthropic 官方的 ACP 适配器自动安装到用户数据目录并配置 `CLAUDE_BINARY`，
+不需要单独安装：
 
 ```bash
-npm install -g @agentclientprotocol/claude-agent-acp
 npx --yes ai-task-board-bridge@1.6.0 setup claude
 ```
 

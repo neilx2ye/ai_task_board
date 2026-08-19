@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -67,6 +69,7 @@ describe("Harness activity sanitization", () => {
   });
 
   it("requires a terminal for the interactive setup command", () => {
+    const isolatedHome = mkdtempSync(path.join(tmpdir(), "atb-help-test-"));
     const result = spawnSync(
       process.execPath,
       [
@@ -78,12 +81,18 @@ describe("Harness activity sanitization", () => {
       {
         cwd: path.resolve(process.cwd()),
         encoding: "utf8",
-        env: process.env,
+        env: {
+          ...process.env,
+          HOME: isolatedHome,
+          XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
+        },
       },
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("setup 需要交互式终端");
+    expect(result.stderr).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
+    expect(result.stderr).toContain("交互式终端");
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   it("redacts common token shapes without corrupting ordinary text", () => {

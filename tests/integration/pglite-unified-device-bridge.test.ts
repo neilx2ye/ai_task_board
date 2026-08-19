@@ -191,7 +191,8 @@ describe("Unified device Bridge migration", () => {
             {
               directory_key: key,
               name: "Main",
-              working_directory: "/srv/main",
+              working_directory:
+                kind === "kimi" ? "/srv/kimi-main" : "/srv/main",
             },
           ]),
           JSON.stringify([
@@ -199,7 +200,8 @@ describe("Unified device Bridge migration", () => {
               external_conversation_ref: `${kind}-thread-1`,
               name: `${kind} thread`,
               platform: kind,
-              working_directory: "/srv/main",
+              working_directory:
+                kind === "kimi" ? "/srv/kimi-main" : "/srv/main",
               directory_key: key,
               capabilities: [],
               archived: false,
@@ -231,9 +233,89 @@ describe("Unified device Bridge migration", () => {
       {
         platform: "kimi",
         directory_key: "kimi-main",
-        working_directory: "/srv/main",
+        working_directory: "/srv/kimi-main",
       },
     ]);
+
+    // The same directory_key is allowed across platforms under one
+    // connection after the legacy connection-wide unique constraint is gone.
+    await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'kimi', $5::jsonb,
+         '[]'::jsonb, $6::text, $7::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.6.0",
+        JSON.stringify([
+          {
+            directory_key: "main",
+            name: "Main",
+            working_directory: "/srv/main",
+          },
+        ]),
+        "verify-sync-key-overlap",
+        "verify-sync-hash-key-overlap",
+      ],
+    );
+    const overlap = await database.query<{ platform: string; directory_key: string }>(
+      `select platform, directory_key from public.ai_bridge_directories
+       where connection_id = $1 and directory_key = 'main' order by platform`,
+      [unifiedId],
+    );
+    expect(overlap.rows.map((row) => row.platform)).toEqual([
+      "codex",
+      "kimi",
+    ]);
+  });
+
+  it("scopes session inventory omission to the reporting runtime", async () => {
+    const kimiEmptySync = await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'kimi', $5::jsonb,
+         '[]'::jsonb, $6::text, $7::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.6.0",
+        JSON.stringify([
+          {
+            directory_key: "main",
+            name: "Main",
+            working_directory: "/srv/main",
+          },
+          {
+            directory_key: "kimi-empty",
+            name: "Kimi empty",
+            working_directory: "/srv/kimi-empty",
+          },
+        ]),
+        "verify-sync-omission",
+        "verify-sync-hash-omission",
+      ],
+    );
+    expect(kimiEmptySync.affectedRows).toBeDefined();
+
+    const sessions = await database.query<{
+      platform: string;
+      status: string;
+      inventory_active: boolean;
+    }>(
+      `select platform, status, inventory_active from public.ai_sessions
+       where connection_id = $1 order by platform`,
+      [unifiedId],
+    );
+    const codexSession = sessions.rows.find(
+      (session) => session.platform === "codex",
+    );
+    expect(codexSession).toMatchObject({
+      status: "online",
+      inventory_active: true,
+    });
   });
 
   it("scopes Web thread commands to the claiming runtime kind", async () => {
@@ -274,7 +356,7 @@ describe("Unified device Bridge migration", () => {
     await database.query(
       `select public.enqueue_ai_thread_command_with_settings(
          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null,
-         'create', 'New kimi thread', 'kimi-main', null, null, 'kimi',
+         'create', 'New kimi thread', 'main', null, null, 'kimi',
          $5::text, $6::text
        )`,
       [

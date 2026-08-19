@@ -16,6 +16,7 @@ export const BRIDGE_INSTALL_PACKAGE = "ai-task-board-bridge@1.6.0";
 
 export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
   { id: "getting-started", label: "新设备配置" },
+  { id: "unified-bridge", label: "统一设备 Bridge" },
   { id: "codex-bridge", label: "Codex Bridge" },
   { id: "kimi-bridge", label: "Kimi Bridge" },
   { id: "antigravity-bridge", label: "Antigravity Bridge" },

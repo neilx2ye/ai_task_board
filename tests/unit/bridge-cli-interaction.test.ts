@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -55,9 +57,12 @@ describe("Unified Bridge CLI interaction", () => {
   });
 
   it("keeps setup out of non-TTY runs when no token is configured", () => {
+    const isolatedHome = mkdtempSync(path.join(tmpdir(), "atb-cli-test-"));
     const environment = { ...process.env };
     delete environment.AI_TASK_BOARD_URL;
     delete environment.AI_TASK_BOARD_CONNECTION_TOKEN;
+    environment.HOME = isolatedHome;
+    environment.XDG_CONFIG_HOME = path.join(isolatedHome, ".config");
     const result = spawnSync(
       process.execPath,
       [
@@ -74,7 +79,8 @@ describe("Unified Bridge CLI interaction", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("setup 需要交互式终端");
-    expect(result.stderr).toContain("setup codex|kimi|antigravity|both|all");
+    expect(result.stderr).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
+    expect(result.stderr).toContain("交互式终端");
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 });

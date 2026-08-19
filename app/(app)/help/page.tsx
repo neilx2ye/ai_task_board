@@ -229,9 +229,9 @@ export default function HelpPage() {
             systemd 用户服务，四种运行时在该服务内并行常驻；<code>run all</code>
             在前台运行同一套运行时。后续如果版本新增了 Bridge 类型，再运行一次
             <code>setup</code> 即可并入现有服务，无需重新输入 Token。只要环境变量里
-            提供了 <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，setup / run 就按
-            环境变量非交互执行，不再提问，因此 SSH 命令或 CI 脚本同样可用
-            <code>setup</code> 安装 systemd 服务。
+            提供了 <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>（或设备已保存过
+            Token），SSH 命令或 CI 脚本等非交互环境就直接执行，不再提问；交互式
+            终端里 setup 每次都会重新询问 Token，留空保留现值、输入新值则替换。
             命令必须由拥有本机 Agent 登录与工作区的用户执行；安装器会为该用户配置服务，
             同一台设备和一个系统用户只运行一个统一 Bridge。
           </Step>
@@ -268,11 +268,60 @@ export default function HelpPage() {
         </ol>
       </Section>
 
+      <Section
+        id="unified-bridge"
+        title="统一设备 Bridge（一个服务、一个 Token）"
+      >
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          一个系统用户只需要一个 Bridge：<code>setup</code> 一次只询问 Board 地址、
+          一个 Connection Token 和要启用的运行时（默认全部四种），然后安装并启动唯一
+          一个 <code className="mx-1">ai-task-board-bridge.service</code>。
+          supervisor 在这个服务里并行托管 Codex、Kimi、Antigravity 与 Claude Code
+          四种运行时；<code>run all</code> 可以在前台运行同一套运行时。
+        </p>
+        <CopyableCodeBlock copyLabel="复制统一设备 Bridge 安装命令">
+          {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup`}
+        </CopyableCodeBlock>
+        <CopyableCodeBlock copyLabel="复制统一设备 Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
+AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
+npx --yes ${BRIDGE_INSTALL_PACKAGE} run all`}</CopyableCodeBlock>
+        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>
+            「AI 连接」里新建平台为「统一设备 Bridge」的连接：一个连接、一个 Token
+            即可承载四种运行时；只有部分 Agent 要接入时，也可以继续使用单平台连接。
+          </li>
+          <li>
+            「Bridge 设置」会按运行时拆分：为统一连接打开设置后，先选择 Codex /
+            Kimi / Antigravity / Claude Code，再调整对应的工作目录、上限与权限；
+            Codex、Kimi、Antigravity 的套餐额度也会分别展示在连接卡片上。
+          </li>
+          <li>
+            后续版本新增 Bridge 类型时，再运行一次 <code>setup</code> 即可把新运行时
+            并入现有服务，保留已保存的 Token 与配置，不需要重新输入。
+          </li>
+          <li>
+            四种运行时的设备配置（工作目录、上限、权限、审批策略与 Web 配置开关）
+            统一写入同一个环境文件，安装时一次写入，Codex、Kimi、Antigravity 与
+            Claude Code 各用自己前缀的变量读取同一份配置，不再分别提问。
+          </li>
+          <li>
+            升级前装的四套独立 systemd 服务会自动停用，其环境配置会并入统一服务；
+            旧版单平台连接与旧 Bridge 继续正常工作，无需改动。
+          </li>
+          <li>
+            用 <code>AI_TASK_BOARD_BRIDGES</code> 可显式控制启用的运行时
+            （如 <code>codex,kimi</code>，或 <code>all</code>）；未设置时统一服务
+            默认启用全部四种。
+          </li>
+        </ul>
+      </Section>
+
       <Section id="codex-bridge" title="Codex Bridge（自动执行通道）">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Bridge 是运行在 Codex 设备上的常驻 companion。一个进程代表一台设备和一个
-          AI Connection，通过 stdio 启动本机 Codex App Server，并为每个允许的本地
-          thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
+          Bridge 是运行在 Codex 设备上的常驻 companion。在统一设备连接下，Codex
+          只是同一个 systemd 服务里的一个运行时，与 Kimi、Antigravity、Claude Code
+          共享一个 Connection Token；它通过 stdio 启动本机 Codex App Server，并为
+          每个允许的本地 thread 同步独立会话；只有 AI 回复会近实时显示在网页控制台。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
           Linux 推荐使用统一的交互式安装器。一个系统用户只需一个 Bridge：安装器只
@@ -284,10 +333,11 @@ export default function HelpPage() {
           thread/并发上限、权限与审批策略等其余配置默认由 Web 端管理（安装后到
           「AI 连接 → Bridge 设置 / 新建项目」添加，统一连接下每个运行时各有一套）。
           再次运行 setup 会把新加入的 Bridge 类型并入现有服务并保留 Token。只要提供了
-          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，<code>setup</code> 和
-          <code>run</code> 就直接按环境变量非交互运行，不再提问；<code>setup</code>
-          写入 systemd 服务并立即启动，<code>run</code> 只在前台运行、npx 进程结束
-          后 Bridge 随之下线：
+          <code>AI_TASK_BOARD_CONNECTION_TOKEN</code>，SSH / CI 等非交互环境就
+          直接按环境变量或已保存的 Token 运行，不再提问；交互式终端里 setup 每次
+          都会重新询问 Token（留空保留现值、输入新值则替换）。<code>setup</code>
+          写入 systemd 服务并立即启动，<code>run</code> 只在前台运行、npx 进程
+          结束后 Bridge 随之下线：
         </p>
         <CopyableCodeBlock copyLabel="复制 Bridge 安装命令">
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup`}
@@ -392,10 +442,12 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
 
       <Section id="kimi-bridge" title="Kimi Bridge（Kimi Code ACP）">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Kimi Bridge 是独立的设备 companion，通过 Kimi ACP 连接真实的本机 Kimi
-          Code Sessions。它不会把 Kimi 伪装成 Codex 模型；请先在「AI 连接」新建平台为
-          “Kimi Code”的连接，再由拥有 Kimi 登录和目标工作区的同一系统用户安装。Kimi
-          运行时已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
+          Kimi Bridge 通过 Kimi ACP 连接真实的本机 Kimi Code Sessions，它不会把
+          Kimi 伪装成 Codex 模型。使用统一设备 Bridge 时无需单独建连接：Kimi 只是
+          同一个服务里的一个运行时，与其余运行时共用一个 Token；只接入 Kimi 时，
+          也可以在「AI 连接」新建平台为 “Kimi Code” 的单平台连接，再由拥有 Kimi
+          登录和目标工作区的同一系统用户安装。Kimi 运行时已内嵌在统一 Bridge 包中，
+          不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Kimi Bridge 安装命令">
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup kimi`}
@@ -461,11 +513,12 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
 
       <Section id="antigravity-bridge" title="Antigravity Bridge（Google Antigravity CLI）">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Antigravity Bridge 是独立的设备 companion，通过 Antigravity CLI 官方的
-          headless <code>stream-json</code> 接口驱动本机 <code>agy</code>。它不读取
-          Google 未公开的会话数据库；请先在「AI 连接」新建平台为 “Antigravity”
-          的连接，再由拥有 Antigravity 登录和目标工作区的同一系统用户安装。运行时
-          已内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
+          Antigravity Bridge 通过 Antigravity CLI 官方的 headless
+          <code>stream-json</code> 接口驱动本机 <code>agy</code>，它不读取 Google
+          未公开的会话数据库。使用统一设备 Bridge 时无需单独建连接；只接入
+          Antigravity 时，也可以在「AI 连接」新建平台为 “Antigravity” 的单平台
+          连接，再由拥有 Antigravity 登录和目标工作区的同一系统用户安装。运行时已
+          内嵌在统一 Bridge 包中，不需要安装第二个 npm 包。
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 安装命令">
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup antigravity`}
@@ -476,8 +529,8 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
           直接非交互安装并启动 systemd 服务（SSH / CI 同样适用），
           <code>run antigravity</code> 在前台运行。未提供
           <code>ANTIGRAVITY_WORKING_DIRECTORY</code> 时默认由 Web 端管理工作目录
-          （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）。令牌必须来自独立的
-          Antigravity 连接：
+          （安装后到「AI 连接 → Bridge 设置 / 新建项目」添加）。使用统一设备连接时，
+          令牌就是那一个连接令牌；也可以继续使用独立的 Antigravity 连接：
         </p>
         <CopyableCodeBlock copyLabel="复制 Antigravity Bridge 前台启动命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
@@ -540,13 +593,15 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
         title="Claude Code Bridge（claude-agent-acp）"
       >
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Claude Code Bridge 是独立的设备 companion，通过 Anthropic 官方的
+          Claude Code Bridge 通过 Anthropic 官方的
           <code className="mx-1">@agentclientprotocol/claude-agent-acp</code>
-          ACP 适配器驱动本机 Claude Code Sessions。它不会把 Claude 伪装成
-          Codex 模型；请先在「AI 连接」新建平台为 “Claude Code” 的连接，再由
-          拥有 Claude 登录和目标工作区的同一系统用户安装。运行时已内嵌在统一
-          Bridge 包中；ACP 适配器本身需要单独安装：
-          <code className="ml-1">npm install -g @agentclientprotocol/claude-agent-acp</code>。
+          ACP 适配器驱动本机 Claude Code Sessions，它不会把 Claude 伪装成 Codex
+          模型。使用统一设备 Bridge 时无需单独建连接；只接入 Claude Code 时，也
+          可以在「AI 连接」新建平台为 “Claude Code” 的单平台连接，再由拥有 Claude
+          登录和目标工作区的同一系统用户安装。运行时已内嵌在统一 Bridge 包中，
+          官方 ACP 适配器也会在启用 Claude Code 时由 <code>setup</code> 自动安装
+          到用户数据目录并配置好 <code>CLAUDE_BINARY</code>，无需再单独执行
+          <code>npm install -g</code>。
         </p>
         <CopyableCodeBlock copyLabel="复制 Claude Code Bridge 安装命令">
           {`npx --yes ${BRIDGE_INSTALL_PACKAGE} setup claude`}
@@ -619,22 +674,24 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run claude`}</CopyableCodeBlock>
 
       <Section id="bridge-updates" title="Bridge 升级与回滚">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          「AI 连接」页会展示每个 Bridge 当前上报的版本与 npm 上的最新版。Workspace
-          Owner 可以为单个连接下发目标版本，也可以批量「全部升级」。远程升级默认开启：
+          「AI 连接」页会展示每个连接当前上报的版本与 npm 上的最新版（统一设备连接
+          下四种运行时共享同一包版本）。Workspace Owner 可以为单个连接下发目标版本，
+          也可以批量「全部升级」。远程升级默认开启：
           systemd 托管的 Bridge（<code>setup</code> 安装）在下次配置交换后自动从 npm
           下载目标版本、校验完整性、冒烟检查新版本可启动，再重写 systemd 单元并自动
           重启到新版本。看板只传递版本号、从不托管代码包，目标版本必须真实存在于 npm
-          且高于当前版本。
+          且高于当前版本。统一设备 Bridge 下四个运行时共用同一个 npm 包：只有升级
+          leader 运行时会执行下载与冒烟检查，随后整个 systemd 服务统一重启到新版本。
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
           升级失败时旧版本继续运行，错误会显示在「AI 连接 → Bridge 设置」；同一目标
           版本失败后不会立即重试。前台 <code>run</code> 的进程无法自动重启，因此不执行
-          自更新，需要手动重跑安装命令（Codex 为例，Kimi / Antigravity / Claude
-          Code 替换平台名）：
+          自更新，需要手动重跑安装命令（统一设备 Bridge 直接 <code>setup</code>；
+          单平台 Codex 为例，Kimi / Antigravity / Claude Code 替换平台名）：
         </p>
         <CopyableCodeBlock copyLabel="复制手动升级命令">{`AI_TASK_BOARD_URL='https://task.neilx.online' \\
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \\
-npx --yes ${BRIDGE_INSTALL_PACKAGE} setup codex`}</CopyableCodeBlock>
+npx --yes ${BRIDGE_INSTALL_PACKAGE} setup`}</CopyableCodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
           旧版本目录会保留在
           <code>~/.local/share/ai-task-board/*-bridge/versions/&lt;版本&gt;/</code>，
@@ -816,17 +873,23 @@ Idempotency-Key: <唯一键>
             ACP permission mode 与审批组合。
           </FaqItem>
           <FaqItem question="交互式安装会问哪些问题？">
-            四种 Bridge 完全一致，只问两个问题：Board 地址（留空使用
-            https://task.neilx.online）和 Connection Token（输入不回显、必填）。
-            工作目录、thread/并发上限、权限与审批策略等其余配置都在安装后到
-            「AI 连接 → Bridge 设置 / 新建项目」管理；环境变量里已有 Token 时，
-            setup 和 run 都不再提问，直接按环境变量执行。
+            一个系统用户只安装一个 Bridge，交互式安装只问一次：Board 地址（留空使用
+            https://task.neilx.online）、Connection Token 和要启用的运行时类型
+            （默认 Codex、Kimi、Antigravity、Claude Code 全部四种）。每次运行
+            setup 都会重新询问 Token：留空保留当前已保存的值，输入新值则替换
+            （同一设备更换连接时无需改其他配置）；首次安装时必填。再次运行 setup
+            会保留原 Token 与配置，只把新加入的 Bridge 类型并入现有服务。工作目录、
+            thread/并发上限、权限与审批策略等其余配置统一写入同一份环境文件、覆盖
+            四种运行时（含 Claude Code），也可在安装后到「AI 连接 → Bridge 设置 /
+            新建项目」管理（统一连接下每个运行时各有一套）；SSH / CI 等非交互环境
+            读取环境变量或已保存的 Token，不再提问。
           </FaqItem>
           <FaqItem question="Bridge 会自动升级吗？">
             会。systemd 托管的 Bridge（setup 安装）默认自动响应网页下发的目标版本：
             从 npm 下载、校验完整性、冒烟测试后重写单元并重启，失败则保留旧版并回报
-            错误。前台 run 的进程无法自动重启，需要手动重跑 setup 升级。详见
-            「Bridge 升级与回滚」章节。
+            错误。统一设备 Bridge 下只有升级 leader 运行时执行下载，随后整个服务
+            统一重启到新版本。前台 run 的进程无法自动重启，需要手动重跑 setup 升级。
+            详见「Bridge 升级与回滚」章节。
           </FaqItem>
           <FaqItem question="密钥和令牌应该如何保管？">
             SUPABASE_SECRET_KEY 只存在于服务端环境，浏览器永远不会接触；

@@ -31,14 +31,16 @@ Commands:
          in the foreground using environment variables.
 
 Interactive vs non-interactive:
-  未提供 AI_TASK_BOARD_CONNECTION_TOKEN 时进入交互式配置：只询问一次 Board
-  地址（留空使用 https://task.neilx.online）、Connection Token 与要启用的
-  Bridge 类型。其余配置（工作目录、thread/并发上限、权限与审批策略等）在
-  网页「AI 连接 → Bridge 设置」中按平台管理。
-  提供 AI_TASK_BOARD_CONNECTION_TOKEN 后直接按环境变量非交互安装/运行，不再
-  提问；未提供 Board 地址时同样使用默认地址。run 直接前台运行，npx 进程结束后
-  Bridge 随之下线；setup 写入并启动当前用户的唯一 systemd 用户服务
-  （current user's systemd service）并立即启动。
+  在交互式终端中，setup 每次都会重新询问 Board 地址（留空使用
+  https://task.neilx.online）、Connection Token 与要启用的 Bridge 类型；
+  Token 留空保留已保存的值，输入新值则替换（同一设备更换连接时无需改其他
+  配置）。其余配置（工作目录、thread/并发上限、权限与审批策略等）统一写入
+  同一份环境文件并覆盖 Codex、Kimi、Antigravity 与 Claude Code，网页
+  「AI 连接 → Bridge 设置」按平台展示与调整。
+  SSH / CI 等非交互环境读取 AI_TASK_BOARD_CONNECTION_TOKEN 或已保存的
+  Token，不再提问；未提供 Board 地址时同样使用默认地址。run 直接前台运行，
+  npx 进程结束后 Bridge 随之下线；setup 写入并启动当前用户的唯一 systemd
+  用户服务（current user's systemd service）并立即启动。
 
 Examples:
   ai-task-board-bridge setup
@@ -109,8 +111,8 @@ Claude variables:
   CLAUDE_MAX_CONCURRENT_TURNS     Device-wide concurrent turns (1..32)
   CLAUDE_BRIDGE_APPROVAL_MODE     accept or decline
   CLAUDE_BRIDGE_MODE              default, plan, accept-edits, or bypass-permissions
-  CLAUDE_BINARY                   claude-agent-acp executable (default:
-                                  claude-agent-acp on PATH)
+  CLAUDE_BINARY                   claude-agent-acp executable; setup installs it
+                                  automatically when Claude Code is enabled
 
 Options:
   -h, --help     Show this help
@@ -150,11 +152,12 @@ async function run(): Promise<void> {
     }
     if (!target) {
       if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        throw new Error(
-          "setup 需要交互式终端；未指定 Bridge 类型。请运行 ai-task-board-bridge setup codex|kimi|antigravity|both|all",
-        );
+        // 非交互环境下未显式指定平台时，默认统一配置全部四种运行时；
+        // Token 来自环境变量或已保存的安装配置。
+        target = "all";
+      } else {
+        target = await promptForBridgeSetupTarget();
       }
-      target = await promptForBridgeSetupTarget();
     }
     await runBridgeSetup(target, await packageVersion());
     return;
