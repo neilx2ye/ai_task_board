@@ -2,7 +2,7 @@
 
 import { FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 
-import { connectionColorMeta } from "@/components/connection-meta";
+import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import { sessionStatusMeta, TASK_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -293,7 +293,11 @@ function ConnectionSection({
             title="与 Thread 窗口顶部标识条同色"
             className={cn(
               "size-2.5 shrink-0 rounded-full",
-              connectionColorMeta(connection.id).dotClass,
+              connectionRuntimeColorMeta(
+                connection.id,
+                connection.platform,
+                group.platform,
+              ).dotClass,
             )}
           />
           <h3

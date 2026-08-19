@@ -1,3 +1,8 @@
+import {
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
+
 /**
  * 设备（AI 连接）的视觉标识：按连接 id 稳定分配一组颜色，
  * 让侧边栏里的设备与并排打开的 Thread 窗口能一眼对上号。
@@ -56,6 +61,44 @@ const CONNECTION_COLOR_PALETTE: readonly ConnectionColorMeta[] = [
 ];
 
 export const CONNECTION_COLOR_COUNT = CONNECTION_COLOR_PALETTE.length;
+
+/**
+ * 统一设备连接上每种 Bridge 运行时使用的固定调色索引。
+ * 四种 CLI 各占一种稳定颜色，同一台设备上也不会互相混淆。
+ */
+const BRIDGE_RUNTIME_COLOR_INDEX: Readonly<Record<string, number>> = {
+  codex: 0,
+  kimi: 1,
+  antigravity: 2,
+  claude: 4,
+};
+
+/** 按规范运行时类型返回固定颜色；未知类型返回 null，由调用方回退。 */
+export function runtimeColorMeta(
+  runtimePlatform: string | null | undefined,
+): ConnectionColorMeta | null {
+  const kind = runtimePlatform?.trim()
+    ? canonicalBridgeKind(runtimePlatform)
+    : "";
+  const index = BRIDGE_RUNTIME_COLOR_INDEX[kind];
+  return index === undefined ? null : CONNECTION_COLOR_PALETTE[index];
+}
+
+/**
+ * 连接/运行时分组的展示色：统一设备连接按运行时固定取色，
+ * 其它连接保持按连接 id 稳定散列，未知运行时回退到连接色。
+ */
+export function connectionRuntimeColorMeta(
+  connectionId: string | null | undefined,
+  connectionPlatform: string | null | undefined,
+  runtimePlatform: string | null | undefined = null,
+): ConnectionColorMeta {
+  if (isUnifiedPlatform(connectionPlatform)) {
+    const runtime = runtimeColorMeta(runtimePlatform);
+    if (runtime) return runtime;
+  }
+  return connectionColorMeta(connectionId);
+}
 
 /** djb2-xor 散列：同一连接 id 永远落在同一颜色上，跨页面、跨会话稳定。 */
 function connectionColorIndex(connectionId: string): number {

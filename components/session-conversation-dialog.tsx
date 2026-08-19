@@ -33,7 +33,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ErrorState, LoadingBlock } from "@/components/states";
-import { connectionColorMeta } from "@/components/connection-meta";
+import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import {
   ACTOR_TYPE_LABEL,
   eventTypeLabel,
@@ -852,7 +852,11 @@ function SessionLocationBadges({
   session: SessionListItem;
   className?: string;
 }) {
-  const color = connectionColorMeta(session.connection.id);
+  const color = connectionRuntimeColorMeta(
+    session.connection.id,
+    session.connection.platform,
+    session.platform,
+  );
   const projectName = session.working_directory
     ? directoryNameFromPath(session.working_directory)
     : null;
@@ -1149,7 +1153,11 @@ function SessionConversationContent({
               aria-hidden
               className={cn(
                 "h-1 w-full",
-                connectionColorMeta(currentSession.connection.id).barClass,
+                connectionRuntimeColorMeta(
+                  currentSession.connection.id,
+                  currentSession.connection.platform,
+                  currentSession.platform,
+                ).barClass,
               )}
             />
           ) : null}

@@ -2,7 +2,7 @@
 
 import { FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 
-import { connectionColorMeta } from "@/components/connection-meta";
+import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import { SessionListRow } from "@/components/session-directory-navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -103,7 +103,11 @@ function BridgeSection({
             title="与 Thread 窗口顶部标识条同色"
             className={cn(
               "size-2.5 shrink-0 rounded-full",
-              connectionColorMeta(connection.id).dotClass,
+              connectionRuntimeColorMeta(
+                connection.id,
+                connection.platform,
+                platform,
+              ).dotClass,
             )}
           />
           <h4

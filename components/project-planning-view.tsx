@@ -2,7 +2,7 @@
 
 import { ChevronRightIcon, FolderIcon } from "lucide-react";
 
-import { connectionColorMeta } from "@/components/connection-meta";
+import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import { PlanningNotesEditor } from "@/components/planning-notes-editor";
 import { SESSION_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
@@ -76,7 +76,11 @@ export function ProjectPlanningView({
                     aria-hidden
                     className={cn(
                       "size-2 shrink-0 rounded-full",
-                      connectionColorMeta(connection.id).dotClass,
+                      connectionRuntimeColorMeta(
+                        connection.id,
+                        connection.platform,
+                        platform,
+                      ).dotClass,
                     )}
                   />
                   <span className="min-w-0 flex-1 truncate text-xs font-medium">
