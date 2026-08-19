@@ -11,7 +11,10 @@ import {
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
 } from "@/hooks/use-connections";
-import { connectionPlatformLabel } from "@/lib/agent-platforms";
+import {
+  bridgeKindDisplayName,
+  connectionPlatformLabel,
+} from "@/lib/agent-platforms";
 import { isConnectionAlive } from "@/lib/domain/session-presence";
 import { sessionProjectIdForDirectory } from "@/lib/domain/session-directory-groups";
 import type {
@@ -26,7 +29,7 @@ type SessionDirectoryNavigationProps = {
   selectedSessionIds: readonly string[];
   isOwner: boolean;
   onToggleSession: (sessionId: string) => void;
-  onManage: (connectionId: string, directoryId: string) => void;
+  onManage: (groupId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
@@ -139,7 +142,7 @@ function DirectorySection({
   visibleIds: ReadonlySet<string>;
   selectedSessionIds: readonly string[];
   onToggleSession: (sessionId: string) => void;
-  onManage: (connectionId: string, directoryId: string) => void;
+  onManage: (groupId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory: SessionDirectoryGroup,
@@ -150,7 +153,7 @@ function DirectorySection({
   const visibleSessions = directory.sessions.filter((session) =>
     visibleIds.has(session.id),
   );
-  const headingId = `directory-${group.connection.id}-${
+  const headingId = `directory-${group.id}-${
     directory.directoryKey ?? directory.sessions[0]?.id ?? "unassigned"
   }`;
   const projectId = sessionProjectIdForDirectory(directory);
@@ -202,7 +205,7 @@ function DirectorySection({
             variant="outline"
             size="sm"
             className="h-7 shrink-0 gap-1 px-2"
-            onClick={() => onManage(group.connection.id, directory.id)}
+            onClick={() => onManage(group.id, directory.id)}
             aria-label={`管理项目「${directory.name}」的 Threads`}
             title={`管理「${directory.name}」的 Threads`}
           >
@@ -280,7 +283,7 @@ function ConnectionSection({
 
   return (
     <section
-      aria-labelledby={`connection-${connection.id}`}
+      aria-labelledby={`connection-${group.id}`}
       className="border-b border-border last:border-b-0"
     >
       <header className="bg-muted/40 px-3 py-2.5">
@@ -294,11 +297,19 @@ function ConnectionSection({
             )}
           />
           <h3
-            id={`connection-${connection.id}`}
+            id={`connection-${group.id}`}
             className="min-w-0 flex-1 truncate text-xs font-semibold"
           >
             {connection.name}
           </h3>
+          {group.platform ? (
+            <Badge
+              variant="outline"
+              className="shrink-0 text-muted-foreground"
+            >
+              {bridgeKindDisplayName(group.platform)}
+            </Badge>
+          ) : null}
           <Badge
             variant="outline"
             className={cn(
@@ -374,7 +385,7 @@ export function SessionDirectoryNavigation({
   return (
     <nav aria-label="设备、工作目录与 Thread 列表">
       {groups.map((group) => (
-        <ConnectionSection key={group.connection.id} group={group} {...props} />
+        <ConnectionSection key={group.id} group={group} {...props} />
       ))}
     </nav>
   );

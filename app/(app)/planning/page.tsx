@@ -44,6 +44,7 @@ import {
   groupBridgesByProject,
   groupSessionsByConnection,
   listSessionProjects,
+  runtimeConnectionSummary,
   sessionProjectIdForDirectory,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
@@ -61,12 +62,12 @@ import {
 import type { SessionListItem } from "@/lib/types/domain";
 
 type CreateThreadTarget = {
-  connectionId: string;
+  groupId: string;
   directoryKey: string | null;
 };
 
 type ThreadPickerTarget = {
-  connectionId: string;
+  groupId: string;
   directoryId: string;
 };
 
@@ -304,7 +305,12 @@ export default function PlanningPage() {
           sessionProjectIdForDirectory(directory) ===
           selectedPlanningProjectId
         ) {
-          bridges.push({ connection: group.connection, directory });
+          bridges.push({
+            groupId: group.id,
+            platform: group.platform,
+            connection: group.connection,
+            directory,
+          });
         }
       }
     }
@@ -313,7 +319,8 @@ export default function PlanningPage() {
   const selectedContext = useMemo(() => {
     if (!selectedSession) return null;
     const group = visibleGroups.find(
-      (candidate) => candidate.connection.id === selectedSession.connection.id,
+      (candidate) =>
+        candidate.sessions.some((session) => session.id === selectedSession.id),
     );
     const directory = group?.directories.find((candidate) =>
       candidate.sessions.some((session) => session.id === selectedSession.id),
@@ -323,7 +330,7 @@ export default function PlanningPage() {
   const pickerContext = useMemo(() => {
     if (!pickerTarget) return null;
     const group = connectionGroups.find(
-      (candidate) => candidate.connection.id === pickerTarget.connectionId,
+      (candidate) => candidate.id === pickerTarget.groupId,
     );
     const project = group?.directories.find(
       (candidate) => candidate.id === pickerTarget.directoryId,
@@ -366,7 +373,7 @@ export default function PlanningPage() {
   const createDialogTarget = useMemo(() => {
     if (!createTarget) return null;
     const group = connectionGroups.find(
-      (candidate) => candidate.connection.id === createTarget.connectionId,
+      (candidate) => candidate.id === createTarget.groupId,
     );
     if (!group) return null;
 
@@ -401,7 +408,7 @@ export default function PlanningPage() {
     directory?: SessionDirectoryGroup,
   ) => {
     setCreateTarget({
-      connectionId: group.connection.id,
+      groupId: group.id,
       directoryKey: directory?.directoryKey ?? null,
     });
   };
@@ -553,8 +560,8 @@ export default function PlanningPage() {
                     }
                     isOwner={Boolean(isOwner)}
                     onToggleSession={toggleSessionSelected}
-                    onManage={(connectionId, directoryId) =>
-                      setPickerTarget({ connectionId, directoryId })
+                    onManage={(groupId, directoryId) =>
+                      setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
                     selectedProjectId={selectedPlanningProjectId}
@@ -569,8 +576,8 @@ export default function PlanningPage() {
                     }
                     isOwner={Boolean(isOwner)}
                     onToggleSession={toggleSessionSelected}
-                    onManage={(connectionId, directoryId) =>
-                      setPickerTarget({ connectionId, directoryId })
+                    onManage={(groupId, directoryId) =>
+                      setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
                     selectedProjectId={selectedPlanningProjectId}
@@ -596,7 +603,7 @@ export default function PlanningPage() {
                       </p>
                     </div>
                     <Badge variant="secondary" className="shrink-0">
-                      {agentDisplayName(selectedSession.connection.platform)}
+                      {agentDisplayName(selectedSession.platform)}
                     </Badge>
                   </header>
 
@@ -637,7 +644,9 @@ export default function PlanningPage() {
         onOpenChange={(open) => {
           if (!open) setPickerTarget(null);
         }}
-        connection={pickerContext?.group.connection ?? null}
+        connection={
+          pickerContext ? runtimeConnectionSummary(pickerContext.group) : null
+        }
         project={pickerContext?.project ?? null}
         visibleIds={visibleIds}
         canManage={
@@ -649,10 +658,9 @@ export default function PlanningPage() {
         canRename={
           Boolean(isOwner && pickerContext) &&
           supportsWebThreadRename(
-            pickerContext?.group.connection ?? {
-              bridge_version: null,
-              platform: "",
-            },
+            pickerContext
+              ? runtimeConnectionSummary(pickerContext.group)
+              : { bridge_version: null, platform: "" },
           )
         }
         canCreate={pickerCanCreate}
@@ -696,6 +704,7 @@ export default function PlanningPage() {
       {createDialogTarget ? (
         <CreateThreadDialog
           connection={createDialogTarget.group.connection}
+          runtimePlatform={createDialogTarget.group.platform}
           directoryKey={createDialogTarget.directoryKey}
           directoryName={createDialogTarget.directoryName}
           workingDirectory={createDialogTarget.workingDirectory}
@@ -708,6 +717,7 @@ export default function PlanningPage() {
               connectionId: createDialogTarget.group.connection.id,
               directoryKey: createDialogTarget.directoryKey,
               name,
+              platform: createDialogTarget.group.platform,
               existingSessionIds: createDialogTarget.group.sessions.map(
                 (session) => session.id,
               ),

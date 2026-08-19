@@ -11,7 +11,10 @@ import {
   supportsWorkingDirectoryInventory,
   supportsWebThreadManagement,
 } from "@/hooks/use-connections";
-import { agentDisplayName } from "@/lib/agent-platforms";
+import {
+  agentDisplayName,
+  bridgeKindDisplayName,
+} from "@/lib/agent-platforms";
 import { isConnectionAlive } from "@/lib/domain/session-presence";
 import type {
   SessionConnectionGroup,
@@ -27,7 +30,7 @@ type ProjectBridgeNavigationProps = {
   selectedSessionIds: readonly string[];
   isOwner: boolean;
   onToggleSession: (sessionId: string) => void;
-  onManage: (connectionId: string, directoryId: string) => void;
+  onManage: (groupId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
@@ -54,14 +57,14 @@ function BridgeSection({
   selectedSessionIds: readonly string[];
   isOwner: boolean;
   onToggleSession: (sessionId: string) => void;
-  onManage: (connectionId: string, directoryId: string) => void;
+  onManage: (groupId: string, directoryId: string) => void;
   onCreate: (
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
 }) {
-  const { connection, directory } = bridge;
-  const headingId = `bridge-${connection.id}-${
+  const { groupId, platform, connection, directory } = bridge;
+  const headingId = `bridge-${groupId}-${
     directory.directoryKey ?? directory.sessions[0]?.id ?? "unassigned"
   }`;
   const visibleSessions = directory.sessions.filter((session) =>
@@ -80,7 +83,9 @@ function BridgeSection({
   const canCreateWithoutDirectory =
     canManage && (!supportsDirectories || !directory.configured);
   const group: SessionConnectionGroup = {
+    id: groupId,
     connection,
+    platform,
     sessions: directory.sessions,
     directories: [directory],
   };
@@ -108,7 +113,9 @@ function BridgeSection({
             {connection.name}
           </h4>
           <Badge variant="outline" className="shrink-0">
-            {agentDisplayName(connection.platform)}
+            {platform
+              ? bridgeKindDisplayName(platform)
+              : agentDisplayName(connection.platform)}
           </Badge>
           <Badge
             variant="outline"
@@ -142,7 +149,7 @@ function BridgeSection({
               variant="outline"
               size="sm"
               className="h-7 shrink-0 gap-1 px-2"
-              onClick={() => onManage(connection.id, directory.id)}
+              onClick={() => onManage(groupId, directory.id)}
               aria-label={`管理项目「${directory.name}」在 Bridge「${connection.name}」的 Threads`}
               title={`管理「${connection.name}」的 Threads`}
             >
@@ -259,7 +266,7 @@ function ProjectSection({
       <div>
         {project.bridges.map((bridge) => (
           <BridgeSection
-            key={`${bridge.connection.id}:${bridge.directory.id}`}
+            key={`${bridge.groupId}:${bridge.directory.id}`}
             bridge={bridge}
             {...bridgeProps}
           />

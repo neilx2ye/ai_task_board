@@ -7,6 +7,7 @@ import {
   groupSessionsByConnection,
   listSessionProjects,
 } from "@/lib/domain/session-directory-groups";
+import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 import type { AIBridgeDirectoryRow } from "@/lib/types/database";
 import type {
   SessionConnectionSummary,
@@ -27,6 +28,7 @@ function session(
   workingDirectory: string | null,
   directoryKey: string | null,
   sessionConnection: SessionConnectionSummary = connection,
+  platform = "codex",
 ): SessionListItem {
   return {
     id,
@@ -34,6 +36,7 @@ function session(
     connection: sessionConnection,
     working_directory: workingDirectory,
     bridge_directory_key: directoryKey,
+    platform,
     inventory_active: true,
   } as SessionListItem;
 }
@@ -43,9 +46,11 @@ function directory(
   name: string,
   workingDirectory: string,
   connectionId = connection.id,
+  platform = "codex",
 ): AIBridgeDirectoryRow {
   return {
     connection_id: connectionId,
+    platform,
     directory_key: key,
     name,
     working_directory: workingDirectory,
@@ -395,5 +400,195 @@ describe("Project-first bridge grouping", () => {
     ]);
     expect(projects[0]?.bridges).toHaveLength(2);
     expect(projects[1]?.bridges).toHaveLength(1);
+  });
+});
+
+describe("Unified device Bridge runtime splitting", () => {
+  const unifiedConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "unified-1",
+    name: "MacBook",
+    platform: "All",
+  };
+
+  it("splits one unified connection into per-runtime groups", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session(
+          "codex-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "codex",
+        ),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "kimi",
+        ),
+      ],
+      [unifiedConnection],
+      [
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "codex",
+        ),
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "kimi",
+        ),
+      ],
+    );
+
+    expect(groups.map((group) => group.id)).toEqual([
+      "unified-1:codex",
+      "unified-1:kimi",
+    ]);
+    expect(groups.map((group) => group.platform)).toEqual([
+      "codex",
+      "kimi",
+    ]);
+    // 连接身份保持共享：真实 connection id 与平台原样保留，供 API 调用。
+    expect(groups.map((group) => group.connection.id)).toEqual([
+      "unified-1",
+      "unified-1",
+    ]);
+    expect(groups.map((group) => group.connection.platform)).toEqual([
+      "All",
+      "All",
+    ]);
+    expect(groups[0]?.sessions.map((item) => item.id)).toEqual([
+      "codex-thread",
+    ]);
+    expect(groups[1]?.sessions.map((item) => item.id)).toEqual([
+      "kimi-thread",
+    ]);
+    // 同名目录按运行时分开，不会互相收编对方的 Thread。
+    expect(groups[0]?.directories[0]?.sessions.map((item) => item.id)).toEqual([
+      "codex-thread",
+    ]);
+    expect(groups[1]?.directories[0]?.sessions.map((item) => item.id)).toEqual([
+      "kimi-thread",
+    ]);
+  });
+
+  it("keeps each runtime's model catalog on its own group", () => {
+    const codexCatalog = [
+      { model: "gpt-5" },
+    ] as unknown as AgentModelCatalogEntry[];
+    const kimiCatalog = [
+      { model: "kimi" },
+    ] as unknown as AgentModelCatalogEntry[];
+
+    const groups = groupSessionsByConnection(
+      [
+        session("codex-thread", "/workspace/app", "app", {
+          ...unifiedConnection,
+          model_catalog: codexCatalog,
+        }),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          {
+            ...unifiedConnection,
+            model_catalog: kimiCatalog,
+          },
+          "kimi",
+        ),
+      ],
+      [{ ...unifiedConnection, model_catalog: codexCatalog }],
+      [],
+    );
+
+    expect(groups[0]?.connection.model_catalog).toEqual(codexCatalog);
+    expect(groups[1]?.connection.model_catalog).toEqual(kimiCatalog);
+  });
+
+  it("keeps unknown runtime kinds after the built-in order", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session("t-claude", null, null, unifiedConnection, "claude"),
+        session("t-gemini", null, null, unifiedConnection, "gemini"),
+        session("t-kimi", null, null, unifiedConnection, "kimi"),
+      ],
+      [unifiedConnection],
+      [],
+    );
+
+    expect(groups.map((group) => group.platform)).toEqual([
+      "kimi",
+      "claude",
+      "gemini",
+    ]);
+  });
+
+  it("keeps an empty unified connection as a single device group", () => {
+    const groups = groupSessionsByConnection([], [unifiedConnection], []);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(
+      expect.objectContaining({
+        id: "unified-1",
+        platform: null,
+      }),
+    );
+  });
+
+  it("exposes group identity on project-first bridges", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session(
+          "codex-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "codex",
+        ),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "kimi",
+        ),
+      ],
+      [unifiedConnection],
+      [
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "codex",
+        ),
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "kimi",
+        ),
+      ],
+    );
+
+    const projects = groupBridgesByProject(groups, "path:/workspace/app");
+
+    expect(projects[0]?.bridges.map((bridge) => bridge.groupId)).toEqual([
+      "unified-1:codex",
+      "unified-1:kimi",
+    ]);
+    expect(projects[0]?.bridges.map((bridge) => bridge.platform)).toEqual([
+      "codex",
+      "kimi",
+    ]);
   });
 });

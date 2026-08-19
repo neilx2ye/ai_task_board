@@ -45,6 +45,7 @@ import {
   groupBridgesByProject,
   groupSessionsByConnection,
   listSessionProjects,
+  runtimeConnectionSummary,
   type SessionConnectionGroup,
   type SessionDirectoryGroup,
   type SessionProjectGroup,
@@ -60,12 +61,12 @@ import {
 import type { SessionListItem } from "@/lib/types/domain";
 
 type CreateThreadTarget = {
-  connectionId: string;
+  groupId: string;
   directoryKey: string | null;
 };
 
 type ThreadPickerTarget = {
-  connectionId: string;
+  groupId: string;
   directoryId: string;
 };
 
@@ -264,8 +265,7 @@ export default function SessionsPage() {
   const pickerContext = useMemo(() => {
     if (!pickerTarget) return null;
     const group = connectionGroups.find(
-      (candidate) =>
-        candidate.connection.id === pickerTarget.connectionId,
+      (candidate) => candidate.id === pickerTarget.groupId,
     );
     const project = group?.directories.find(
       (candidate) => candidate.id === pickerTarget.directoryId,
@@ -353,7 +353,7 @@ export default function SessionsPage() {
   const createDialogTarget = useMemo(() => {
     if (!createTarget) return null;
     const group = connectionGroups.find(
-      (candidate) => candidate.connection.id === createTarget.connectionId,
+      (candidate) => candidate.id === createTarget.groupId,
     );
     if (!group) return null;
 
@@ -388,7 +388,7 @@ export default function SessionsPage() {
     directory?: SessionDirectoryGroup,
   ) => {
     setCreateTarget({
-      connectionId: group.connection.id,
+      groupId: group.id,
       directoryKey: directory?.directoryKey ?? null,
     });
   };
@@ -545,8 +545,8 @@ export default function SessionsPage() {
                     selectedSessionIds={selectedSessionIds}
                     isOwner={Boolean(isOwner)}
                     onToggleSession={toggleSessionSelected}
-                    onManage={(connectionId, directoryId) =>
-                      setPickerTarget({ connectionId, directoryId })
+                    onManage={(groupId, directoryId) =>
+                      setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
                   />
@@ -557,8 +557,8 @@ export default function SessionsPage() {
                     selectedSessionIds={selectedSessionIds}
                     isOwner={Boolean(isOwner)}
                     onToggleSession={toggleSessionSelected}
-                    onManage={(connectionId, directoryId) =>
-                      setPickerTarget({ connectionId, directoryId })
+                    onManage={(groupId, directoryId) =>
+                      setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
                   />
@@ -597,7 +597,9 @@ export default function SessionsPage() {
         onOpenChange={(open) => {
           if (!open) setPickerTarget(null);
         }}
-        connection={pickerContext?.group.connection ?? null}
+        connection={
+          pickerContext ? runtimeConnectionSummary(pickerContext.group) : null
+        }
         project={pickerContext?.project ?? null}
         visibleIds={visibleIds}
         canManage={
@@ -609,10 +611,9 @@ export default function SessionsPage() {
         canRename={
           Boolean(isOwner && pickerContext) &&
           supportsWebThreadRename(
-            pickerContext?.group.connection ?? {
-              bridge_version: null,
-              platform: "",
-            },
+            pickerContext
+              ? runtimeConnectionSummary(pickerContext.group)
+              : { bridge_version: null, platform: "" },
           )
         }
         canCreate={pickerCanCreate}
@@ -657,6 +658,7 @@ export default function SessionsPage() {
       {createDialogTarget ? (
         <CreateThreadDialog
           connection={createDialogTarget.group.connection}
+          runtimePlatform={createDialogTarget.group.platform}
           directoryKey={createDialogTarget.directoryKey}
           directoryName={createDialogTarget.directoryName}
           workingDirectory={createDialogTarget.workingDirectory}
@@ -669,6 +671,7 @@ export default function SessionsPage() {
               connectionId: createDialogTarget.group.connection.id,
               directoryKey: createDialogTarget.directoryKey,
               name,
+              platform: createDialogTarget.group.platform,
               existingSessionIds: createDialogTarget.group.sessions.map(
                 (session) => session.id,
               ),

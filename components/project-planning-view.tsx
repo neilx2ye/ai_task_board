@@ -7,6 +7,7 @@ import { PlanningNotesEditor } from "@/components/planning-notes-editor";
 import { SESSION_STATUS_META } from "@/components/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/components/utils";
+import { bridgeKindDisplayName } from "@/lib/agent-platforms";
 import { effectiveSessionStatus } from "@/lib/domain/session-presence";
 import type {
   SessionProjectBridge,
@@ -68,8 +69,8 @@ export function ProjectPlanningView({
           </p>
         ) : (
           <div className="flex flex-col gap-3">
-            {bridges.map(({ connection, directory }) => (
-              <div key={connection.id}>
+            {bridges.map(({ groupId, platform, connection, directory }) => (
+              <div key={groupId}>
                 <div className="mb-1 flex items-center gap-2 px-1">
                   <span
                     aria-hidden
@@ -81,6 +82,11 @@ export function ProjectPlanningView({
                   <span className="min-w-0 flex-1 truncate text-xs font-medium">
                     {connection.name}
                   </span>
+                  {platform ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {bridgeKindDisplayName(platform)}
+                    </span>
+                  ) : null}
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                     {directory.sessions.length} 个 Thread
                   </span>

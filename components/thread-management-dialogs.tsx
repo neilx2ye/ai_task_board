@@ -47,6 +47,7 @@ const INHERIT_AGENT_SETTING = "__inherit__";
 
 export function CreateThreadDialog({
   connection,
+  runtimePlatform,
   directoryKey,
   directoryName,
   workingDirectory,
@@ -55,6 +56,8 @@ export function CreateThreadDialog({
   onSubmitted,
 }: {
   connection: SessionConnectionSummary;
+  /** 统一设备连接里当前分组对应的运行时；单运行时连接为 null。 */
+  runtimePlatform?: string | null;
   directoryKey: string | null;
   directoryName: string | null;
   workingDirectory: string | null;
@@ -64,14 +67,20 @@ export function CreateThreadDialog({
 }) {
   const createThread = useCreateThread(connection.id);
   const unified = isUnifiedPlatform(connection.platform);
+  const fixedPlatform = runtimePlatform ?? null;
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState("codex");
-  const agentName = unified
-    ? bridgeKindDisplayName(platform)
-    : agentDisplayName(connection.platform);
+  const showRuntimePicker = unified && fixedPlatform === null;
+  const targetPlatform = unified ? (fixedPlatform ?? platform) : null;
+  const showModelSettings = !unified || fixedPlatform !== null;
+  const agentName = fixedPlatform
+    ? bridgeKindDisplayName(fixedPlatform)
+    : unified
+      ? bridgeKindDisplayName(platform)
+      : agentDisplayName(connection.platform);
   const modelOptions = agentModelOptions(
     connection.model_catalog,
-    connection.platform,
+    fixedPlatform ?? connection.platform,
   );
   const initialModel = modelOptions.length
     ? defaultCodexModel(modelOptions)
@@ -119,15 +128,17 @@ export function CreateThreadDialog({
         name: submittedName,
         directory_key: directoryKey,
         model:
-          unified || model === INHERIT_AGENT_SETTING ? null : model,
+          !showModelSettings || model === INHERIT_AGENT_SETTING
+            ? null
+            : model,
         reasoning_effort:
-          unified || reasoningEffort === INHERIT_AGENT_SETTING
+          !showModelSettings || reasoningEffort === INHERIT_AGENT_SETTING
             ? null
             : reasoningEffort,
-        platform: unified ? platform : null,
+        platform: targetPlatform,
       });
       onOpenChange(false);
-      onSubmitted({ name: submittedName, platform: unified ? platform : null });
+      onSubmitted({ name: submittedName, platform: targetPlatform });
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建失败，请稍后重试");
     }
@@ -145,7 +156,7 @@ export function CreateThreadDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          {unified ? (
+          {showRuntimePicker ? (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`new-thread-platform-${connection.id}`}>
                 运行时
@@ -178,7 +189,7 @@ export function CreateThreadDialog({
               placeholder="例如：修复登录流程"
             />
           </div>
-          {!unified ? (
+          {showModelSettings ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`new-thread-model-${connection.id}`}>模型</Label>
@@ -353,9 +364,7 @@ export function DeleteThreadDialog({
   onSubmitted: () => void;
 }) {
   const deleteThread = useDeleteThread(session.id);
-  const agentName = agentDisplayName(
-    session.connection?.platform ?? session.platform,
-  );
+  const agentName = agentDisplayName(session.platform);
   const [error, setError] = useState<string | null>(null);
 
   const onConfirm = async () => {
@@ -405,9 +414,7 @@ export function DeleteUnselectedThreadsDialog({
   onSubmitted: (deletedCount: number) => void;
 }) {
   const deleteThreads = useDeleteThreads();
-  const agentName = agentDisplayName(
-    sessions[0]?.connection?.platform ?? sessions[0]?.platform,
-  );
+  const agentName = agentDisplayName(sessions[0]?.platform);
   const [remainingSessions, setRemainingSessions] = useState(sessions);
   const [deletedCount, setDeletedCount] = useState(0);
   const [error, setError] = useState<string | null>(null);

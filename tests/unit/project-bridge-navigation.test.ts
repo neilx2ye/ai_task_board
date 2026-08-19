@@ -67,6 +67,8 @@ describe("Project-first Bridge navigation", () => {
     unviewedCompletedCount: 0,
     bridges: [
       {
+        groupId: "connection-1",
+        platform: null,
         connection: laptopConnection,
         directory: {
           id: "configured:app",
@@ -81,6 +83,8 @@ describe("Project-first Bridge navigation", () => {
         },
       },
       {
+        groupId: "connection-2",
+        platform: null,
         connection: desktopConnection,
         directory: {
           id: "configured:app",
@@ -131,6 +135,8 @@ describe("Project-first Bridge navigation", () => {
       sessionCount: 0,
       bridges: [
         {
+          groupId: "connection-1",
+          platform: null,
           connection: laptopConnection,
           directory: {
             ...project.bridges[0].directory,

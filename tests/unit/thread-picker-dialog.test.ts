@@ -66,7 +66,9 @@ describe("project-scoped Thread management", () => {
       createElement(SessionDirectoryNavigation, {
         groups: [
           {
+            id: connection.id,
             connection,
+            platform: null,
             sessions: projects.flatMap((project) => project.sessions),
             directories: projects,
           },
@@ -101,7 +103,9 @@ describe("project-scoped Thread management", () => {
       createElement(SessionDirectoryNavigation, {
         groups: [
           {
+            id: connection.id,
             connection,
+            platform: null,
             sessions: [...projects[0].sessions, ...removedProject.sessions],
             directories: [projects[0], removedProject],
           },

@@ -3,6 +3,11 @@ import type {
   SessionConnectionSummary,
   SessionListItem,
 } from "@/lib/types/domain";
+import {
+  BRIDGE_KINDS,
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 
 export type SessionDirectoryGroup = {
   id: string;
@@ -15,7 +20,11 @@ export type SessionDirectoryGroup = {
 };
 
 export type SessionConnectionGroup = {
+  /** 稳定分组标识；统一设备连接会按运行时拆成 `connectionId:platform`。 */
+  id: string;
   connection: SessionConnectionSummary;
+  /** 统一设备连接分组对应的规范运行时类型；单运行时连接为 null。 */
+  platform: string | null;
   sessions: SessionListItem[];
   directories: SessionDirectoryGroup[];
 };
@@ -36,6 +45,8 @@ export type SessionProjectGroup = {
 };
 
 export type SessionProjectBridge = {
+  groupId: string;
+  platform: string | null;
   connection: SessionConnectionSummary;
   directory: SessionDirectoryGroup;
 };
@@ -46,6 +57,26 @@ export type SessionProjectBridgeGroup = SessionProjectGroup & {
 };
 
 const UNASSIGNED_PROJECT_ID = "unassigned";
+
+/** 分组对外展示时使用的运行时平台：拆分出的运行时优先，否则用连接平台。 */
+export function groupRuntimePlatform(
+  group: Pick<SessionConnectionGroup, "connection" | "platform">,
+): string {
+  return group.platform ?? group.connection.platform;
+}
+
+/**
+ * 面向 UI 的连接摘要：把分组里的运行时平台投影到连接平台上，
+ * 同时保留真实 connection id，供能力判断与文案展示使用。
+ */
+export function runtimeConnectionSummary(
+  group: Pick<SessionConnectionGroup, "connection" | "platform">,
+): SessionConnectionSummary {
+  return {
+    ...group.connection,
+    platform: groupRuntimePlatform(group),
+  };
+}
 
 export function sessionProjectIdForDirectory(
   directory: Pick<SessionDirectoryGroup, "workingDirectory">,
@@ -154,57 +185,133 @@ export function groupSessionsByConnection(
   connections: readonly SessionConnectionSummary[] = [],
   directories: readonly AIBridgeDirectoryRow[] = [],
 ): SessionConnectionGroup[] {
-  const sessionsByConnection = new Map<string, SessionListItem[]>();
-  const directoriesByConnection = new Map<string, AIBridgeDirectoryRow[]>();
+  const sessionsByKey = new Map<string, SessionListItem[]>();
+  const directoriesByKey = new Map<string, AIBridgeDirectoryRow[]>();
+  const catalogSessionByKey = new Map<string, SessionListItem>();
+  const platformsByConnection = new Map<string, Set<string>>();
   const connectionById = new Map(
     connections.map((connection) => [connection.id, connection]),
   );
 
-  for (const session of sessions) {
-    const existingConnection = connectionById.get(session.connection.id);
-    if (!existingConnection) {
-      connectionById.set(session.connection.id, session.connection);
-    } else if (
-      existingConnection.model_catalog == null &&
-      session.connection.model_catalog != null
-    ) {
-      connectionById.set(session.connection.id, {
-        ...existingConnection,
-        model_catalog: session.connection.model_catalog,
-        model_catalog_updated_at:
-          session.connection.model_catalog_updated_at ?? null,
-      });
+  const unifiedKey = (connectionId: string, platform: string) =>
+    `${connectionId}:${canonicalBridgeKind(platform)}`;
+  const trackPlatform = (connectionId: string, platform: string) => {
+    let platforms = platformsByConnection.get(connectionId);
+    if (!platforms) {
+      platforms = new Set<string>();
+      platformsByConnection.set(connectionId, platforms);
     }
-    appendToIndex(sessionsByConnection, session.connection.id, session);
+    platforms.add(platform);
+  };
+
+  for (const session of sessions) {
+    if (!connectionById.has(session.connection.id)) {
+      connectionById.set(session.connection.id, session.connection);
+    }
+    const connection = connectionById.get(session.connection.id);
+    if (!connection) continue;
+
+    const unified = isUnifiedPlatform(connection.platform);
+    const platform = canonicalBridgeKind(session.platform);
+    const key = unified
+      ? unifiedKey(connection.id, platform)
+      : connection.id;
+    if (unified) {
+      trackPlatform(connection.id, platform);
+    }
+    if (
+      session.connection.model_catalog != null &&
+      !catalogSessionByKey.has(key)
+    ) {
+      catalogSessionByKey.set(key, session);
+    }
+    appendToIndex(sessionsByKey, key, session);
   }
   for (const directory of directories) {
-    appendToIndex(
-      directoriesByConnection,
-      directory.connection_id,
-      directory,
-    );
+    const connection = connectionById.get(directory.connection_id);
+    const unified = connection
+      ? isUnifiedPlatform(connection.platform)
+      : false;
+    const platform = canonicalBridgeKind(directory.platform);
+    const key = unified
+      ? unifiedKey(directory.connection_id, platform)
+      : directory.connection_id;
+    if (unified && connection) {
+      trackPlatform(connection.id, platform);
+    }
+    appendToIndex(directoriesByKey, key, directory);
   }
 
-  return [...connectionById.values()].map((connection) => {
-    const connectionSessions = sessionsByConnection.get(connection.id) ?? [];
+  const buildGroup = (
+    connection: SessionConnectionSummary,
+    platform: string | null,
+  ): SessionConnectionGroup => {
+    const key = platform ? unifiedKey(connection.id, platform) : connection.id;
+    const connectionSessions = sessionsByKey.get(key) ?? [];
     const connectionDirectories = buildDirectoryGroups(
       connectionSessions,
-      directoriesByConnection.get(connection.id) ?? [],
+      directoriesByKey.get(key) ?? [],
     );
     const visibleSessionIds = new Set(
       connectionDirectories.flatMap((directory) =>
         directory.sessions.map((session) => session.id),
       ),
     );
+    const catalogSession = catalogSessionByKey.get(key);
+    const inheritsConnectionCatalog =
+      catalogSession === undefined &&
+      (platform === null ||
+        platform === canonicalBridgeKind(connection.platform));
 
     return {
-      connection,
+      id: platform ? key : connection.id,
+      connection: {
+        ...connection,
+        model_catalog:
+          catalogSession?.connection.model_catalog ??
+          (inheritsConnectionCatalog ? connection.model_catalog : null),
+        model_catalog_updated_at:
+          catalogSession?.connection.model_catalog_updated_at ??
+          (inheritsConnectionCatalog
+            ? connection.model_catalog_updated_at
+            : null),
+      },
+      platform,
       sessions: connectionSessions.filter((session) =>
         visibleSessionIds.has(session.id),
       ),
       directories: connectionDirectories,
     };
-  });
+  };
+
+  const orderedPlatforms = (platforms: ReadonlySet<string> | undefined) => {
+    if (!platforms) return [];
+    const known = BRIDGE_KINDS.filter((kind) => platforms.has(kind));
+    const unknown = [...platforms]
+      .filter((kind) => !(BRIDGE_KINDS as readonly string[]).includes(kind))
+      .sort((left, right) => left.localeCompare(right));
+    return [...known, ...unknown];
+  };
+
+  const groups: SessionConnectionGroup[] = [];
+  for (const connection of connectionById.values()) {
+    if (!isUnifiedPlatform(connection.platform)) {
+      groups.push(buildGroup(connection, null));
+      continue;
+    }
+    const platforms = orderedPlatforms(
+      platformsByConnection.get(connection.id),
+    );
+    if (platforms.length === 0) {
+      // 统一设备连接尚未上报任何运行时：保持单一设备分组。
+      groups.push(buildGroup(connection, null));
+      continue;
+    }
+    for (const platform of platforms) {
+      groups.push(buildGroup(connection, platform));
+    }
+  }
+  return groups;
 }
 
 function compareProjects(
@@ -321,7 +428,12 @@ export function groupBridgesByProject(
         project = { ...summary, bridges: [] };
         projects.set(projectIdForDirectory, project);
       }
-      project.bridges.push({ connection: group.connection, directory });
+      project.bridges.push({
+        groupId: group.id,
+        platform: group.platform,
+        connection: group.connection,
+        directory,
+      });
     }
   }
 

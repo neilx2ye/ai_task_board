@@ -1,9 +1,12 @@
+import { canonicalBridgeKind } from "@/lib/agent-platforms";
 import type { SessionListItem } from "@/lib/types/domain";
 
 export type PendingWebThreadCreation = {
   connectionId: string;
   directoryKey: string | null;
   name: string;
+  /** 新建 Thread 所属的规范运行时类型；null 时不做运行时过滤。 */
+  platform?: string | null;
   existingSessionIds: readonly string[];
 };
 
@@ -23,6 +26,9 @@ export function findCreatedWebThread(
         session.connection_id === pending.connectionId &&
         !existingIds.has(session.id) &&
         session.name === pending.name &&
+        (pending.platform == null ||
+          canonicalBridgeKind(session.platform) ===
+            canonicalBridgeKind(pending.platform)) &&
         (pending.directoryKey === null ||
           session.bridge_directory_key === pending.directoryKey),
     ) ?? null
