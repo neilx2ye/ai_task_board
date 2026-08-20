@@ -5,6 +5,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
 } from "@tanstack/react-query";
 import { useRef } from "react";
 
@@ -69,11 +70,36 @@ export function useMarkSessionCompletionsViewed() {
               : session,
           ),
       );
-      return { previous };
+      // 打开中的对话面板缓存也同步清零，面板徽标立即从「待查看」回落。
+      const conversationKey = sessionQueryKey(sessionId);
+      await queryClient.cancelQueries({ queryKey: conversationKey });
+      const previousConversation = queryClient.getQueryData<
+        InfiniteData<SessionConversation, string | null>
+      >(conversationKey);
+      queryClient.setQueryData<InfiniteData<SessionConversation, string | null>>(
+        conversationKey,
+        (current) =>
+          current
+            ? {
+                ...current,
+                pages: current.pages.map((page) => ({
+                  ...page,
+                  session: { ...page.session, unviewed_completed_count: 0 },
+                })),
+              }
+            : current,
+      );
+      return { previous, previousConversation };
     },
-    onError: (_error, _sessionId, context) => {
+    onError: (_error, sessionId, context) => {
       if (context?.previous !== undefined) {
         queryClient.setQueryData(SESSIONS_QUERY_KEY, context.previous);
+      }
+      if (context?.previousConversation !== undefined) {
+        queryClient.setQueryData(
+          sessionQueryKey(sessionId),
+          context.previousConversation,
+        );
       }
     },
     onSettled: () => {

@@ -101,6 +101,11 @@ export default function SessionsPage() {
   );
   const [notice, setNotice] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  // 点击「待查看」且已打开的 Thread 时，用递增的 nonce 触发对应面板强调提示。
+  const [panelEmphasis, setPanelEmphasis] = useState<{
+    sessionId: string;
+    nonce: number;
+  } | null>(null);
   const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
 
   const handleProjectUpdate = useCallback(
@@ -339,6 +344,22 @@ export default function SessionsPage() {
   };
   const toggleSessionSelected = (sessionId: string) => {
     if (selectedSessionIds.includes(sessionId)) {
+      const selectedSession = sessions.find(
+        (candidate) => candidate.id === sessionId,
+      );
+      if (
+        selectedSession &&
+        (selectedSession.unviewed_completed_count ?? 0) > 0
+      ) {
+        // 面板已打开且有未查看的完成结果：强调面板而不是关闭它，由用户在
+        // 面板内交互来清零「待查看」。
+        setPanelEmphasis((current) => ({
+          sessionId,
+          nonce:
+            (current?.sessionId === sessionId ? current.nonce : 0) + 1,
+        }));
+        return;
+      }
       deselectSession(sessionId);
     } else {
       const session = sessions.find(
@@ -582,6 +603,11 @@ export default function SessionsPage() {
                     <ResizableSessionPanel
                       key={session.id}
                       session={session}
+                      emphasisNonce={
+                        panelEmphasis?.sessionId === session.id
+                          ? panelEmphasis.nonce
+                          : 0
+                      }
                       onClose={() => deselectSession(session.id)}
                     />
                   ))}

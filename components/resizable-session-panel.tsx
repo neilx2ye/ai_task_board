@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -38,12 +39,28 @@ type PanelStyle = CSSProperties & {
 export function ResizableSessionPanel({
   session,
   onClose,
+  emphasisNonce = 0,
 }: {
   session: SessionListItem;
   onClose: () => void;
+  /** 递增触发面板强调（滚动到视野内并短暂高亮）；0 表示无强调。 */
+  emphasisNonce?: number;
 }) {
   const [width, setWidth] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const resizeState = useRef<ResizeState | null>(null);
+
+  // 「待查看」Thread 的会话窗口已打开时，侧边栏再次点击不关闭面板，
+  // 而是滚动到它并短暂高亮（高亮 overlay 按 nonce 重挂载以重放动画），
+  // 引导用户到窗口内交互确认。
+  useEffect(() => {
+    if (!emphasisNonce) return;
+    containerRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [emphasisNonce]);
 
   const onPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -103,6 +120,7 @@ export function ResizableSessionPanel({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         "relative min-w-0 flex-1 lg:h-full lg:min-w-80",
         width !== null &&
@@ -110,6 +128,13 @@ export function ResizableSessionPanel({
       )}
       style={style}
     >
+      {emphasisNonce > 0 ? (
+        <span
+          key={emphasisNonce}
+          aria-hidden
+          className="session-panel-emphasis pointer-events-none absolute inset-0 z-10"
+        />
+      ) : null}
       <SessionConversationPanel
         session={session}
         onClose={onClose}

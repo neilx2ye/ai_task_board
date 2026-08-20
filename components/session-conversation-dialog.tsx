@@ -38,6 +38,7 @@ import {
   ACTOR_TYPE_LABEL,
   eventTypeLabel,
   SESSION_STATUS_META,
+  sessionStatusMeta,
 } from "@/components/task-meta";
 import { reduceAppServerActivityStream } from "@/components/session-activity-stream";
 import { StructuredUserInputDialog } from "@/components/structured-user-input-form";
@@ -72,14 +73,12 @@ import {
   compareSessionActivities,
   sessionActivityOccurredAt,
   useCreateSessionTurn,
+  useMarkSessionCompletionsViewed,
   useSessionConversation,
   mergeSessionConversationPages,
 } from "@/hooks/use-sessions";
 import { useUnsentPrompt } from "@/hooks/use-unsent-prompt";
-import {
-  effectiveSessionStatus,
-  isSessionAlive,
-} from "@/lib/domain/session-presence";
+import { isSessionAlive } from "@/lib/domain/session-presence";
 import { directoryNameFromPath } from "@/lib/domain/session-directory-groups";
 import {
   DEFAULT_CODEX_REASONING_EFFORT,
@@ -1097,11 +1096,11 @@ function SessionConversationContent({
     }
   };
 
-  const sessionStatus = currentSession
-    ? effectiveSessionStatus(currentSession)
-    : "offline";
-  const statusMeta = SESSION_STATUS_META[sessionStatus];
   const sessionAlive = currentSession ? isSessionAlive(currentSession) : false;
+  // 徽标与侧边栏共用同一套规则：未查看完成时显示「待查看」，交互清零后显示「已完成」。
+  const statusMeta = currentSession
+    ? sessionStatusMeta(currentSession)
+    : SESSION_STATUS_META.offline;
   const canSend = sessionAlive && !pendingStructuredRequest;
   const selectedModel = codexModelOption(model, modelOptions);
   const availableEfforts =
@@ -1567,9 +1566,18 @@ export function SessionConversationPanel({
   className?: string;
   onClose?: () => void;
 }) {
+  const markCompletionsViewed = useMarkSessionCompletionsViewed();
+  // 面板打开期间任务完成会重新计入「待查看」；用户与面板发生交互即视为已查看。
+  const markViewedOnInteraction = () => {
+    if (session && (session.unviewed_completed_count ?? 0) > 0) {
+      markCompletionsViewed.mutate(session.id);
+    }
+  };
   return (
     <section
       aria-label={session ? `${session.name} 的对话` : "Thread 对话"}
+      onPointerDown={markViewedOnInteraction}
+      onKeyDown={markViewedOnInteraction}
       className={cn(
         "flex h-full min-h-[36rem] flex-col overflow-hidden bg-card lg:min-h-0",
         className,
