@@ -120,7 +120,7 @@ describe("activeConnections", () => {
   it.each([
     ["1.5.0", true],
     ["1.5.0-kimi.1", true],
-    ["1.8.0-kimi.1", true],
+    ["1.8.1-kimi.1", true],
     ["1.5.0-antigravity.1", true],
     ["2.0.0", true],
     ["1.4.0", false],
@@ -143,15 +143,15 @@ describe("bridgeVersionForPlatform", () => {
       bridgeVersionForPlatform(
         connection({
           platform: "All",
-          bridge_version: "1.8.0-claude.1",
+          bridge_version: "1.8.1-claude.1",
           bridge_versions: [
-            { platform: "codex", bridge_version: "1.8.0" },
-            { platform: "kimi", bridge_version: "1.8.0-kimi.1" },
+            { platform: "codex", bridge_version: "1.8.1" },
+            { platform: "kimi", bridge_version: "1.8.1-kimi.1" },
           ],
         }),
         "kimi",
       ),
-    ).toBe("1.8.0-kimi.1");
+    ).toBe("1.8.1-kimi.1");
   });
 
   it("returns null for a unified runtime that has not reported", () => {
@@ -159,8 +159,8 @@ describe("bridgeVersionForPlatform", () => {
       bridgeVersionForPlatform(
         connection({
           platform: "All",
-          bridge_version: "1.8.0-claude.1",
-          bridge_versions: [{ platform: "codex", bridge_version: "1.8.0" }],
+          bridge_version: "1.8.1-claude.1",
+          bridge_versions: [{ platform: "codex", bridge_version: "1.8.1" }],
         }),
         "kimi",
       ),
@@ -170,9 +170,9 @@ describe("bridgeVersionForPlatform", () => {
   it("falls back to the connection-level version for single-runtime links", () => {
     expect(
       bridgeVersionForPlatform(
-        connection({ bridge_version: "1.8.0-claude.1" }),
+        connection({ bridge_version: "1.8.1-claude.1" }),
         "claude",
       ),
-    ).toBe("1.8.0-claude.1");
+    ).toBe("1.8.1-claude.1");
   });
 });

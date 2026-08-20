@@ -326,7 +326,11 @@ describe("Codex Bridge update manager flow", () => {
       "pack",
       "ai-task-board-bridge@1.4.0",
     ]);
-    expect(packCall?.[1]?.[2]).toBe("--pack-destination");
+    expect(packCall?.[1]?.slice(2, 4)).toEqual([
+      "--registry",
+      "https://registry.npmjs.org",
+    ]);
+    expect(packCall?.[1]?.[4]).toBe("--pack-destination");
     const smokeCall = spawnMock.mock.calls.find(
       (call: unknown[]) =>
         call[0] === process.execPath &&
@@ -390,7 +394,7 @@ describe("Codex Bridge update manager flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("does not exit on smoke failure, keeps the old unit, and never retries the same target", async () => {
+  it("does not exit on smoke failure, keeps the old unit, and blocks the immediate retry of the same target", async () => {
     const manager = await importCodexManager();
     const unitFile = await writeCodexUnit("1.3.0");
     const originalUnit = readFileSync(unitFile, "utf8");
@@ -409,7 +413,7 @@ describe("Codex Bridge update manager flow", () => {
     // The failed version never reaches the unit file: the old one still runs.
     expect(readFileSync(unitFile, "utf8")).toBe(originalUnit);
 
-    // A fixed release with the same target version is not retried.
+    // 退避窗口内不重试同一个失败目标。
     h.smokeExitCode = 0;
     h.smokeStdout = "1.4.0\n";
     h.events.length = 0;
@@ -433,6 +437,93 @@ describe("Codex Bridge update manager flow", () => {
       "systemctl --user daemon-reload",
       "exit 75",
     ]);
+  });
+
+  it("honors the configured npm registry and defaults to npmjs.org", async () => {
+    const manager = await importCodexManager();
+    await writeCodexUnit("1.3.0");
+    await expect(
+      manager.maybeApplyDesiredBridgeUpdate(baseOptions()),
+    ).resolves.toBeNull();
+
+    const { spawn } = await import("node:child_process");
+    const spawnMock = spawn as unknown as ReturnType<typeof vi.fn>;
+    const defaultPackCall = spawnMock.mock.calls.find(
+      (call: unknown[]) =>
+        call[0] === "npm" &&
+        Array.isArray(call[1]) &&
+        call[1][0] === "pack",
+    );
+    const defaultPackArgs = (defaultPackCall?.[1] ?? []) as string[];
+    expect(defaultPackArgs).toContain("--registry");
+    expect(defaultPackArgs[defaultPackArgs.indexOf("--registry") + 1]).toBe(
+      "https://registry.npmjs.org",
+    );
+
+    // 自定义镜像会被原样使用，去掉尾部斜杠后传给 npm。
+    h.events.length = 0;
+    h.smokeStdout = "1.4.1\n";
+    await expect(
+      manager.maybeApplyDesiredBridgeUpdate(
+        baseOptions({
+          desiredVersion: "1.4.1",
+          environment: {
+            ...environment,
+            AI_TASK_BOARD_NPM_REGISTRY: "https://mirror.example.com/npm/",
+          },
+        }),
+      ),
+    ).resolves.toBeNull();
+    const mirrorPackCall = spawnMock.mock.calls
+      .filter(
+        (call: unknown[]) =>
+          call[0] === "npm" &&
+          Array.isArray(call[1]) &&
+          call[1][0] === "pack",
+      )
+      .at(-1);
+    const mirrorPackArgs = (mirrorPackCall?.[1] ?? []) as string[];
+    expect(mirrorPackArgs[mirrorPackArgs.indexOf("--registry") + 1]).toBe(
+      "https://mirror.example.com/npm",
+    );
+  });
+
+  it("retries a failed target once after the five-minute backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = await importCodexManager();
+      await writeCodexUnit("1.3.0");
+      h.packExitCode = 1;
+
+      await expect(
+        manager.maybeApplyDesiredBridgeUpdate(baseOptions()),
+      ).resolves.toContain("下载 Bridge 发布包失败");
+      h.events.length = 0;
+
+      // 退避窗口内仍被抑制。
+      vi.advanceTimersByTime(4 * 60_000);
+      await expect(
+        manager.maybeApplyDesiredBridgeUpdate(baseOptions()),
+      ).resolves.toBeNull();
+      expect(h.events).toEqual([]);
+
+      // 窗口过后允许重试，并最终完成升级。
+      vi.advanceTimersByTime(60_000);
+      h.packExitCode = 0;
+      await expect(
+        manager.maybeApplyDesiredBridgeUpdate(baseOptions()),
+      ).resolves.toBeNull();
+      expect(h.events).toEqual([
+        "npm pack",
+        "tar",
+        "installRuntime",
+        "smoke --version",
+        "systemctl --user daemon-reload",
+        "exit 75",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("holds a concurrent second attempt behind the in-flight lock", async () => {

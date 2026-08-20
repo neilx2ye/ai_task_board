@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.0 setup codex
+npx --yes ai-task-board-bridge@1.8.1 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi、Antigravity 与 Claude Code Bridge 的唯一公开
@@ -88,7 +88,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.8.0 run codex
+npx --yes ai-task-board-bridge@1.8.1 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -110,7 +110,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.8.0 run codex
+npx --yes ai-task-board-bridge@1.8.1 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -122,7 +122,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.8.0 run codex
+npx --yes ai-task-board-bridge@1.8.1 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -156,6 +156,7 @@ npx --yes ai-task-board-bridge@1.8.0 run codex
 | `AI_TASK_BOARD_LEASE_SECONDS` | 否 | `900` | 任务租约与续租时长，范围 `60..3600` 秒 |
 | `AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS` | 否 | `60000` | 重新扫描完整 thread 清单的间隔，范围 `10000..600000` 毫秒 |
 | `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` | 否 | `10000` | 启用 Web 配置后的期望配置轮询间隔，范围 `1000..600000` 毫秒；运行租约仍独立且至少每 10 秒续租 |
+| `AI_TASK_BOARD_NPM_REGISTRY` | 否 | `https://registry.npmjs.org` | Web 自更新时 `npm pack` 使用的 registry；官方源保证刚发布的版本立即可见，受限网络可改为镜像 |
 
 数值变量超出范围或不是整数时会回退到默认值。`CODEX_MAX_THREADS` 只是 Web 配置生效前的启动数量，不是安全边界；默认项目边界是 cwd 精确匹配，严格限定一个 thread 时使用 `CODEX_THREAD_ID`。
 
@@ -182,7 +183,7 @@ device id 与 hostname 标签），看板据此把同一台设备上的多个 Br
 
 ## Web 触发 Bridge 自更新
 
-Bridge 1.5.0 起内置更新器。Owner 在“AI 连接”页为某个连接（或“全部升级”批量）选择目标版本后，看板把该版本写入这条连接的期望状态；Bridge 在下次配置交换（默认约 10 秒）读到目标版本即执行更新（远程升级默认开启，不再需要本机开关；进程必须运行在 systemd 下，因为更新要重写 systemd 单元并由 `Restart=on-failure` 拉起新版本）：用 `npm pack` 从 npm registry 下载 `ai-task-board-bridge@<目标版本>`（npm 自动校验 registry 完整性），原子装入本地 `versions/<版本>/` 目录，冒烟检查新版本可启动后重写 systemd 用户单元并以非零码退出。上报版本达到目标后，看板自动清除期望标记；下载完成前可随时在网页取消。看板只传版本号、从不托管代码包，网页被攻破的最坏结果与首次 `npx` 安装同级；目标版本必须严格大于当前上报版本且真实存在于 npm。任一更新步骤失败时旧版本继续运行，错误随下一次配置交换回报并展示在“Bridge 设置”对话框；同一目标版本失败后不会立即重试。旧版本目录保留，手动回滚只需把 systemd 单元的 `ExecStart` 指回旧版本路径后 `systemctl --user daemon-reload && systemctl --user restart ai-task-board-bridge`。前台（非 systemd）运行的 Bridge 不执行自更新，只在 stderr 提示手动升级；1.5.0 之前的版本没有更新器，需要先在设备上手动升级一次。
+Bridge 1.5.0 起内置更新器。Owner 在“AI 连接”页为某个连接（或“全部升级”批量）选择目标版本后，看板把该版本写入这条连接的期望状态；Bridge 在下次配置交换（默认约 10 秒）读到目标版本即执行更新（远程升级默认开启，不再需要本机开关；进程必须运行在 systemd 下，因为更新要重写 systemd 单元并由 `Restart=on-failure` 拉起新版本）：用 `npm pack` 从官方 npm registry（可用 `AI_TASK_BOARD_NPM_REGISTRY` 覆盖为镜像）下载 `ai-task-board-bridge@<目标版本>`（npm 自动校验 registry 完整性），原子装入本地 `versions/<版本>/` 目录，冒烟检查新版本可启动后重写 systemd 用户单元并以非零码退出。上报版本达到目标后，看板自动清除期望标记；下载完成前可随时在网页取消。看板只传版本号、从不托管代码包，网页被攻破的最坏结果与首次 `npx` 安装同级；目标版本必须严格大于当前上报版本且真实存在于 npm。任一更新步骤失败时旧版本继续运行，错误随下一次配置交换回报并展示在“Bridge 设置”对话框；同一个失败目标在 5 分钟退避后自动重试一次，既能覆盖 npm 镜像同步延迟和瞬时网络抖动，也不会让坏版本造成重试风暴。旧版本目录保留，手动回滚只需把 systemd 单元的 `ExecStart` 指回旧版本路径后 `systemctl --user daemon-reload && systemctl --user restart ai-task-board-bridge`。前台（非 systemd）运行的 Bridge 不执行自更新，只在 stderr 提示手动升级；1.5.0 之前的版本没有更新器，需要先在设备上手动升级一次。
 
 ## Web Console 管理 Threads
 

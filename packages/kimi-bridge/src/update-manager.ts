@@ -25,6 +25,8 @@ const RUNTIME_DIST_SUBDIRECTORY = path.join("dist", "kimi-runtime");
 const NPM_PACK_TIMEOUT_MS = 120_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 const SMOKE_TEST_TIMEOUT_MS = 10_000;
+/** 失败目标的自动重试退避：覆盖 npm 镜像同步延迟与瞬时网络抖动。 */
+const UPDATE_FAILURE_RETRY_MS = 5 * 60_000;
 /** Non-zero so systemd Restart=on-failure starts the freshly installed version. */
 const UPDATE_RESTART_EXIT_CODE = 75;
 
@@ -285,6 +287,7 @@ export type DesiredBridgeUpdateOptions = {
 
 let updateInFlight = false;
 let failedTargetVersion: string | null = null;
+let failedTargetAtMs = 0;
 let noticedSkipTarget: string | null = null;
 
 function defaultLog(message: string): void {
@@ -333,9 +336,14 @@ export async function maybeApplyDesiredBridgeUpdate(
     }
     return null;
   }
-  // A failed target is not retried until the Board changes it or the Bridge
-  // process restarts, so a broken release cannot cause a retry storm.
-  if (failedTargetVersion === desired) return null;
+  // 失败目标在退避窗口内不再尝试，避免坏版本造成重试风暴；窗口过后允许
+  // 再次尝试，覆盖 npm 镜像尚未同步或瞬时网络失败的情况。
+  if (
+    failedTargetVersion === desired &&
+    Date.now() - failedTargetAtMs < UPDATE_FAILURE_RETRY_MS
+  ) {
+    return null;
+  }
   if (updateInFlight) return null;
   updateInFlight = true;
   try {
@@ -350,6 +358,7 @@ export async function maybeApplyDesiredBridgeUpdate(
     // this guard keeps even an unexpected throw (for example a failed
     // mkdtemp) out of the configuration-exchange loop.
     failedTargetVersion = desired;
+    failedTargetAtMs = Date.now();
     const message = redactText(
       `升级到 Kimi Bridge ${desired} 失败：${errorMessage(error)}`,
       2_000,
@@ -371,12 +380,20 @@ async function applyDesiredBridgeUpdate(
     path.join(tmpdir(), "ai-task-board-kimi-bridge-update-"),
   );
   try {
-    log(`开始从 npm registry 下载 Bridge ${desired}（npm 校验 registry integrity）`);
+    const registry = (
+      environment.AI_TASK_BOARD_NPM_REGISTRY?.trim() ||
+      "https://registry.npmjs.org"
+    ).replace(/\/+$/, "");
+    log(
+      `开始从 npm 下载 Bridge ${desired}（${registry}，npm 校验 registry integrity）`,
+    );
     await runCheckedCommand(
       "npm",
       [
         "pack",
         `${BRIDGE_UPDATE_PACKAGE}@${desired}`,
+        "--registry",
+        registry,
         "--pack-destination",
         staging,
       ],
@@ -441,6 +458,7 @@ async function applyDesiredBridgeUpdate(
     // The old version keeps running: the unit file is only rewritten after the
     // new runtime is installed and smoke-tested, and staging is always removed.
     failedTargetVersion = desired;
+    failedTargetAtMs = Date.now();
     const message = redactText(
       `升级到 Kimi Bridge ${desired} 失败：${errorMessage(error)}`,
       2_000,

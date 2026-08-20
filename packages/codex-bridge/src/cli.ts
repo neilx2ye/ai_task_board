@@ -82,6 +82,7 @@ Optional environment variables:
   AI_TASK_BOARD_LEASE_SECONDS     Task lease duration (60..3600, default: 900)
   AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS  Full inventory interval (10000..600000)
   AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS  Web config interval (1000..600000)
+  AI_TASK_BOARD_NPM_REGISTRY     Self-update download registry (default: https://registry.npmjs.org)
 
 Kimi variables:
   KIMI_WORKING_DIRECTORY          Working directory (default: cwd)
