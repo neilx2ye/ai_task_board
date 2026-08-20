@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,13 +7,8 @@ import {
 } from "@/components/help-content";
 
 describe("帮助页结构元数据", () => {
-  it("安装命令版本与 Bridge 发布版本一致", async () => {
-    const manifest = JSON.parse(
-      await readFile("packages/codex-bridge/package.json", "utf8"),
-    ) as { version: string };
-    expect(BRIDGE_INSTALL_PACKAGE).toBe(
-      `ai-task-board-bridge@${manifest.version}`,
-    );
+  it("安装命令使用 latest 标签跟随最新发布", () => {
+    expect(BRIDGE_INSTALL_PACKAGE).toBe("ai-task-board-bridge@latest");
   });
 
   it("目录锚点 id 唯一且非空", () => {
