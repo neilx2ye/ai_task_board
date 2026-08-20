@@ -3,6 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import {
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import { pathExistsWithinRoots } from "@/lib/domain/file-explorer";
 import { collectRangePages } from "@/lib/domain/postgrest-pagination";
@@ -128,7 +132,9 @@ export async function listFileExplorerBridgeProjects(
   const directories = await collectRangePages(async (from, to) => {
     const { data, error } = await admin
       .from("ai_bridge_directories")
-      .select("directory_key, name, working_directory, inventory_active, connection_id")
+      .select(
+        "directory_key, name, working_directory, inventory_active, connection_id, platform",
+      )
       .eq("workspace_id", context.workspaceId)
       .order("connection_id")
       .order("inventory_active", { ascending: false })
@@ -149,6 +155,26 @@ export async function listFileExplorerBridgeProjects(
     if (error) throw mapDatabaseError(error);
     return data ?? [];
   });
+  const versionByRuntimeKey = new Map<string, string | null>();
+  if (connections.length > 0) {
+    const { data: versionRows, error: versionError } = await admin
+      .from("ai_connection_bridge_settings")
+      .select("connection_id, platform, bridge_version")
+      .eq("workspace_id", context.workspaceId)
+      .in(
+        "connection_id",
+        connections.map((connection) => connection.id),
+      );
+    if (versionError && !isMissingBridgeVersionColumn(versionError)) {
+      throw mapDatabaseError(versionError);
+    }
+    for (const row of versionRows ?? []) {
+      versionByRuntimeKey.set(
+        `${row.connection_id}:${canonicalBridgeKind(row.platform)}`,
+        row.bridge_version ?? null,
+      );
+    }
+  }
   const connectionById = new Map<string, ConnectionSummary>();
   for (const connection of connections) {
     if (connection.revoked_at) continue;
@@ -172,6 +198,13 @@ export async function listFileExplorerBridgeProjects(
     if (!directory.inventory_active) continue;
     const connection = connectionById.get(directory.connection_id);
     if (!connection) continue;
+    const runtimePlatform = isUnifiedPlatform(connection.platform)
+      ? canonicalBridgeKind(directory.platform)
+      : connection.platform;
+    const runtimeKey = `${connection.id}:${canonicalBridgeKind(runtimePlatform)}`;
+    const bridgeVersion = isUnifiedPlatform(connection.platform)
+      ? (versionByRuntimeKey.get(runtimeKey) ?? null)
+      : (versionByRuntimeKey.get(runtimeKey) ?? connection.bridgeVersion);
     const id = projectIdForDirectory(directory.working_directory);
     let project = projects.get(id);
     if (!project) {
@@ -183,7 +216,12 @@ export async function listFileExplorerBridgeProjects(
       };
       projects.set(id, project);
     }
-    project.connections.set(connection.id, connection);
+    project.connections.set(runtimeKey, {
+      id: connection.id,
+      name: connection.name,
+      platform: runtimePlatform,
+      bridgeVersion,
+    });
     if (projects.size > MAX_BRIDGE_PROJECTS) break;
   }
 
@@ -209,6 +247,29 @@ export async function listFileExplorerBridgeProjects(
     (left, right) =>
       left.name.localeCompare(right.name, "zh-CN") ||
       left.workingDirectory.localeCompare(right.workingDirectory),
+  );
+}
+
+function isMissingBridgeVersionColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    source.includes("platform") ||
+    (source.includes("bridge_version") &&
+      !source.includes("desired_bridge_version"))
   );
 }
 

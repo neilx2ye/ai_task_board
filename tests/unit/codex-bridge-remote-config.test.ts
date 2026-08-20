@@ -718,11 +718,23 @@ describe("Codex Bridge Web configuration", () => {
     expect(statuses.at(-1)).toMatchObject({ release_runtime: true });
   }, 15_000);
 
-  it("fails fast on a missing config endpoint when Web config is enabled", async () => {
+  it("falls back to legacy inventory when the config endpoint is missing", async () => {
+    const inventories: Array<Array<Record<string, unknown>>> = [];
     const server = createServer(async (request, response) => {
+      const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
+      if (pathname === "/api/ai/config") {
+        response.writeHead(404, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+        return;
+      }
+      if (pathname === "/api/ai/sessions/sync") {
+        const body = await bodyOf(request);
+        inventories.push(body.threads as Array<Record<string, unknown>>);
+        json(response, { sessions: [] });
+        return;
+      }
       if (request.method !== "GET") await bodyOf(request);
-      response.writeHead(404, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "config endpoint missing" } }));
+      json(response, {});
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -742,7 +754,11 @@ describe("Codex Bridge Web configuration", () => {
           AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
           AI_TASK_BOARD_CONNECTION_TOKEN: "atb_config_404",
           CODEX_BINARY: fakeCodex,
+          // Web 配置恒启用，旧开关不再改变 404 降级行为。
           CODEX_BRIDGE_WEB_CONFIG: "true",
+          CODEX_THREAD_ID: "",
+          CODEX_THREAD_SCOPE: "all",
+          CODEX_WORKING_DIRECTORY: temporaryDirectory,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -753,15 +769,12 @@ describe("Codex Bridge Web configuration", () => {
     });
 
     try {
-      const [code] = await Promise.race([
-        once(child, "exit"),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`404 fail-fast timeout: ${stderr}`)), 5_000),
-        ),
-      ]);
-      child = null;
-      expect(code).not.toBe(0);
-      expect(stderr).toContain("看板缺少 Bridge 0.4 API");
+      await waitUntil(
+        () => inventories.some((threads) => threads.length === 1),
+        () => `legacy inventory was not synced\n${stderr}`,
+        8_000,
+      );
+      expect(child.exitCode).toBe(null);
     } finally {
       await stopChild(child);
       child = null;
@@ -769,7 +782,9 @@ describe("Codex Bridge Web configuration", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 10_000);
+
+    expect(inventories.at(-1)).toHaveLength(1);
+  }, 15_000);
 
   it("waits before inventory until an older runtime lease can be acquired", async () => {
     let inventoryRequests = 0;
@@ -1065,7 +1080,7 @@ describe("Codex Bridge Web configuration", () => {
     }
   }, 25_000);
 
-  it("renews the local gate but ignores desired config when disabled", async () => {
+  it("applies Web desired config even when the legacy device gate is unset", async () => {
     const statuses: Array<Record<string, unknown>> = [];
     const inventories: Array<Array<Record<string, unknown>>> = [];
     const server = createServer(async (request, response) => {
@@ -1138,8 +1153,8 @@ describe("Codex Bridge Web configuration", () => {
 
     try {
       await waitUntil(
-        () => inventories.some((threads) => threads.length === 1),
-        () => `local inventory was not synced\n${stderr}`,
+        () => inventories.some((threads) => threads.length === 0),
+        () => `disabled bridge did not publish the empty inventory\n${stderr}`,
       );
       await waitUntil(
         () =>
@@ -1179,18 +1194,31 @@ describe("Codex Bridge Web configuration", () => {
         ],
       },
       constraints: {
-        remote_configuration_enabled: false,
-        allow_thread_titles: false,
-        allow_working_directory_configuration: false,
+        remote_configuration_enabled: true,
+        allow_thread_titles: true,
+        allow_working_directory_configuration: true,
         fixed_thread: false,
       },
       error: null,
+    });
+    const appliedStatus = activeStatuses.find(
+      (status) => status.applied_version === 1,
+    );
+    expect(appliedStatus).toBeDefined();
+    expect(appliedStatus).toMatchObject({
+      applied_version: 1,
+      effective: {
+        enabled: false,
+        include_thread_titles: true,
+        max_threads: 1,
+        max_concurrent_turns: 1,
+      },
     });
     expect(statuses.at(-1)).toMatchObject({
       runtime_instance_id: activeStatuses[0]?.runtime_instance_id,
       report_sequence: statuses.length,
       release_runtime: true,
     });
-    expect(inventories.at(-1)).toHaveLength(1);
+    expect(inventories.at(-1)).toHaveLength(0);
   }, 10_000);
 });

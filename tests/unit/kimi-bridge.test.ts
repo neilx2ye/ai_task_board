@@ -133,6 +133,12 @@ describe("Kimi Bridge configuration", () => {
       maxConcurrentTurns: 3,
       kimiBinary: "kimi",
     });
+    expect(
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+      }).maxConcurrentTurns,
+    ).toBe(5);
     expect(() =>
       loadConfiguration({
         AI_TASK_BOARD_URL: "https://board.example.com",
@@ -160,7 +166,7 @@ describe("Kimi Bridge remote configuration", () => {
       max_concurrent_turns: 4,
       sync_history: true,
       history_turn_limit: 500,
-      working_directories: [],
+      working_directories: null,
     });
     expect(resolved.effective).toEqual({
       enabled: false,
@@ -173,10 +179,10 @@ describe("Kimi Bridge remote configuration", () => {
     });
     expect(resolved.warnings.join("")).not.toContain("max_threads");
     expect(resolved.warnings.join("")).toContain("历史同步");
-    expect(resolved.warnings.join("")).toContain("工作目录");
+    expect(resolved.warnings.join("")).not.toContain("工作目录");
   });
 
-  it("rejects invalid desired values and honors the local title authorization", () => {
+  it("rejects invalid desired values and applies Web titles without device authorization", () => {
     expect(() =>
       resolveRemoteConfiguration(base, {
         enabled: true,
@@ -189,8 +195,8 @@ describe("Kimi Bridge remote configuration", () => {
       }),
     ).toThrow("max_threads 必须是整数");
 
-    const blocked = resolveRemoteConfiguration(
-      { ...base, allowRemoteThreadTitles: false },
+    const applied = resolveRemoteConfiguration(
+      base,
       {
         enabled: true,
         include_thread_titles: true,
@@ -201,10 +207,8 @@ describe("Kimi Bridge remote configuration", () => {
         working_directories: null,
       },
     );
-    expect(blocked.effective.includeThreadTitles).toBe(false);
-    expect(blocked.warnings.join("")).toContain(
-      "KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
-    );
+    expect(applied.effective.includeThreadTitles).toBe(true);
+    expect(applied.warnings).toEqual([]);
   });
 
   it("parses the Web config opt-in and uses the local value only as startup fallback", () => {

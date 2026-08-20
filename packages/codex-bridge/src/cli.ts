@@ -65,17 +65,17 @@ Optional environment variables:
   CODEX_THREAD_SCOPE              cwd (default, exact cwd) or all (high risk)
   CODEX_SESSION_NAME              Prefix for session names shown in the Board
   CODEX_BRIDGE_INCLUDE_THREAD_TITLES  true uploads local thread title/preview
-  CODEX_BRIDGE_WEB_CONFIG          true lets the Board adjust gated runtime settings
-  CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
-  CODEX_BRIDGE_ALLOW_HISTORY_SYNC  true lets Web enable bounded history upload
-  CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES  true lets Web replace the directory list
-  CODEX_BRIDGE_MAX_HISTORY_TURNS   Local history limit ceiling (1..200, default: 50)
+  CODEX_BRIDGE_WEB_CONFIG          Deprecated: Web configuration is always enabled
+  CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  Deprecated: Web always owns title upload
+  CODEX_BRIDGE_ALLOW_HISTORY_SYNC  Deprecated: Web always owns history sync
+  CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES  Deprecated: Web always owns the directory list
+  CODEX_BRIDGE_MAX_HISTORY_TURNS   Startup history fallback (1..500, default: 50)
   CODEX_MODEL                     Informational model label
   CODEX_CAPABILITIES              Comma/space-separated capabilities
   CODEX_MAX_THREADS               Startup thread fallback before Web applies (1..500)
-  CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 2)
-  CODEX_BRIDGE_APPROVAL_MODE      accept (default), decline, or accept-session; accept is automatic
-  CODEX_BRIDGE_PERMISSION_MODE    danger-full-access (default), safe, or inherit; full/inherit may be high risk
+  CODEX_MAX_CONCURRENT_TURNS      Legacy startup concurrency before Web applies (1..32, default: 5)
+  CODEX_BRIDGE_APPROVAL_MODE      Startup fallback; Web can override (accept, decline, accept-session)
+  CODEX_BRIDGE_PERMISSION_MODE    Startup fallback; Web can override (danger-full-access, safe, inherit)
   CODEX_HOME                      Codex config/data directory (default: current user's ~/.codex)
   CODEX_BINARY                    Codex executable (default: codex)
   AI_TASK_BOARD_POLL_INTERVAL_MS  Poll interval when SSE is unavailable (500..60000)
@@ -87,7 +87,7 @@ Kimi variables:
   KIMI_WORKING_DIRECTORY          Working directory (default: cwd)
   KIMI_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
   KIMI_MAX_THREADS                Startup Session fallback before Web applies (1..500)
-  KIMI_MAX_CONCURRENT_TURNS       Device-wide concurrent turns (1..32)
+  KIMI_MAX_CONCURRENT_TURNS       Device-wide concurrent turns (1..32, default: 5)
   KIMI_BRIDGE_APPROVAL_MODE       accept or decline
   KIMI_BRIDGE_MODE                auto, default, plan, or yolo
   KIMI_BINARY                     Kimi Code executable (default: kimi)
@@ -96,7 +96,7 @@ Antigravity variables:
   ANTIGRAVITY_WORKING_DIRECTORY   Working directory (default: cwd)
   ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
   ANTIGRAVITY_MAX_THREADS         Startup Thread fallback before Web applies (1..500)
-  ANTIGRAVITY_MAX_CONCURRENT_TURNS Device-wide concurrent turns (1..32)
+  ANTIGRAVITY_MAX_CONCURRENT_TURNS Device-wide concurrent turns (1..32, default: 5)
   ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept or decline
   ANTIGRAVITY_BRIDGE_MODE         auto, default, accept-edits, or plan
   ANTIGRAVITY_BRIDGE_SANDBOX      true enables agy terminal sandbox
@@ -108,7 +108,7 @@ Claude variables:
   CLAUDE_WORKING_DIRECTORY        Working directory (default: cwd)
   CLAUDE_WORKING_DIRECTORIES      JSON allowlist of {key,name,path} directories
   CLAUDE_MAX_THREADS              Startup Session fallback before Web applies (1..500)
-  CLAUDE_MAX_CONCURRENT_TURNS     Device-wide concurrent turns (1..32)
+  CLAUDE_MAX_CONCURRENT_TURNS     Device-wide concurrent turns (1..32, default: 5)
   CLAUDE_BRIDGE_APPROVAL_MODE     accept or decline
   CLAUDE_BRIDGE_MODE              default, plan, accept-edits, or bypass-permissions
   CLAUDE_BINARY                   claude-agent-acp executable; setup installs it

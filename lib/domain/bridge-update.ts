@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import {
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 import { bridgeReleaseExists } from "@/lib/bridge-release";
 import {
   compareBridgeVersions,
@@ -30,7 +34,7 @@ export async function setBridgeUpdateTarget(
   const admin = createAdminClient();
   const { data: connection, error: connectionError } = await admin
     .from("ai_connections")
-    .select("id, bridge_version")
+    .select("id, platform, bridge_version")
     .eq("workspace_id", context.workspaceId)
     .eq("id", connectionId)
     .is("revoked_at", null)
@@ -40,13 +44,42 @@ export async function setBridgeUpdateTarget(
     throw new AppError("FORBIDDEN", "The Bridge connection is not accessible");
   }
 
+  const platform = canonicalBridgeKind(input.platform ?? connection.platform);
+  const settings = await admin
+    .from("ai_connection_bridge_settings")
+    .select("platform, bridge_version, desired_bridge_version")
+    .eq("workspace_id", context.workspaceId)
+    .eq("connection_id", connectionId)
+    .eq("platform", platform)
+    .maybeSingle();
+  let perPlatformSchema = true;
+  if (settings.error) {
+    if (isMissingPlatformColumn(settings.error)) {
+      perPlatformSchema = false;
+    } else if (!isMissingBridgeVersionColumn(settings.error)) {
+      throw mapDatabaseError(settings.error);
+    }
+    // 滚动部署：平台/版本维度尚未落地时回退到连接级版本。
+  }
+  const reportedVersion = !perPlatformSchema
+    ? isUnifiedPlatform(connection.platform)
+      ? null
+      : connection.bridge_version
+    : isUnifiedPlatform(connection.platform)
+      ? (settings.data?.bridge_version ?? null)
+      : (settings.data?.bridge_version ?? connection.bridge_version);
+
   const target = input.target_version;
   if (target === null) {
-    const { error } = await admin
+    let clearQuery = admin
       .from("ai_connection_bridge_settings")
       .update({ desired_bridge_version: null })
       .eq("workspace_id", context.workspaceId)
       .eq("connection_id", connectionId);
+    if (perPlatformSchema) {
+      clearQuery = clearQuery.eq("platform", platform);
+    }
+    const { error } = await clearQuery;
     if (error) throw mapDatabaseError(error);
     return { desired_bridge_version: null };
   }
@@ -54,8 +87,13 @@ export async function setBridgeUpdateTarget(
   if (!isBridgeVersionString(target)) {
     throw new AppError("INVALID_REQUEST", "目标版本必须是 x.y.z 形式");
   }
-  const current = connection.bridge_version;
-  const comparison = compareBridgeVersions(target, current);
+  if (reportedVersion === null) {
+    throw new AppError(
+      "INVALID_REQUEST",
+      "该 Bridge 运行时尚未上报版本，无法下发升级目标",
+    );
+  }
+  const comparison = compareBridgeVersions(target, reportedVersion);
   if (comparison === null || comparison <= 0) {
     throw new AppError(
       "INVALID_REQUEST",
@@ -69,11 +107,64 @@ export async function setBridgeUpdateTarget(
     );
   }
 
-  const { error } = await admin
-    .from("ai_connection_bridge_settings")
-    .update({ desired_bridge_version: target })
-    .eq("workspace_id", context.workspaceId)
-    .eq("connection_id", connectionId);
+  const { error } = perPlatformSchema
+    ? await admin
+        .from("ai_connection_bridge_settings")
+        .upsert(
+          {
+            workspace_id: context.workspaceId,
+            connection_id: connectionId,
+            platform,
+            desired_bridge_version: target,
+          },
+          { onConflict: "connection_id,platform" },
+        )
+    : await admin
+        .from("ai_connection_bridge_settings")
+        .update({ desired_bridge_version: target })
+        .eq("workspace_id", context.workspaceId)
+        .eq("connection_id", connectionId);
   if (error) throw mapDatabaseError(error);
   return { desired_bridge_version: target };
+}
+
+function isMissingPlatformColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("platform");
+}
+
+function isMissingBridgeVersionColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    source.includes("bridge_version") &&
+    !source.includes("desired_bridge_version")
+  );
 }

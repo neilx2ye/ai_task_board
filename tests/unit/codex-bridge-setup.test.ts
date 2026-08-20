@@ -146,6 +146,7 @@ env_http_headers = { "X-Tenant" = "DEEPSEEK_TENANT" }
     expect(environment).not.toHaveProperty("CODEX_WORKING_DIRECTORY");
     expect(environment).not.toHaveProperty("CODEX_WORKING_DIRECTORIES");
     expect(environment.CODEX_BRIDGE_WEB_CONFIG).toBe("true");
+    expect(environment.CODEX_MAX_CONCURRENT_TURNS).toBe("5");
     expect(environment.CODEX_BRIDGE_INCLUDE_THREAD_TITLES).toBe("true");
     expect(environment.CODEX_BRIDGE_ALLOW_HISTORY_SYNC).toBe("true");
     expect(environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES).toBe(

@@ -54,21 +54,23 @@ describe("Kimi Bridge remote working directories", () => {
     }
   });
 
-  it("parses the device opt-in environment variable", () => {
-    expect(baseConfiguration().allowRemoteWorkingDirectories).toBe(false);
+  it("always allows Web working directories and ignores the legacy opt-in env", () => {
+    expect(baseConfiguration().allowRemoteWorkingDirectories).toBe(true);
     expect(
       baseConfiguration({
         KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
       }).allowRemoteWorkingDirectories,
     ).toBe(true);
-    expect(() =>
+    expect(
       baseConfiguration({
         KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "yes",
-      }),
-    ).toThrow("布尔值必须是 true 或 false");
+      }).allowRemoteWorkingDirectories,
+    ).toBe(true);
   });
 
-  it("keeps the local startup list and warns when the device has not opted in", () => {
+  it("applies a valid Web list without a device opt-in", () => {
+    const root = baseDirectory();
+    const webDirectory = path.join(root, "web-project");
     const configuration = baseConfiguration();
     const resolved = resolveRemoteConfiguration(
       configuration,
@@ -77,25 +79,23 @@ describe("Kimi Bridge remote working directories", () => {
           {
             directory_key: "web",
             name: "Web project",
-            working_directory: "/srv/web",
+            working_directory: webDirectory,
+            create_if_missing: true,
           },
         ],
       }),
     );
+    expect(resolved.warnings).toEqual([]);
     expect(resolved.effective.workingDirectories).toEqual(
-      configuration.localWorkingDirectories,
+      [{ key: "web", name: "Web project", workingDirectory: webDirectory }],
     );
-    expect(resolved.warnings.join("")).toContain(
-      "KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION",
-    );
+    expect(existsSync(webDirectory)).toBe(true);
   });
 
-  it("applies a valid remote list only when the device opted in", () => {
+  it("applies a valid remote list and preserves the immutable local fallback", () => {
     const root = baseDirectory();
     const webDirectory = path.join(root, "web-project");
-    const configuration = baseConfiguration({
-      KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
-    });
+    const configuration = baseConfiguration();
     const resolved = resolveRemoteConfiguration(
       configuration,
       desired({
@@ -125,10 +125,8 @@ describe("Kimi Bridge remote working directories", () => {
     );
   });
 
-  it("rejects invalid remote lists even when the device opted in", () => {
-    const configuration = baseConfiguration({
-      KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION: "true",
-    });
+  it("rejects invalid remote lists", () => {
+    const configuration = baseConfiguration();
     expect(() =>
       resolveRemoteConfiguration(
         configuration,
@@ -198,7 +196,7 @@ describe("Kimi Bridge session sync device identity", () => {
     return JSON.parse(init.body) as Record<string, unknown>;
   }
 
-  it("sends flat device_id and device_label fields with the 1.7.1 capability version", async () => {
+  it("sends flat device_id and device_label fields with the 1.8.0 capability version", async () => {
     const fetchMock = stubBoardFetch();
     const client = new BoardClient(baseConfiguration(), () => false, {
       deviceId: "2f4b91c0-0000-4000-8000-0000000000ab",
@@ -206,8 +204,8 @@ describe("Kimi Bridge session sync device identity", () => {
     });
     await client.syncSessions([], baseConfiguration().workingDirectories, [], undefined);
     const body = syncBody(fetchMock);
-    expect(body.bridge_version).toBe("1.7.1-kimi.1");
-    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.7.1-kimi.1");
+    expect(body.bridge_version).toBe("1.8.0-kimi.1");
+    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.8.0-kimi.1");
     expect(body.device_id).toBe("2f4b91c0-0000-4000-8000-0000000000ab");
     expect(body.device_label).toBe("test-host");
     expect(body.directories).toEqual([

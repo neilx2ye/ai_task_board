@@ -237,12 +237,9 @@ export default function HelpPage() {
           </Step>
           <Step index={5} title="回到网页完成配置并验证">
             Bridge 上线后，可在「AI 连接 → Bridge 设置」核对实际配置；统一设备
-            连接里可以为每个运行时分别选择并调整设置。交互安装默认
-            已写入各自的 Web 配置开关（Codex 为
-            <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，Kimi / Antigravity / Claude
-            Code 为各自前缀
-            的 <code>*_BRIDGE_WEB_CONFIG=true</code>），所以安装后可以直接在网页管理；
-            纯环境变量或前台方式启动时才需要显式设置这些开关。再到
+            连接里可以为每个运行时分别选择并调整设置。Web 是唯一配置入口，安装后
+            即可直接在网页管理；thread 标题上传与 Codex 历史同步在新连接上默认开启。
+            再到
             <Link
               href="/sessions"
               className="mx-1 font-medium text-foreground underline underline-offset-4"
@@ -361,10 +358,6 @@ CODEX_WORKING_DIRECTORY='/absolute/path/to/project' \\
 CODEX_THREAD_SCOPE='cwd' \\
 CODEX_BRIDGE_PERMISSION_MODE='danger-full-access' \\
 CODEX_BRIDGE_APPROVAL_MODE='accept' \\
-CODEX_BRIDGE_WEB_CONFIG='true' \\
-CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES='true' \\
-CODEX_BRIDGE_ALLOW_HISTORY_SYNC='true' \\
-CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES='true' \\
 CODEX_BRIDGE_MAX_HISTORY_TURNS='50' \\
 npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
         <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
@@ -383,19 +376,17 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
             查看状态；其他系统请使用对应的本机进程管理器。
           </li>
           <li>
-            交互安装默认写入 <code>CODEX_BRIDGE_WEB_CONFIG=true</code>，因此
             Workspace Owner 安装后就能在“AI 连接 → Bridge 设置”动态启停、切换标题
-            与历史同步，并调整 thread/并发/历史上限；这套远程配置在 Codex、Kimi、
-            Antigravity 与 Claude Code 连接上均可使用（历史同步仅 Codex 支持）。纯环境变量或前台
-            方式启动时，需要显式设置各自前缀的 <code>*_BRIDGE_WEB_CONFIG=true</code>。
-            交互安装同时写入
-            <code>CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true</code>
-            （Kimi / Antigravity / Claude Code 为各自前缀的
-            <code className="ml-1">*_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>）
-            ，因此还可以在这里管理项目名称、稳定 key 与设备上的绝对工作路径。
+            与历史同步，并调整权限模式、审批模式与 thread/并发/历史上限；这套远程
+            配置在 Codex、Kimi、
+            Antigravity 与 Claude Code 连接上均可使用（历史同步仅 Codex 支持），
+            且不需要任何设备端授权开关。thread 标题上传与 Codex 历史同步对新连接
+            默认开启；权限与审批模式只在 Codex 运行时开放网页选择（新连接默认
+            “全权限（无沙箱）”与“自动通过”）。也可以在“Bridge 设置”里管理项目
+            名称、稳定 key 与设备上的绝对工作路径，Bridge 会在应用前校验路径存在。
           </li>
           <li>
-            未授权 Web 路径管理时，仍用各自前缀的 <code>*_WORKING_DIRECTORIES</code>
+            未在网页启用目录管理时，仍用各自前缀的 <code>*_WORKING_DIRECTORIES</code>
             在设备配置多个精确 cwd。无论目录来自设备启动配置还是网页期望值，新建
             Thread 都只把 Bridge 已验证并上报的目录 key 返回设备，不能在单条命令中注入任意路径。
           </li>
@@ -475,26 +466,20 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run kimi`}</CopyableCodeBlock>
           <li>
             可用 <code>KIMI_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；网页新建
             只发送稳定目录 key，不能注入任意本机路径。Kimi ACP 只能按目录发现本机
-            Session，等价于固定的工作目录范围。设备设置
-            <code className="ml-1">KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
-            （交互安装默认写入）后，目录清单也可以直接在「Bridge
-            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
-            由设备自动创建。
+            Session，等价于固定的工作目录范围。目录清单可以直接在「Bridge 设置」里
+            由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时由设备
+            自动创建。
           </li>
           <li>
             Kimi ACP 支持新建和删除 Session，但当前没有可靠的改名方法，所以 Kimi
             连接会隐藏 Thread 改名入口；网页创建时填写的名称仍作为看板显示名保留。
           </li>
           <li>
-            会话标题默认不上传，本机设置
+            会话标题上传对新连接默认开启，可在「Bridge 设置」关闭；
             <code className="ml-1">KIMI_BRIDGE_INCLUDE_SESSION_TITLES=true</code>
-            后才会同步，或设置
-            <code className="ml-1">KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true</code>
-            让 Web 控制。交互安装默认写入
-            <code className="ml-1">KIMI_BRIDGE_WEB_CONFIG=true</code>
-            ，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
-            <code className="ml-1">KIMI_MAX_THREADS</code>
-            仍是设备本机上限，Web 不能超过它。
+            仅作为网页值生效前的启动默认。「Bridge 设置」可以直接动态启停、调整
+            thread 数与并发上限；<code className="ml-1">KIMI_MAX_THREADS</code>
+            只是网页值生效前的启动回退值。
           </li>
           <li>
             <code>KIMI_BRIDGE_MODE=yolo</code> 与
@@ -550,11 +535,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
           </li>
           <li>
             可用 <code>ANTIGRAVITY_WORKING_DIRECTORIES</code> 配置多个精确 cwd
-            白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。设备设置
-            <code className="ml-1">ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
-            （交互安装默认写入）后，目录清单也可以直接在「Bridge
-            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
-            由设备自动创建。
+            白名单；网页新建只发送稳定目录 key，不能注入任意本机路径。目录清单也
+            可以直接在「Bridge 设置」里由 Web 维护，设备会校验路径存在，「新建项目」
+            下发的目录不存在时由设备自动创建。
           </li>
           <li>
             agy headless 没有公开的改名与历史读取接口，因此 Antigravity 连接会隐藏
@@ -563,11 +546,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run antigravity`}</CopyableCodeBlock>
             （可用 <code>ANTIGRAVITY_REGISTRY_FILE</code> 换路径）。
           </li>
           <li>
-            交互安装默认写入
-            <code className="ml-1">ANTIGRAVITY_BRIDGE_WEB_CONFIG=true</code>
-            ，「Bridge 设置」可以动态启停、调整 thread 数与并发上限；
+            「Bridge 设置」可以直接动态启停、调整 thread 数与并发上限；
             <code className="ml-1">ANTIGRAVITY_MAX_THREADS</code>
-            仍是设备本机上限，Web 不能超过它。单次执行时长可用
+            只是网页值生效前的启动回退值。单次执行时长可用
             <code className="ml-1">ANTIGRAVITY_PRINT_TIMEOUT</code>
             （如 5m、90s，默认按租约自动预留余量）。
           </li>
@@ -631,11 +612,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run claude`}</CopyableCodeBlock>
           </li>
           <li>
             可用 <code>CLAUDE_WORKING_DIRECTORIES</code> 配置多个精确 cwd 白名单；
-            网页新建只发送稳定目录 key，不能注入任意本机路径。设备设置
-            <code className="ml-1">CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true</code>
-            （交互安装默认写入）后，目录清单也可以直接在「Bridge
-            设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的目录不存在时
-            由设备自动创建。
+            网页新建只发送稳定目录 key，不能注入任意本机路径。目录清单也可以直接
+            在「Bridge 设置」里由 Web 维护，设备会校验路径存在，「新建项目」下发的
+            目录不存在时由设备自动创建。
           </li>
           <li>
             Claude ACP 支持新建、恢复和删除 Session，但没有可靠的改名接口，因此
@@ -649,11 +628,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run claude`}</CopyableCodeBlock>
             <code>claude-agent-acp</code> 适配器。
           </li>
           <li>
-            交互安装默认写入
-            <code className="ml-1">CLAUDE_BRIDGE_WEB_CONFIG=true</code>
-            ，「Bridge 设置」可以动态启停、调整 Session 数与并发上限；
+            「Bridge 设置」可以直接动态启停、调整 Session 数与并发上限；
             <code className="ml-1">CLAUDE_MAX_THREADS</code>
-            仍是设备本机上限，Web 不能超过它。
+            只是网页值生效前的启动回退值。
           </li>
           <li>
             <code>CLAUDE_BRIDGE_MODE=bypass-permissions</code> 会跳过大部分权限检查，
@@ -862,7 +839,7 @@ Idempotency-Key: <唯一键>
           </FaqItem>
           <FaqItem question="为什么四个 Bridge 的环境变量数量差很多？">
             四者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单，也都有
-            各自的 *_BRIDGE_WEB_CONFIG 远程配置开关。差异来自
+            各自前缀的启动回退变量，远程配置统一由网页控制。差异来自
             Agent 能力面：Codex Bridge 要发现并接管本机已存在的 Codex threads，因此多出
             thread 范围（CODEX_THREAD_SCOPE / CODEX_THREAD_ID）、标题与历史同步
             等开关；Kimi（ACP）、Antigravity（agy headless）和 Claude Code

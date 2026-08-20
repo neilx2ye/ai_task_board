@@ -77,15 +77,14 @@ Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成
 `409 BRIDGE_INSTANCE_CONFLICT`。优雅退出时，同一实例可发送
 `release_runtime: true` 立即释放租约，而不清除网页最后看到的应用状态。
 
-Web 只控制运行时启停、thread 标题上传、历史同步以及 thread/并行 turn 数量。工作目录、
-thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex 可执行文件和受保护的本机边界
-始终由设备环境决定；服务端也会拒绝突破设备 `constraints` 的 effective 报告。thread
-数（`1..500`）与并行 turn 数（`1..32`）由 Web 直接设置整台设备的值，Bridge 的兼容约束
-字段会报告该统一范围，不再与本机 `*_MAX_THREADS` / `*_MAX_CONCURRENT_TURNS` 做二次比较。
-历史同步还受 `constraints.allow_history_sync` 和 `max_history_turns` 限制；设备必须先以
-`CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` 明确授权。同步内容会进入当前 Workspace，所有成员
-都可查看，因此 Web 上的期望开关不能替代设备本机授权。服务端接受的
-`history_turn_limit` 为 `1..500`，实际值还会被设备上报的本机上限收紧。
+Web 是唯一配置入口，控制运行时启停、thread 标题上传、历史同步、工作目录以及
+thread/并行 turn 数量；thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex
+可执行文件仍由设备环境决定。thread 数（`1..500`）与并行 turn 数（`1..32`）由 Web
+直接设置整台设备的值，不再与本机 `*_MAX_THREADS` / `*_MAX_CONCURRENT_TURNS` 做二次
+比较。服务端接受的 `history_turn_limit` 为 `1..500`，设备按网页值直接应用；新连接
+的标题上传与历史同步默认开启。同步内容会进入当前 Workspace，所有成员都可查看。
+服务端仍会拒绝突破设备 `constraints` 的 effective 报告，这些字段现在只是旧 Bridge
+的兼容上报。
 关闭 `sync_history` 或降低 turn 上限只会停止或收窄后续导入，不会删除已经上传到
 Workspace 的历史记录。
 
@@ -232,7 +231,7 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/activity" \
 
 ### 导入本机 Codex Thread 历史（Bridge 0.4+）
 
-获得本机授权的 Bridge 使用 `POST /api/ai/sessions/history` 导入规范化的历史页。请求仍需
+Bridge 使用 `POST /api/ai/sessions/history` 导入规范化的历史页。请求仍需
 Connection Token 和 `X-AI-Session-ID`，但不依赖 Board Task 或 `claim_token`：
 
 ```bash

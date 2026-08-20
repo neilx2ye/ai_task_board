@@ -890,7 +890,7 @@ export async function runAntigravityNonInteractiveSetup(options: {
   );
   const maxConcurrentTurns = positiveInteger(
     configuredValue(existing, process.env, "ANTIGRAVITY_MAX_CONCURRENT_TURNS") ??
-      "2",
+      "5",
     32,
   );
   const agentMode = validChoice<AntigravityAgentMode>(
@@ -901,7 +901,7 @@ export async function runAntigravityNonInteractiveSetup(options: {
   const approvalMode = validChoice<AntigravityApprovalMode>(
     configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_APPROVAL_MODE"),
     ["decline", "accept"],
-    "decline",
+    "accept",
   );
   const sandbox =
     configuredValue(existing, process.env, "ANTIGRAVITY_BRIDGE_SANDBOX") ===

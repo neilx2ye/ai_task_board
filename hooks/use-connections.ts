@@ -5,12 +5,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/hooks/api-client";
 import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
 import {
+  canonicalBridgeKind,
   isAntigravityPlatform,
   isClaudeCodePlatform,
   isKimiPlatform,
+  isUnifiedPlatform,
 } from "@/lib/agent-platforms";
 import type { AgentModelCatalogEntry } from "@/lib/codex-models";
 import type { AIConnectionRow, Json } from "@/lib/types/database";
+import type { BridgeRuntimeVersion } from "@/lib/types/domain";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
 export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
@@ -29,6 +32,8 @@ export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
   device_label?: string | null;
   /** Owner 设置的自更新目标版本；null 表示无待升级。 */
   desired_bridge_version?: string | null;
+  /** 按运行时拆分的能力版本与升级目标；统一设备连接各运行时一份。 */
+  bridge_versions?: BridgeRuntimeVersion[] | null;
 };
 
 export type ConnectionWithToken = {
@@ -49,6 +54,26 @@ export function activeConnections(
   connections: PublicConnection[],
 ): PublicConnection[] {
   return connections.filter((connection) => connection.revoked_at === null);
+}
+
+/**
+ * 取某个运行时实际使用的 Bridge 能力版本。统一设备连接必须匹配运行时；
+ * 单运行时连接在没有平台维度数据时回退到连接级版本。
+ */
+export function bridgeVersionForPlatform(
+  connection: Pick<
+    PublicConnection,
+    "bridge_version" | "bridge_versions" | "platform"
+  >,
+  platform?: string | null,
+): string | null {
+  const kind = canonicalBridgeKind(platform ?? connection.platform);
+  const entry = connection.bridge_versions?.find(
+    (row) => row.platform === kind,
+  );
+  if (entry?.bridge_version) return entry.bridge_version;
+  if (isUnifiedPlatform(connection.platform)) return null;
+  return connection.bridge_version;
 }
 
 function supportsBridgeMinorVersion(

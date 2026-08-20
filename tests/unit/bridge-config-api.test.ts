@@ -121,6 +121,8 @@ describe("owner Bridge configuration API", () => {
         max_concurrent_turns: 4,
         sync_history: true,
         history_turn_limit: 75,
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
         working_directories: [
           {
             directory_key: "main",
@@ -156,6 +158,8 @@ describe("owner Bridge configuration API", () => {
         max_concurrent_turns: 4,
         sync_history: true,
         history_turn_limit: 75,
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
         working_directories: [
           {
             directory_key: "main",
@@ -368,6 +372,8 @@ describe("owner Bridge configuration API", () => {
           sync_history: false,
           history_turn_limit: 50,
           working_directories: null,
+          permission_mode: "safe",
+          approval_mode: "decline",
         },
         {
           method: "PATCH",

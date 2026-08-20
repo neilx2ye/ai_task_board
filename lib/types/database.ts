@@ -134,6 +134,12 @@ export type AIConnectionBridgeSettingsRow = {
   desired_sync_history: boolean;
   desired_history_turn_limit: number;
   desired_working_directories: Json | null;
+  desired_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  desired_approval_mode: "decline" | "accept" | "accept-session" | null;
   applied_version: number | null;
   effective_enabled: boolean | null;
   effective_include_thread_titles: boolean | null;
@@ -142,6 +148,12 @@ export type AIConnectionBridgeSettingsRow = {
   effective_sync_history: boolean | null;
   effective_history_turn_limit: number | null;
   effective_working_directories: Json | null;
+  effective_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  effective_approval_mode: "decline" | "accept" | "accept-session" | null;
   constraint_remote_configuration_enabled: boolean | null;
   constraint_allow_thread_titles: boolean | null;
   constraint_max_threads: number | null;
@@ -165,6 +177,7 @@ export type AIConnectionBridgeSettingsRow = {
   device_id: string | null;
   device_label: string | null;
   desired_bridge_version: string | null;
+  bridge_version: string | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -186,6 +199,12 @@ export type AIConnectionBridgeSettingsInsert = {
   desired_sync_history?: boolean;
   desired_history_turn_limit?: number;
   desired_working_directories?: Json | null;
+  desired_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  desired_approval_mode?: "decline" | "accept" | "accept-session" | null;
   applied_version?: number | null;
   effective_enabled?: boolean | null;
   effective_include_thread_titles?: boolean | null;
@@ -194,6 +213,12 @@ export type AIConnectionBridgeSettingsInsert = {
   effective_sync_history?: boolean | null;
   effective_history_turn_limit?: number | null;
   effective_working_directories?: Json | null;
+  effective_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  effective_approval_mode?: "decline" | "accept" | "accept-session" | null;
   constraint_remote_configuration_enabled?: boolean | null;
   constraint_allow_thread_titles?: boolean | null;
   constraint_max_threads?: number | null;
@@ -217,6 +242,7 @@ export type AIConnectionBridgeSettingsInsert = {
   device_id?: string | null;
   device_label?: string | null;
   desired_bridge_version?: string | null;
+  bridge_version?: string | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -810,6 +836,22 @@ export type ThreadPlanningNoteInsert = {
   updated_at?: string;
 };
 
+export type UserThreadViewStateRow = {
+  workspace_id: string;
+  user_id: string;
+  selected_session_ids: string[];
+  visible_session_ids: string[];
+  updated_at: string;
+};
+
+export type UserThreadViewStateInsert = {
+  workspace_id: string;
+  user_id: string;
+  selected_session_ids?: string[];
+  visible_session_ids?: string[];
+  updated_at?: string;
+};
+
 export type SessionTurnPlanRow = {
   id: string;
   workspace_id: string;
@@ -930,6 +972,10 @@ export type BridgeDesiredConfiguration = {
   sync_history: boolean;
   history_turn_limit: number;
   working_directories: BridgeWorkingDirectory[] | null;
+  /** Codex 专用；其余运行时为 null（仍由设备决定）。 */
+  permission_mode: "safe" | "inherit" | "danger-full-access" | null;
+  /** Codex 专用；其余运行时为 null（仍由设备决定）。 */
+  approval_mode: "decline" | "accept" | "accept-session" | null;
 };
 
 export type BridgeConfigurationConstraints = {
@@ -1547,6 +1593,27 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: "tasks";
             referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      user_thread_view_state: TableDefinition<
+        UserThreadViewStateRow,
+        UserThreadViewStateInsert,
+        Partial<UserThreadViewStateRow>,
+        [
+          {
+            foreignKeyName: "user_thread_view_state_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_thread_view_state_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           },
         ]
       >;

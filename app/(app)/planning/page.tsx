@@ -176,7 +176,14 @@ export default function PlanningPage() {
       groupSessionsByConnection(
         sessionCandidates,
         (connectionsQuery.data ?? [])
-          .filter((connection) => connection.bridge_version !== null)
+          .filter(
+            (connection) =>
+              connection.bridge_version !== null ||
+              (connection.bridge_versions?.some(
+                (entry) => entry.bridge_version !== null,
+              ) ??
+                false),
+          )
           .map((connection) => ({
             id: connection.id,
             name: connection.name,
@@ -186,6 +193,7 @@ export default function PlanningPage() {
             revoked_at: connection.revoked_at,
             model_catalog: connection.model_catalog,
             model_catalog_updated_at: connection.model_catalog_updated_at,
+            bridge_versions: connection.bridge_versions ?? [],
           })),
         directoriesQuery.data ?? [],
       ),

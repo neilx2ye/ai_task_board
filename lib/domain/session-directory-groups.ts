@@ -78,6 +78,26 @@ export function runtimeConnectionSummary(
   };
 }
 
+/**
+ * 分组对外展示的 Bridge 能力版本：统一设备连接按运行时取各自上报值，
+ * 单运行时连接回退到连接级版本。
+ */
+export function runtimeBridgeVersion(
+  connection: Pick<
+    SessionConnectionSummary,
+    "bridge_version" | "bridge_versions" | "platform"
+  >,
+  platform: string | null,
+): string | null {
+  const kind = canonicalBridgeKind(platform ?? connection.platform);
+  const entry = connection.bridge_versions?.find(
+    (row) => row.platform === kind,
+  );
+  if (entry?.bridge_version) return entry.bridge_version;
+  if (isUnifiedPlatform(connection.platform)) return null;
+  return connection.bridge_version;
+}
+
 export function sessionProjectIdForDirectory(
   directory: Pick<SessionDirectoryGroup, "workingDirectory">,
 ): string {
@@ -267,6 +287,7 @@ export function groupSessionsByConnection(
       id: platform ? key : connection.id,
       connection: {
         ...connection,
+        bridge_version: runtimeBridgeVersion(connection, platform),
         model_catalog:
           catalogSession?.connection.model_catalog ??
           (inheritsConnectionCatalog ? connection.model_catalog : null),

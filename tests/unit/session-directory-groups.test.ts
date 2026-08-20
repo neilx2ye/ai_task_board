@@ -513,6 +513,47 @@ describe("Unified device Bridge runtime splitting", () => {
     expect(groups[1]?.connection.model_catalog).toEqual(kimiCatalog);
   });
 
+  it("projects each runtime's reported Bridge version onto its group", () => {
+    const withVersions: SessionConnectionSummary = {
+      ...unifiedConnection,
+      bridge_version: "1.7.1-claude.1",
+      bridge_versions: [
+        { platform: "codex", bridge_version: "1.7.1" },
+        { platform: "kimi", bridge_version: "1.7.1-kimi.1" },
+      ],
+    };
+
+    const groups = groupSessionsByConnection(
+      [
+        session("codex-thread", "/workspace/app", "app", withVersions, "codex"),
+        session("kimi-thread", "/workspace/app", "app", withVersions, "kimi"),
+      ],
+      [withVersions],
+      [],
+    );
+
+    expect(groups.map((group) => group.connection.bridge_version)).toEqual([
+      "1.7.1",
+      "1.7.1-kimi.1",
+    ]);
+  });
+
+  it("does not borrow another runtime's version when its own is missing", () => {
+    const withVersions: SessionConnectionSummary = {
+      ...unifiedConnection,
+      bridge_version: "1.7.1-claude.1",
+      bridge_versions: [{ platform: "codex", bridge_version: "1.7.1" }],
+    };
+
+    const groups = groupSessionsByConnection(
+      [session("kimi-thread", "/workspace/app", "app", withVersions, "kimi")],
+      [withVersions],
+      [],
+    );
+
+    expect(groups[0]?.connection.bridge_version).toBeNull();
+  });
+
   it("keeps unknown runtime kinds after the built-in order", () => {
     const groups = groupSessionsByConnection(
       [

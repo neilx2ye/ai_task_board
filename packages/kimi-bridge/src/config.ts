@@ -291,15 +291,9 @@ export function loadConfiguration(
       ...directory,
     })),
     includeSessionTitles,
-    allowRemoteThreadTitles:
-      includeSessionTitles ||
-      parseBoolean(environment.KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
-    allowRemoteWorkingDirectories: parseBoolean(
-      environment.KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION,
-    ),
-    webConfigurationEnabled: parseBoolean(
-      environment.KIMI_BRIDGE_WEB_CONFIG,
-    ),
+    allowRemoteThreadTitles: true,
+    allowRemoteWorkingDirectories: true,
+    webConfigurationEnabled: true,
     enabled: true,
     sessionNamePrefix: environment.KIMI_SESSION_NAME?.trim() || null,
     capabilities: parseList(
@@ -321,7 +315,7 @@ export function loadConfiguration(
     localMaxThreads,
     maxConcurrentTurns: parseInteger(
       environment.KIMI_MAX_CONCURRENT_TURNS,
-      2,
+      5,
       1,
       32,
     ),

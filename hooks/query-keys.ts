@@ -8,6 +8,9 @@ export const sessionQueryKey = (sessionId: string) =>
 
 export const BRIDGE_DIRECTORIES_QUERY_KEY = ["bridge-directories"] as const;
 
+export const SELECTED_THREADS_QUERY_KEY = ["selected-threads"] as const;
+export const VISIBLE_THREADS_QUERY_KEY = ["visible-threads"] as const;
+
 export const planningNotesQueryKey = (
   projectRef: string,
 ) => ["planning-notes", projectRef] as const;

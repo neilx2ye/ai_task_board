@@ -24,7 +24,7 @@ import {
 } from "@/lib/validation/bridge-config";
 
 const BRIDGE_SETTINGS_COLUMNS =
-  "connection_id, platform, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
+  "connection_id, platform, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, desired_permission_mode, desired_approval_mode, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, effective_working_directories, effective_permission_mode, effective_approval_mode, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, constraint_allow_working_directory_configuration, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, bridge_version, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 const LEGACY_BRIDGE_SETTINGS_COLUMNS =
   "connection_id, platform, workspace_id, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, applied_version, effective_enabled, effective_include_thread_titles, effective_max_threads, effective_max_concurrent_turns, effective_sync_history, effective_history_turn_limit, constraint_remote_configuration_enabled, constraint_allow_thread_titles, constraint_max_threads, constraint_max_concurrent_turns, constraint_thread_scope, constraint_working_directory, constraint_fixed_thread, constraint_permission_mode, constraint_approval_mode, constraint_allow_history_sync, constraint_max_history_turns, error, applied_at, active_runtime_instance_id, active_runtime_last_sequence, active_runtime_lease_expires_at, created_at, updated_at" as const;
 
@@ -40,6 +40,10 @@ type LegacyBridgeSettingsRow = Omit<
   | "desired_working_directories"
   | "effective_working_directories"
   | "constraint_allow_working_directory_configuration"
+  | "desired_permission_mode"
+  | "desired_approval_mode"
+  | "effective_permission_mode"
+  | "effective_approval_mode"
   | "model_catalog"
   | "model_catalog_updated_at"
   | "quota"
@@ -47,6 +51,7 @@ type LegacyBridgeSettingsRow = Omit<
   | "device_id"
   | "device_label"
   | "desired_bridge_version"
+  | "bridge_version"
 >;
 
 function isMissingWorkingDirectorySchema(error: DatabaseErrorLike): boolean {
@@ -65,11 +70,18 @@ function isMissingWorkingDirectorySchema(error: DatabaseErrorLike): boolean {
     "desired_working_directories",
     "effective_working_directories",
     "constraint_allow_working_directory_configuration",
+    "desired_permission_mode",
+    "desired_approval_mode",
+    "effective_permission_mode",
+    "effective_approval_mode",
     "model_catalog",
     "p_working_directories",
+    "p_permission_mode",
+    "p_approval_mode",
     "device_id",
     "device_label",
     "desired_bridge_version",
+    "bridge_version",
   ].some((field) => source.includes(field));
 }
 
@@ -82,6 +94,10 @@ function withWorkingDirectoryDefaults(
     desired_working_directories: null,
     effective_working_directories: null,
     constraint_allow_working_directory_configuration: false,
+    desired_permission_mode: null,
+    desired_approval_mode: null,
+    effective_permission_mode: null,
+    effective_approval_mode: null,
     model_catalog: null,
     model_catalog_updated_at: null,
     quota: null,
@@ -89,6 +105,7 @@ function withWorkingDirectoryDefaults(
     device_id: null,
     device_label: null,
     desired_bridge_version: null,
+    bridge_version: null,
   };
 }
 
@@ -120,6 +137,8 @@ function desiredConfiguration(
       row.desired_working_directories,
       "desired",
     ),
+    permission_mode: row.desired_permission_mode ?? null,
+    approval_mode: row.desired_approval_mode ?? null,
   };
 }
 
@@ -199,6 +218,19 @@ function appliedConfiguration(
             row.effective_working_directories,
             "effective",
           ),
+          // Older rows report the modes only through constraints; treat them
+          // as the effective value until a new Bridge report replaces it.
+          permission_mode:
+            (row.effective_permission_mode ??
+              row.constraint_permission_mode) as
+              | "safe"
+              | "inherit"
+              | "danger-full-access",
+          approval_mode: (row.effective_approval_mode ??
+            row.constraint_approval_mode) as
+            | "decline"
+            | "accept"
+            | "accept-session",
         }
       : null,
     constraints,
@@ -327,6 +359,8 @@ export async function updateBridgeConfiguration(
     p_sync_history: input.sync_history,
     p_history_turn_limit: input.history_turn_limit,
     p_working_directories: input.working_directories as Json | null,
+    p_permission_mode: input.permission_mode,
+    p_approval_mode: input.approval_mode,
     p_idempotency_key: idempotencyKey,
     p_request_hash: hashRequest("update_ai_connection_bridge_config", {
       connectionId,
@@ -351,6 +385,8 @@ export async function updateBridgeConfiguration(
 
   const legacyParameters: Partial<typeof parameters> = { ...parameters };
   delete legacyParameters.p_working_directories;
+  delete legacyParameters.p_permission_mode;
+  delete legacyParameters.p_approval_mode;
   const legacyClient = admin as unknown as {
     rpc: (
       functionName: string,

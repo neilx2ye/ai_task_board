@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeConnections,
+  bridgeVersionForPlatform,
   supportsManagedDirectoryCreation,
   supportsRemoteBridgeUpdate,
   supportsWorkingDirectoryInventory,
@@ -119,7 +120,7 @@ describe("activeConnections", () => {
   it.each([
     ["1.5.0", true],
     ["1.5.0-kimi.1", true],
-    ["1.7.1-kimi.1", true],
+    ["1.8.0-kimi.1", true],
     ["1.5.0-antigravity.1", true],
     ["2.0.0", true],
     ["1.4.0", false],
@@ -133,5 +134,45 @@ describe("activeConnections", () => {
         connection({ bridge_version: bridgeVersion as string | null }),
       ),
     ).toBe(expected);
+  });
+});
+
+describe("bridgeVersionForPlatform", () => {
+  it("reads the matching runtime entry of a unified connection", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({
+          platform: "All",
+          bridge_version: "1.8.0-claude.1",
+          bridge_versions: [
+            { platform: "codex", bridge_version: "1.8.0" },
+            { platform: "kimi", bridge_version: "1.8.0-kimi.1" },
+          ],
+        }),
+        "kimi",
+      ),
+    ).toBe("1.8.0-kimi.1");
+  });
+
+  it("returns null for a unified runtime that has not reported", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({
+          platform: "All",
+          bridge_version: "1.8.0-claude.1",
+          bridge_versions: [{ platform: "codex", bridge_version: "1.8.0" }],
+        }),
+        "kimi",
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to the connection-level version for single-runtime links", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({ bridge_version: "1.8.0-claude.1" }),
+        "claude",
+      ),
+    ).toBe("1.8.0-claude.1");
   });
 });

@@ -9,7 +9,10 @@ import {
   hashToken,
 } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
-import { canonicalBridgeKind } from "@/lib/agent-platforms";
+import {
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 import { parseCodexModelCatalog } from "@/lib/codex-models";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import {
@@ -171,6 +174,28 @@ function isMissingPlatformSchema(error: {
     .includes("platform");
 }
 
+function isMissingBridgeVersionColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    source.includes("bridge_version") &&
+    !source.includes("desired_bridge_version")
+  );
+}
+
 async function loadConnectionModelSettings(
   admin: AdminClient,
   workspaceId: string,
@@ -195,7 +220,7 @@ async function loadConnectionModelSettings(
     let { data, error } = await admin
       .from("ai_connection_bridge_settings")
       .select(
-        "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, bridge_version",
       )
       .eq("workspace_id", workspaceId)
       .in("connection_id", [...ids]);
@@ -211,7 +236,9 @@ async function loadConnectionModelSettings(
         .eq("workspace_id", workspaceId)
         .in("connection_id", [...ids]);
       data = fallback.data
-        ? withPlatformDefaults(fallback.data)
+        ? withPlatformDefaults(
+            fallback.data.map((row) => ({ ...row, bridge_version: null })),
+          )
         : null;
       error = fallback.error;
     }
@@ -231,8 +258,23 @@ async function loadConnectionModelSettings(
             device_id: null,
             device_label: null,
             desired_bridge_version: null,
+            bridge_version: null,
           })),
         )
+        : null;
+      error = fallback.error;
+    }
+    if (error && isMissingBridgeVersionColumn(error)) {
+      // 滚动部署：平台维度版本列可能落后于 Web 发布，先退回不读该列。
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? fallback.data.map((row) => ({ ...row, bridge_version: null }))
         : null;
       error = fallback.error;
     }
@@ -252,6 +294,7 @@ async function loadConnectionModelSettings(
             device_id: null,
             device_label: null,
             desired_bridge_version: null,
+            bridge_version: null,
           })),
         );
       }
@@ -435,6 +478,24 @@ async function loadSessionListItems(
       settings,
     ]),
   );
+  const bridgeVersionsByConnectionId = new Map<
+    string,
+    {
+      platform: string;
+      bridge_version: string | null;
+      desired_bridge_version: string | null;
+    }[]
+  >();
+  for (const settings of connectionSettings) {
+    const entry = {
+      platform: settings.platform,
+      bridge_version: settings.bridge_version ?? null,
+      desired_bridge_version: settings.desired_bridge_version ?? null,
+    };
+    const existing = bridgeVersionsByConnectionId.get(settings.connection_id);
+    if (existing) existing.push(entry);
+    else bridgeVersionsByConnectionId.set(settings.connection_id, [entry]);
+  }
   const currentTaskById = new Map(
     currentTasks.map((task) => [task.id, sessionTaskSummary(task)]),
   );
@@ -480,6 +541,14 @@ async function loadSessionListItems(
       connectionSettings.find(
         (row) => row.connection_id === session.connection_id,
       );
+    const platformSettings = connectionSettingsById.get(
+      `${session.connection_id}:${canonicalBridgeKind(session.platform)}`,
+    );
+    const bridgeVersion =
+      platformSettings?.bridge_version ??
+      (connection && !isUnifiedPlatform(connection.platform)
+        ? connection.bridge_version
+        : null);
     return {
       ...session,
       status: currentTask?.awaiting_user_input ? "waiting" : session.status,
@@ -488,6 +557,9 @@ async function loadSessionListItems(
       connection: connection
         ? {
             ...connection,
+            bridge_version: bridgeVersion,
+            bridge_versions:
+              bridgeVersionsByConnectionId.get(connection.id) ?? [],
             model_catalog: parseCodexModelCatalog(
               connectionModelSettings?.model_catalog,
             ),
@@ -503,6 +575,7 @@ async function loadSessionListItems(
             revoked_at: new Date(0).toISOString(),
             model_catalog: null,
             model_catalog_updated_at: null,
+            bridge_versions: [],
           },
       current_task:
         currentTask ??
@@ -782,6 +855,17 @@ export async function listConnections(context: UserWorkspaceContext) {
           quota: row.quota,
           quota_updated_at: row.quota_updated_at,
         }));
+      const bridgeVersions = connectionSettings
+        .filter(
+          (row) =>
+            row.bridge_version !== null ||
+            row.desired_bridge_version !== null,
+        )
+        .map((row) => ({
+          platform: row.platform,
+          bridge_version: row.bridge_version,
+          desired_bridge_version: row.desired_bridge_version,
+        }));
       return {
         ...connection,
         model_catalog: parseCodexModelCatalog(modelSettings?.model_catalog),
@@ -793,6 +877,7 @@ export async function listConnections(context: UserWorkspaceContext) {
         device_id: modelSettings?.device_id ?? null,
         device_label: modelSettings?.device_label ?? null,
         desired_bridge_version: modelSettings?.desired_bridge_version ?? null,
+        bridge_versions: bridgeVersions.length ? bridgeVersions : null,
       };
     }),
   };

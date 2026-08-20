@@ -66,7 +66,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.7.1";
+const BRIDGE_VERSION = "1.8.0";
 /** Canonical settings-row kind shared with the unified device Bridge. */
 const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
@@ -79,6 +79,8 @@ const MAX_ACTIVITY_BACKLOG = 64;
 const USER_INPUT_POLL_INTERVAL_MS = 1_500;
 const MAX_THREADS = 500;
 const MAX_CONCURRENT_TURNS = 32;
+/** Web 拥有历史上限；本机只保留启动默认值，设备侧的安全扫描硬顶同为 500。 */
+const MAX_HISTORY_TURNS = 500;
 const MAX_MODEL_CATALOG_ENTRIES = 500;
 const MODEL_CATALOG_PAGE_SIZE = 100;
 
@@ -178,6 +180,8 @@ export type EffectiveBridgeConfiguration = {
   maxConcurrentTurns: number;
   syncHistory: boolean;
   historyTurnLimit: number;
+  permissionMode: PermissionMode;
+  approvalMode: ApprovalMode;
   workingDirectory: string;
   workingDirectories: ManagedWorkingDirectory[];
 };
@@ -193,6 +197,10 @@ export type RemoteBridgeConfigurationDesired = {
   history_turn_limit?: number;
   /** Missing is normalized to null for compatibility with Boards before 0.8. */
   working_directories: RemoteWorkingDirectory[] | null;
+  /** Missing/null keeps the current runtime value (older Boards). */
+  permission_mode?: PermissionMode | null;
+  /** Missing/null keeps the current runtime value (older Boards). */
+  approval_mode?: ApprovalMode | null;
 };
 
 export type RemoteBridgeConfigurationConstraints = {
@@ -565,6 +573,24 @@ function parsePermissionMode(value: string | undefined): PermissionMode {
   );
 }
 
+function parseWebPermissionMode(value: unknown): PermissionMode {
+  if (value === "safe" || value === "inherit" || value === "danger-full-access") {
+    return value;
+  }
+  throw new Error(
+    "看板配置 permission_mode 必须是 danger-full-access、safe 或 inherit",
+  );
+}
+
+function parseWebApprovalMode(value: unknown): ApprovalMode {
+  if (value === "decline" || value === "accept" || value === "accept-session") {
+    return value;
+  }
+  throw new Error(
+    "看板配置 approval_mode 必须是 decline、accept 或 accept-session",
+  );
+}
+
 function threadPermissionOverrides(
   mode: PermissionMode,
   cwd: string,
@@ -704,7 +730,7 @@ export function loadConfiguration(
   );
   const startupMaxConcurrentTurns = boundedInteger(
     environment.CODEX_MAX_CONCURRENT_TURNS,
-    2,
+    5,
     1,
     MAX_CONCURRENT_TURNS,
   );
@@ -712,7 +738,7 @@ export function loadConfiguration(
     environment.CODEX_BRIDGE_MAX_HISTORY_TURNS,
     50,
     1,
-    200,
+    MAX_HISTORY_TURNS,
   );
   const localIncludeThreadTitles = parseBoolean(
     environment.CODEX_BRIDGE_INCLUDE_THREAD_TITLES,
@@ -785,20 +811,14 @@ export function loadConfiguration(
     syncHistory: false,
     historyTurnLimit: localMaxHistoryTurns,
     localIncludeThreadTitles,
-    allowRemoteThreadTitles:
-      localIncludeThreadTitles ||
-      parseBoolean(environment.CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
-    allowHistorySync: parseBoolean(
-      environment.CODEX_BRIDGE_ALLOW_HISTORY_SYNC,
-    ),
-    allowRemoteWorkingDirectories: parseBoolean(
-      environment.CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES,
-    ),
+    // Web 是唯一配置入口：这些授权字段已不再从设备环境读取，
+    // 仅保留在约束报告中兼容旧看板校验。
+    allowRemoteThreadTitles: true,
+    allowHistorySync: true,
+    allowRemoteWorkingDirectories: true,
     localMaxThreads,
     localMaxHistoryTurns,
-    webConfigurationEnabled: parseBoolean(
-      environment.CODEX_BRIDGE_WEB_CONFIG,
-    ),
+    webConfigurationEnabled: true,
     codexBinary: environment.CODEX_BINARY?.trim() || "codex",
   };
 }
@@ -813,6 +833,8 @@ export function effectiveBridgeConfiguration(
     maxConcurrentTurns: configuration.maxConcurrentTurns,
     syncHistory: configuration.syncHistory,
     historyTurnLimit: configuration.historyTurnLimit,
+    permissionMode: configuration.permissionMode,
+    approvalMode: configuration.approvalMode,
     workingDirectory: configuration.workingDirectory,
     workingDirectories: copyWorkingDirectories(
       configuration.workingDirectories,
@@ -835,7 +857,7 @@ export function bridgeConfigurationConstraints(
     // ceilings.
     max_threads: MAX_THREADS,
     max_concurrent_turns: MAX_CONCURRENT_TURNS,
-    max_history_turns: configuration.localMaxHistoryTurns,
+    max_history_turns: MAX_HISTORY_TURNS,
     thread_scope: configuration.threadScope,
     working_directory: configuration.localWorkingDirectory,
     fixed_thread: configuration.threadIdFilter !== null,
@@ -873,13 +895,7 @@ export function resolveRemoteConfiguration(
     throw new Error("看板配置 include_thread_titles 必须是布尔值");
   }
   const warnings: string[] = [];
-  const includeThreadTitles =
-    desired.include_thread_titles && configuration.allowRemoteThreadTitles;
-  if (desired.include_thread_titles && !includeThreadTitles) {
-    warnings.push(
-      "看板请求上传 thread 标题，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
-    );
-  }
+  const includeThreadTitles = desired.include_thread_titles;
   if (
     desired.sync_history !== undefined &&
     typeof desired.sync_history !== "boolean"
@@ -892,13 +908,15 @@ export function resolveRemoteConfiguration(
   ) {
     throw new Error("看板配置 history_turn_limit 必须是整数");
   }
-  const syncHistory =
-    desired.sync_history === true && configuration.allowHistorySync;
-  if (desired.sync_history === true && !syncHistory) {
-    warnings.push(
-      "看板请求同步历史，但设备未启用 CODEX_BRIDGE_ALLOW_HISTORY_SYNC",
-    );
-  }
+  const syncHistory = desired.sync_history === true;
+  const permissionMode =
+    desired.permission_mode === null || desired.permission_mode === undefined
+      ? configuration.permissionMode
+      : parseWebPermissionMode(desired.permission_mode);
+  const approvalMode =
+    desired.approval_mode === null || desired.approval_mode === undefined
+      ? configuration.approvalMode
+      : parseWebApprovalMode(desired.approval_mode);
   let workingDirectories = copyWorkingDirectories(
     configuration.localWorkingDirectories,
   );
@@ -906,15 +924,9 @@ export function resolveRemoteConfiguration(
     desired.working_directories !== null &&
     desired.working_directories !== undefined
   ) {
-    if (configuration.allowRemoteWorkingDirectories) {
-      workingDirectories = parseRemoteWorkingDirectories(
-        desired.working_directories,
-      );
-    } else {
-      warnings.push(
-        "看板请求配置工作目录，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES；继续使用本机启动目录",
-      );
-    }
+    workingDirectories = parseRemoteWorkingDirectories(
+      desired.working_directories,
+    );
   }
   const workingDirectory =
     workingDirectories[0]?.workingDirectory ??
@@ -937,11 +949,13 @@ export function resolveRemoteConfiguration(
       ),
       syncHistory,
       historyTurnLimit: clampedRemoteInteger(
-        desired.history_turn_limit ?? Math.min(50, configuration.localMaxHistoryTurns),
-        configuration.localMaxHistoryTurns,
+        desired.history_turn_limit ?? 50,
+        MAX_HISTORY_TURNS,
         "history_turn_limit",
         warnings,
       ),
+      permissionMode,
+      approvalMode,
       workingDirectory,
       workingDirectories,
     },
@@ -1066,6 +1080,8 @@ function remoteDesiredFromEffective(
     max_concurrent_turns: effective.maxConcurrentTurns,
     sync_history: effective.syncHistory,
     history_turn_limit: effective.historyTurnLimit,
+    permission_mode: effective.permissionMode,
+    approval_mode: effective.approvalMode,
     // Effective reports always carry the concrete non-empty list, even when
     // the Board desired value was null and the local startup list won.
     working_directories: remoteWorkingDirectories(
@@ -1112,6 +1128,14 @@ function parseRemoteConfigurationResponse(
           desired.working_directories === undefined
             ? null
             : (desired.working_directories as RemoteWorkingDirectory[] | null),
+        permission_mode:
+          desired.permission_mode === undefined
+            ? null
+            : (desired.permission_mode as PermissionMode | null),
+        approval_mode:
+          desired.approval_mode === undefined
+            ? null
+            : (desired.approval_mode as ApprovalMode | null),
       },
       desired_bridge_version: stringValue(configuration.desired_bridge_version),
       applied: configuration.applied,
@@ -2998,7 +3022,11 @@ class DeviceBridge {
     let nextInventorySyncAt = 0;
     do {
       let reconciledConfiguration = false;
-      if (this.configuration.webConfigurationEnabled) {
+      // Web 配置恒开启；只有当 Board 缺少配置端点（旧版兼容降级）时才跳过。
+      if (
+        this.configuration.webConfigurationEnabled &&
+        !this.legacyConfigurationCompatibility
+      ) {
         try {
           reconciledConfiguration = await this.reconcileRemoteConfiguration();
         } catch (error) {
@@ -3168,7 +3196,7 @@ class DeviceBridge {
       } catch (error) {
         if (this.stopping) return;
         const status = errorStatus(error);
-        if (status === 404 && !this.configuration.webConfigurationEnabled) {
+        if (status === 404) {
           // Board 0.2 compatibility: inventory can run without config support.
           this.legacyConfigurationCompatibility = true;
           return;
@@ -3238,7 +3266,6 @@ class DeviceBridge {
         const status = errorStatus(error);
         if (
           status === 404 &&
-          !this.configuration.webConfigurationEnabled &&
           this.legacyConfigurationCompatibility &&
           !this.runtimeLeaseClaimed
         ) {
@@ -3395,6 +3422,8 @@ class DeviceBridge {
         resolved.effective.maxConcurrentTurns;
       this.configuration.syncHistory = resolved.effective.syncHistory;
       this.configuration.historyTurnLimit = resolved.effective.historyTurnLimit;
+      this.configuration.permissionMode = resolved.effective.permissionMode;
+      this.configuration.approvalMode = resolved.effective.approvalMode;
       this.configuration.workingDirectory =
         resolved.effective.workingDirectory;
       this.configuration.workingDirectories = copyWorkingDirectories(
@@ -3424,6 +3453,10 @@ class DeviceBridge {
             previousEffective.maxConcurrentTurns;
           this.configuration.syncHistory = previousEffective.syncHistory;
           this.configuration.historyTurnLimit = previousEffective.historyTurnLimit;
+          this.configuration.permissionMode =
+            previousEffective.permissionMode;
+          this.configuration.approvalMode =
+            previousEffective.approvalMode;
           this.configuration.workingDirectory =
             previousEffective.workingDirectory;
           this.configuration.workingDirectories = copyWorkingDirectories(
@@ -3439,6 +3472,10 @@ class DeviceBridge {
           // unapplied and the next reconcile retries from the previous
           // effective allowlist instead of leaking a failed remote directory
           // change into thread creation or later inventory scans.
+          this.configuration.permissionMode =
+            previousEffective.permissionMode;
+          this.configuration.approvalMode =
+            previousEffective.approvalMode;
           this.configuration.workingDirectory =
             previousEffective.workingDirectory;
           this.configuration.workingDirectories = copyWorkingDirectories(

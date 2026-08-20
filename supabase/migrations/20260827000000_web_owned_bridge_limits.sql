@@ -11,6 +11,7 @@
 
 alter table public.ai_connection_bridge_settings
   alter column desired_include_thread_titles set default true,
+  alter column desired_max_concurrent_turns set default 5,
   alter column desired_sync_history set default true;
 
 create or replace function public._default_bridge_sync_history()
@@ -42,6 +43,12 @@ set desired_include_thread_titles = true,
     updated_at = clock_timestamp()
 where version = 1
   and desired_include_thread_titles = false;
+
+update public.ai_connection_bridge_settings
+set desired_max_concurrent_turns = 5,
+    updated_at = clock_timestamp()
+where version = 1
+  and desired_max_concurrent_turns = 2;
 
 update public.ai_connection_bridge_settings
 set desired_sync_history = true,

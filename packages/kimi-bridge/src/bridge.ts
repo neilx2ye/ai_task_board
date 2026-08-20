@@ -189,14 +189,7 @@ export function resolveRemoteConfiguration(
     throw new Error("看板配置 sync_history 必须是布尔值");
   }
   const warnings: string[] = [];
-  const includeThreadTitles =
-    desired.include_thread_titles &&
-    configuration.allowRemoteThreadTitles;
-  if (desired.include_thread_titles && !includeThreadTitles) {
-    warnings.push(
-      "看板请求上传 Session 标题，但设备未启用 KIMI_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
-    );
-  }
+  const includeThreadTitles = desired.include_thread_titles;
   if (desired.sync_history) {
     warnings.push("Kimi Bridge 不支持历史同步，忽略看板的历史同步请求");
   }
@@ -207,15 +200,9 @@ export function resolveRemoteConfiguration(
     desired.working_directories !== null &&
     desired.working_directories !== undefined
   ) {
-    if (configuration.allowRemoteWorkingDirectories) {
-      workingDirectories = parseRemoteWorkingDirectories(
-        desired.working_directories,
-      );
-    } else {
-      warnings.push(
-        "看板请求配置工作目录，但设备未启用 KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION；继续使用本机启动目录",
-      );
-    }
+    workingDirectories = parseRemoteWorkingDirectories(
+      desired.working_directories,
+    );
   }
   return {
     effective: {

@@ -55,6 +55,12 @@ export const bridgeDesiredConfigurationSchema = z
     sync_history: z.boolean(),
     history_turn_limit: z.number().int().min(1).max(500),
     working_directories: bridgeWorkingDirectoriesSchema,
+    permission_mode: z
+      .enum(["safe", "inherit", "danger-full-access"])
+      .nullable(),
+    approval_mode: z
+      .enum(["decline", "accept", "accept-session"])
+      .nullable(),
   })
   .strict();
 
@@ -73,6 +79,8 @@ export const updateBridgeConfigurationSchema =
 export const updateBridgeVersionSchema = z
   .object({
     target_version: nonEmptyText.max(50).nullable(),
+    /** 统一设备连接需要指定目标运行时；单运行时连接缺省取连接平台。 */
+    platform: nonEmptyText.max(100).optional(),
   })
   .strict();
 
@@ -100,6 +108,14 @@ const bridgeEffectiveReportSchema = bridgeDesiredConfigurationSchema.extend({
   sync_history: z.boolean().default(false),
   history_turn_limit: z.number().int().min(1).max(500).default(50),
   working_directories: bridgeWorkingDirectoriesSchema.default(null),
+  permission_mode: z
+    .enum(["safe", "inherit", "danger-full-access"])
+    .nullable()
+    .optional(),
+  approval_mode: z
+    .enum(["decline", "accept", "accept-session"])
+    .nullable()
+    .optional(),
 });
 
 const bridgeConstraintsReportSchema =

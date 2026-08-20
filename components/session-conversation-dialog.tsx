@@ -190,13 +190,13 @@ const HISTORY_SYNC_COPY: Record<
   unauthorized: {
     label: "历史同步未授权",
     description:
-      "Bridge 尚未上报历史同步能力或本机授权。请升级至 0.4.0+，并在设备本机设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true 后再开启。",
+      "Bridge 尚未上报历史同步能力。请升级至 0.4.0+，再到连接的 Bridge 设置开启历史同步。",
     className: "border-slate-200 bg-slate-50 text-slate-700",
   },
   "not-started": {
     label: "历史尚未同步",
     description:
-      "此 Thread 未开启历史同步，或设备尚未开始。请到连接的 Bridge 设置确认期望值与本机授权。",
+      "此 Thread 未开启历史同步，或设备尚未开始。请到连接的 Bridge 设置确认期望值。",
     className: "border-slate-200 bg-slate-50 text-slate-700",
   },
   syncing: {
@@ -217,7 +217,7 @@ const HISTORY_SYNC_COPY: Record<
   },
   failed: {
     label: "历史同步失败",
-    description: "Bridge 无法完成本次历史读取，请检查本机授权和设备日志。",
+    description: "Bridge 无法完成本次历史读取，请检查设备日志。",
     className: "border-red-200 bg-red-50 text-red-800",
   },
 };

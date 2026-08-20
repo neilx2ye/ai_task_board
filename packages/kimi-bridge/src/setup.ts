@@ -885,7 +885,7 @@ export async function runKimiNonInteractiveSetup(options: {
     500,
   );
   const maxConcurrentTurns = positiveInteger(
-    configuredValue(existing, process.env, "KIMI_MAX_CONCURRENT_TURNS") ?? "2",
+    configuredValue(existing, process.env, "KIMI_MAX_CONCURRENT_TURNS") ?? "5",
     32,
   );
   const agentMode = validChoice<KimiAgentMode>(
@@ -896,7 +896,7 @@ export async function runKimiNonInteractiveSetup(options: {
   const approvalMode = validChoice<KimiApprovalMode>(
     configuredValue(existing, process.env, "KIMI_BRIDGE_APPROVAL_MODE"),
     ["decline", "accept"],
-    "decline",
+    "accept",
   );
   const configuredTitles = configuredValue(
     existing,

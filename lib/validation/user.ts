@@ -87,6 +87,18 @@ export const upsertThreadPlanningNotesSchema = z
   })
   .strict();
 
+export const upsertSelectedThreadsSchema = z
+  .object({
+    session_ids: z.array(uuidSchema).max(1000),
+  })
+  .strict();
+
+export const upsertVisibleThreadsSchema = z
+  .object({
+    session_ids: z.array(uuidSchema).max(1000),
+  })
+  .strict();
+
 export const createTurnPlanStepSchema = z
   .object({
     content: nonEmptyText.max(100_000),
@@ -307,6 +319,12 @@ export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;
 export type UpsertPlanningNotesInput = z.infer<typeof upsertPlanningNotesSchema>;
 export type UpsertThreadPlanningNotesInput = z.infer<
   typeof upsertThreadPlanningNotesSchema
+>;
+export type UpsertSelectedThreadsInput = z.infer<
+  typeof upsertSelectedThreadsSchema
+>;
+export type UpsertVisibleThreadsInput = z.infer<
+  typeof upsertVisibleThreadsSchema
 >;
 export type CreateTurnPlanStepInput = z.infer<typeof createTurnPlanStepSchema>;
 export type UpdateTurnPlanStepInput = z.infer<typeof updateTurnPlanStepSchema>;

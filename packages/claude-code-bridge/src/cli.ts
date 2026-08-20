@@ -32,13 +32,13 @@ Optional environment variables:
   CLAUDE_WORKING_DIRECTORIES        JSON allowlist of {key,name,path} directories
   CLAUDE_SESSION_NAME               Prefix for names shown in the Board
   CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES  true uploads local Claude session titles
-  CLAUDE_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  true lets Web enable title upload
-  CLAUDE_BRIDGE_WEB_CONFIG          true lets Web apply enabled/limits/titles
-  CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  true lets Web replace the
-                                  working directory list
+  CLAUDE_BRIDGE_ALLOW_REMOTE_THREAD_TITLES  Deprecated: Web always owns title upload
+  CLAUDE_BRIDGE_WEB_CONFIG          Deprecated: Web configuration is always enabled
+  CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  Deprecated: Web always owns
+                                  the working directory list
   CLAUDE_CAPABILITIES               Comma/space-separated Board capabilities
   CLAUDE_MAX_THREADS                Startup Session fallback (1..500, default: 50)
-  CLAUDE_MAX_CONCURRENT_TURNS       Startup concurrency (1..32, default: 2)
+  CLAUDE_MAX_CONCURRENT_TURNS       Startup concurrency (1..32, default: 5)
   CLAUDE_BRIDGE_APPROVAL_MODE       accept or decline
   CLAUDE_BRIDGE_MODE                default, plan, accept-edits, or bypass-permissions
   CLAUDE_BINARY                     claude-agent-acp executable path (default:

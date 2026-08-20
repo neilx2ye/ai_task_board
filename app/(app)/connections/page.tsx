@@ -55,7 +55,12 @@ import {
 } from "@/hooks/use-connections";
 import { supportsBridgeSettings } from "@/hooks/use-bridge-config";
 import { formatDateTime, formatRelativeTime } from "@/components/utils";
-import { connectionPlatformLabel } from "@/lib/agent-platforms";
+import {
+  bridgeKindDisplayName,
+  canonicalBridgeKind,
+  connectionPlatformLabel,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
 
 const SUPPORTED_CONNECTION_PLATFORMS = [
   { value: "Codex", label: "Codex" },
@@ -64,6 +69,40 @@ const SUPPORTED_CONNECTION_PLATFORMS = [
   { value: "Claude Code", label: "Claude Code" },
   { value: "All", label: "统一设备 Bridge（四种运行时、一个 Token）" },
 ];
+
+type ConnectionRuntime = {
+  platform: string;
+  bridge_version: string | null;
+  desired: string | null;
+};
+
+/** 连接卡片上要展示的运行时版本：统一设备连接按四种运行时拆分。 */
+function connectionRuntimes(connection: PublicConnection): ConnectionRuntime[] {
+  if (!isUnifiedPlatform(connection.platform)) {
+    return [
+      {
+        platform: canonicalBridgeKind(connection.platform),
+        bridge_version: connection.bridge_version,
+        desired: connection.desired_bridge_version ?? null,
+      },
+    ];
+  }
+  return (["codex", "kimi", "antigravity", "claude"] as const)
+    .map((platform) => {
+      const entry = connection.bridge_versions?.find(
+        (row) => row.platform === platform,
+      );
+      return {
+        platform,
+        bridge_version: entry?.bridge_version ?? null,
+        desired: entry?.desired_bridge_version ?? null,
+      };
+    })
+    .filter(
+      (runtime) =>
+        runtime.bridge_version !== null || runtime.desired !== null,
+    );
+}
 
 function RenameConnectionDialog({
   connection,
@@ -268,15 +307,7 @@ function ConnectionCard({
     }
   };
 
-  const desiredVersion = connection.desired_bridge_version ?? null;
-  const updatePending =
-    desiredVersion !== null &&
-    compareBridgeVersions(desiredVersion, connection.bridge_version) === 1;
-  const newerRelease =
-    latestBridgeVersion !== null &&
-    compareBridgeVersions(latestBridgeVersion, connection.bridge_version) === 1
-      ? latestBridgeVersion
-      : null;
+  const runtimes = connectionRuntimes(connection);
 
   return (
     <Card>
@@ -313,53 +344,94 @@ function ConnectionCard({
           </div>
         </dl>
 
-        {connection.bridge_version ? (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Bridge {connection.bridge_version}</span>
-            {updatePending ? (
-              <>
-                <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
-                  升级中 → {desiredVersion}
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs"
-                  disabled={pending}
-                  onClick={() =>
-                    run(() => setUpdateTarget.mutateAsync(null))
-                  }
+        {runtimes.length > 0 ? (
+          <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+            {runtimes.map((runtime) => {
+              const updatePending =
+                runtime.desired !== null &&
+                compareBridgeVersions(
+                  runtime.desired,
+                  runtime.bridge_version,
+                ) === 1;
+              const newerRelease =
+                latestBridgeVersion !== null &&
+                runtime.desired === null &&
+                compareBridgeVersions(
+                  latestBridgeVersion,
+                  runtime.bridge_version,
+                ) === 1
+                  ? latestBridgeVersion
+                  : null;
+              return (
+                <div
+                  key={runtime.platform}
+                  className="flex flex-wrap items-center gap-2"
                 >
-                  取消升级
-                </Button>
-              </>
-            ) : newerRelease ? (
-              supportsRemoteBridgeUpdate(connection) ? (
-                <>
-                  <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
-                    可升级 {newerRelease}
-                  </Badge>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 gap-1 px-2 text-xs"
-                    disabled={pending}
-                    title="设备会在下次配置交换后从 npm 下载并自动重启"
-                    onClick={() =>
-                      run(() => setUpdateTarget.mutateAsync(newerRelease))
-                    }
-                  >
-                    <ArrowUpCircleIcon className="size-3.5" />
-                    升级
-                  </Button>
-                </>
-              ) : (
-                <span title="Web 触发的自更新从 Bridge 1.5.0 开始提供">
-                  新版 {newerRelease} 可用；需先在设备上手动升级一次至
-                  ≥1.5.0，之后即可在网页升级
-                </span>
-              )
-            ) : null}
+                  <span>
+                    {isUnifiedPlatform(connection.platform)
+                      ? `${bridgeKindDisplayName(runtime.platform)} · `
+                      : ""}
+                    Bridge {runtime.bridge_version ?? "未上报"}
+                  </span>
+                  {updatePending ? (
+                    <>
+                      <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
+                        升级中 → {runtime.desired}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={pending}
+                        onClick={() =>
+                          run(() =>
+                            setUpdateTarget.mutateAsync({
+                              targetVersion: null,
+                              platform: runtime.platform,
+                            }),
+                          )
+                        }
+                      >
+                        取消升级
+                      </Button>
+                    </>
+                  ) : newerRelease ? (
+                    supportsRemoteBridgeUpdate({
+                      bridge_version: runtime.bridge_version,
+                    }) ? (
+                      <>
+                        <Badge className="border border-amber-200 bg-amber-50 text-amber-700">
+                          可升级 {newerRelease}
+                        </Badge>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 gap-1 px-2 text-xs"
+                          disabled={pending}
+                          title="设备会在下次配置交换后从 npm 下载并自动重启"
+                          onClick={() =>
+                            run(() =>
+                              setUpdateTarget.mutateAsync({
+                                targetVersion: newerRelease,
+                                platform: runtime.platform,
+                              }),
+                            )
+                          }
+                        >
+                          <ArrowUpCircleIcon className="size-3.5" />
+                          升级
+                        </Button>
+                      </>
+                    ) : (
+                      <span title="Web 触发的自更新从 Bridge 1.5.0 开始提供">
+                        新版 {newerRelease} 可用；需先在设备上手动升级一次至
+                        ≥1.5.0，之后即可在网页升级
+                      </span>
+                    )
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         ) : null}
 
@@ -475,39 +547,51 @@ export default function ConnectionsPage() {
   // 防御性过滤：即使缓存中残留已撤销连接也不渲染。
   const connections = activeConnections(connectionsQuery.data ?? []);
   const latestBridgeVersion = releaseQuery.data?.latest_version ?? null;
-  // 可批量升级：已支持远程更新（≥1.5.0）、无待升级目标、且落后于 npm 最新版。
-  const upgradableConnections =
+  // 可批量升级：每个已上报的运行时支持远程更新（≥1.5.0）、无待升级目标、
+  // 且落后于 npm 最新版。
+  const upgradeTargets =
     latestBridgeVersion === null
       ? []
-      : connections.filter(
-          (connection) =>
-            connection.desired_bridge_version == null &&
-            supportsRemoteBridgeUpdate(connection) &&
-            compareBridgeVersions(
-              latestBridgeVersion,
-              connection.bridge_version,
-            ) === 1,
+      : connections.flatMap((connection) =>
+          connectionRuntimes(connection)
+            .filter(
+              (runtime) =>
+                runtime.desired === null &&
+                runtime.bridge_version !== null &&
+                supportsRemoteBridgeUpdate({
+                  bridge_version: runtime.bridge_version,
+                }) &&
+                compareBridgeVersions(
+                  latestBridgeVersion,
+                  runtime.bridge_version,
+                ) === 1,
+            )
+            .map((runtime) => ({ connection, runtime })),
         );
 
   const upgradeAll = async () => {
-    if (latestBridgeVersion === null || upgradableConnections.length === 0) {
+    if (latestBridgeVersion === null || upgradeTargets.length === 0) {
       return;
     }
     setUpgradeAllPending(true);
     setUpgradeNotice(null);
     let failed = 0;
-    for (const connection of upgradableConnections) {
+    for (const { connection, runtime } of upgradeTargets) {
       try {
-        await setBridgeUpdateTarget(connection.id, latestBridgeVersion);
+        await setBridgeUpdateTarget(
+          connection.id,
+          latestBridgeVersion,
+          runtime.platform,
+        );
       } catch {
         failed += 1;
       }
     }
     setUpgradeAllPending(false);
-    const succeeded = upgradableConnections.length - failed;
+    const succeeded = upgradeTargets.length - failed;
     setUpgradeNotice(
       failed === 0
-        ? `已为 ${succeeded} 个 Bridge 设置升级到 ${latestBridgeVersion}，设备会在下次配置交换后从 npm 下载并自动重启。`
+        ? `已为 ${succeeded} 个 Bridge 运行时设置升级到 ${latestBridgeVersion}，设备会在下次配置交换后从 npm 下载并自动重启。`
         : `${succeeded} 个已设置升级，${failed} 个失败；请稍后在对应连接卡片上重试。`,
     );
     await connectionsQuery.refetch();
@@ -523,7 +607,7 @@ export default function ConnectionsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {upgradableConnections.length > 0 ? (
+          {upgradeTargets.length > 0 ? (
             <Button
               variant="outline"
               disabled={upgradeAllPending}

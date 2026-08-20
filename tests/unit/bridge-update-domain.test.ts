@@ -12,6 +12,7 @@ const adminMocks = vi.hoisted(() => ({
   from: vi.fn(),
   select: vi.fn(),
   update: vi.fn(),
+  upsert: vi.fn(),
   eq: vi.fn(),
   is: vi.fn(),
   maybeSingle: vi.fn(),
@@ -30,9 +31,28 @@ vi.mock("@/lib/bridge-release", () => ({
 import { setBridgeUpdateTarget } from "@/lib/domain/bridge-update";
 
 function mockConnection(bridgeVersion: string | null) {
-  adminMocks.maybeSingle.mockResolvedValue({
-    data: { id: connectionId, bridge_version: bridgeVersion },
-    error: null,
+  let call = 0;
+  adminMocks.maybeSingle.mockReset().mockImplementation(() => {
+    call += 1;
+    return Promise.resolve(
+      call % 2 === 1
+        ? {
+      data: {
+        id: connectionId,
+        platform: "Claude",
+        bridge_version: bridgeVersion,
+      },
+      error: null,
+          }
+        : {
+            data: {
+              platform: "claude",
+              bridge_version: bridgeVersion,
+              desired_bridge_version: null,
+            },
+            error: null,
+          },
+    );
   });
 }
 
@@ -42,6 +62,7 @@ beforeEach(() => {
     error: null,
     select: adminMocks.select,
     update: adminMocks.update,
+    upsert: adminMocks.upsert,
     eq: adminMocks.eq,
     is: adminMocks.is,
     maybeSingle: adminMocks.maybeSingle,
@@ -49,6 +70,7 @@ beforeEach(() => {
   adminMocks.from.mockReturnValue(chain);
   adminMocks.select.mockReturnValue(chain);
   adminMocks.update.mockReturnValue(chain);
+  adminMocks.upsert.mockReturnValue(chain);
   adminMocks.eq.mockReturnValue(chain);
   adminMocks.is.mockReturnValue(chain);
   mockConnection("1.3.0");
@@ -66,11 +88,18 @@ describe("setBridgeUpdateTarget", () => {
     expect(adminMocks.from).toHaveBeenCalledWith(
       "ai_connection_bridge_settings",
     );
-    expect(adminMocks.update).toHaveBeenCalledWith({
-      desired_bridge_version: "1.4.0",
-    });
+    expect(adminMocks.upsert).toHaveBeenCalledWith(
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "claude",
+        desired_bridge_version: "1.4.0",
+      },
+      { onConflict: "connection_id,platform" },
+    );
     expect(adminMocks.eq).toHaveBeenCalledWith("workspace_id", workspaceId);
     expect(adminMocks.eq).toHaveBeenCalledWith("connection_id", connectionId);
+    expect(adminMocks.eq).toHaveBeenCalledWith("platform", "claude");
   });
 
   it("拒绝非 owner", async () => {
@@ -83,7 +112,9 @@ describe("setBridgeUpdateTarget", () => {
   });
 
   it("连接不存在或已撤销时拒绝", async () => {
-    adminMocks.maybeSingle.mockResolvedValue({ data: null, error: null });
+    adminMocks.maybeSingle
+      .mockReset()
+      .mockResolvedValue({ data: null, error: null });
 
     await expect(
       setBridgeUpdateTarget(ownerContext, connectionId, {
@@ -103,6 +134,7 @@ describe("setBridgeUpdateTarget", () => {
     expect(adminMocks.update).toHaveBeenCalledWith({
       desired_bridge_version: null,
     });
+    expect(adminMocks.eq).toHaveBeenCalledWith("platform", "claude");
     expect(releaseMocks.bridgeReleaseExists).not.toHaveBeenCalled();
   });
 
@@ -168,5 +200,72 @@ describe("setBridgeUpdateTarget", () => {
         target_version: "1.4.1",
       }),
     ).resolves.toEqual({ desired_bridge_version: "1.4.1" });
+  });
+
+  it("统一设备连接按输入平台取对应运行时的版本", async () => {
+    adminMocks.maybeSingle
+      .mockReset()
+      .mockResolvedValueOnce({
+        data: {
+          id: connectionId,
+          platform: "All",
+          bridge_version: "1.7.1-claude.1",
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          platform: "kimi",
+          bridge_version: "1.7.1-kimi.1",
+          desired_bridge_version: null,
+        },
+        error: null,
+      });
+
+    await expect(
+      setBridgeUpdateTarget(ownerContext, connectionId, {
+        target_version: "1.8.0",
+        platform: "kimi",
+      }),
+    ).resolves.toEqual({ desired_bridge_version: "1.8.0" });
+
+    expect(adminMocks.upsert).toHaveBeenCalledWith(
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "kimi",
+        desired_bridge_version: "1.8.0",
+      },
+      { onConflict: "connection_id,platform" },
+    );
+  });
+
+  it("统一设备连接不能借用其他运行时的版本，未上报时拒绝", async () => {
+    adminMocks.maybeSingle
+      .mockReset()
+      .mockResolvedValueOnce({
+        data: {
+          id: connectionId,
+          platform: "All",
+          bridge_version: "1.7.1-claude.1",
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          platform: "kimi",
+          bridge_version: null,
+          desired_bridge_version: null,
+        },
+        error: null,
+      });
+
+    await expect(
+      setBridgeUpdateTarget(ownerContext, connectionId, {
+        target_version: "1.8.0",
+        platform: "kimi",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(adminMocks.upsert).not.toHaveBeenCalled();
   });
 });

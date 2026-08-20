@@ -96,10 +96,14 @@ describe("Unified device Bridge migration", () => {
     const initial = await database.query<{
       platform: string;
       desired_include_thread_titles: boolean;
+      desired_max_concurrent_turns: number;
       desired_sync_history: boolean;
+      desired_permission_mode: string | null;
+      desired_approval_mode: string | null;
     }>(
       `select platform, desired_include_thread_titles,
-              desired_sync_history
+              desired_max_concurrent_turns, desired_sync_history,
+              desired_permission_mode, desired_approval_mode
        from public.ai_connection_bridge_settings
        where connection_id = $1`,
       [unifiedId],
@@ -108,7 +112,10 @@ describe("Unified device Bridge migration", () => {
       {
         platform: "codex",
         desired_include_thread_titles: true,
+        desired_max_concurrent_turns: 5,
         desired_sync_history: true,
+        desired_permission_mode: "danger-full-access",
+        desired_approval_mode: "accept",
       },
     ]);
 
@@ -151,8 +158,11 @@ describe("Unified device Bridge migration", () => {
     const kimiDefaults = await database.query<{
       desired_include_thread_titles: boolean;
       desired_sync_history: boolean;
+      desired_permission_mode: string | null;
+      desired_approval_mode: string | null;
     }>(
-      `select desired_include_thread_titles, desired_sync_history
+      `select desired_include_thread_titles, desired_sync_history,
+              desired_permission_mode, desired_approval_mode
        from public.ai_connection_bridge_settings
        where connection_id = $1 and platform = 'kimi'`,
       [unifiedId],
@@ -160,6 +170,8 @@ describe("Unified device Bridge migration", () => {
     expect(kimiDefaults.rows[0]).toEqual({
       desired_include_thread_titles: true,
       desired_sync_history: false,
+      desired_permission_mode: null,
+      desired_approval_mode: null,
     });
 
     await database.query(
@@ -196,6 +208,94 @@ describe("Unified device Bridge migration", () => {
     );
   });
 
+  it("owns Codex runtime safety modes from the Web and reports them back", async () => {
+    const updated = await database.query<{
+      response: {
+        configuration: {
+          version: number;
+          desired: {
+            permission_mode: string | null;
+            approval_mode: string | null;
+          };
+        };
+      };
+    }>(
+      `select public.update_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::uuid, 'codex', $4::integer,
+         true, true, 50, 5, true, 50, null::jsonb,
+         'safe', 'decline', 'bridge-config/safety-modes',
+         $5::text
+       ) as response`,
+      [workspaceId, userId, unifiedId, 1, "safety-hash".padEnd(64, "0")],
+    );
+    expect(updated.rows[0].response.configuration.version).toBe(2);
+    expect(updated.rows[0].response.configuration.desired).toMatchObject({
+      permission_mode: "safe",
+      approval_mode: "decline",
+    });
+
+    const codexRuntimeId = randomUUID();
+    await database.query(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, 'codex',
+         $4::uuid, $5::bigint, $6::integer, false,
+         2, $7::jsonb, $8::jsonb, null
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        codexRuntimeId,
+        1,
+        60,
+        JSON.stringify({
+          enabled: true,
+          include_thread_titles: true,
+          max_threads: 50,
+          max_concurrent_turns: 5,
+          sync_history: true,
+          history_turn_limit: 50,
+          working_directories: null,
+          permission_mode: "safe",
+          approval_mode: "decline",
+        }),
+        JSON.stringify({
+          remote_configuration_enabled: true,
+          allow_thread_titles: true,
+          max_threads: 500,
+          max_concurrent_turns: 32,
+          thread_scope: "cwd",
+          working_directory: "/srv",
+          fixed_thread: false,
+          permission_mode: "safe",
+          approval_mode: "decline",
+          allow_history_sync: true,
+          max_history_turns: 500,
+          allow_working_directory_configuration: true,
+        }),
+      ],
+    );
+
+    const persisted = await database.query<{
+      effective_permission_mode: string | null;
+      effective_approval_mode: string | null;
+      constraint_permission_mode: string | null;
+      constraint_approval_mode: string | null;
+    }>(
+      `select effective_permission_mode, effective_approval_mode,
+              constraint_permission_mode, constraint_approval_mode
+       from public.ai_connection_bridge_settings
+       where connection_id = $1 and platform = 'codex'`,
+      [unifiedId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      effective_permission_mode: "safe",
+      effective_approval_mode: "decline",
+      constraint_permission_mode: "safe",
+      constraint_approval_mode: "decline",
+    });
+  });
+
   it("keeps separate directory rows per runtime for the same path", async () => {
     for (const [kind, key] of [
       ["codex", "main"],
@@ -210,7 +310,7 @@ describe("Unified device Bridge migration", () => {
           workspaceId,
           unifiedId,
           tokenHash,
-          "1.7.1",
+          "1.8.0",
           kind,
           JSON.stringify([
             {
@@ -273,7 +373,7 @@ describe("Unified device Bridge migration", () => {
         workspaceId,
         unifiedId,
         tokenHash,
-        "1.7.1",
+        "1.8.0",
         JSON.stringify([
           {
             directory_key: "main",
@@ -306,7 +406,7 @@ describe("Unified device Bridge migration", () => {
         workspaceId,
         unifiedId,
         tokenHash,
-        "1.7.1",
+        "1.8.0",
         JSON.stringify([
           {
             directory_key: "main",

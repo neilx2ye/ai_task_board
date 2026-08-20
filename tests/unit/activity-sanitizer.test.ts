@@ -61,9 +61,9 @@ describe("Harness activity sanitization", () => {
     expect(result.stdout).toContain("ai-task-board-bridge setup");
     expect(result.stdout).toContain("current user's systemd service");
     expect(result.stdout).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
-    expect(result.stdout).toContain("accept (default), decline, or accept-session");
+    expect(result.stdout).toContain("Web can override (accept, decline, accept-session)");
     expect(result.stdout).toContain(
-      "danger-full-access (default), safe, or inherit",
+      "Web can override (danger-full-access, safe, inherit)",
     );
     expect(result.stderr).toBe("");
   });

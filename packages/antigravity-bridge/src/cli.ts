@@ -31,11 +31,11 @@ Optional environment variables:
   ANTIGRAVITY_WORKING_DIRECTORIES JSON allowlist of {key,name,path} directories
   ANTIGRAVITY_SESSION_NAME        Prefix for names shown in the Board
   ANTIGRAVITY_CAPABILITIES        Comma/space-separated Board capabilities
-  ANTIGRAVITY_BRIDGE_WEB_CONFIG   true lets Web apply enabled/limits/titles
-  ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  true lets Web replace
-                                  the working directory list
+  ANTIGRAVITY_BRIDGE_WEB_CONFIG   Deprecated: Web configuration is always enabled
+  ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION  Deprecated: Web always
+                                  owns the working directory list
   ANTIGRAVITY_MAX_THREADS         Startup Thread fallback (1..500, default: 50)
-  ANTIGRAVITY_MAX_CONCURRENT_TURNS Startup concurrency (1..32, default: 2)
+  ANTIGRAVITY_MAX_CONCURRENT_TURNS Startup concurrency (1..32, default: 5)
   ANTIGRAVITY_BRIDGE_APPROVAL_MODE accept or decline
   ANTIGRAVITY_BRIDGE_MODE         auto, default, accept-edits, or plan
   ANTIGRAVITY_BRIDGE_SANDBOX      true enables agy terminal sandbox

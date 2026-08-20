@@ -26,7 +26,7 @@ Node.js 18 or newer is required. Run setup as the same OS user that owns the
 selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup
+npx --yes ai-task-board-bridge@1.8.0 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
@@ -34,12 +34,12 @@ The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
 or repeat installs can bypass that first prompt:
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup codex
-npx --yes ai-task-board-bridge@1.7.1 setup kimi
-npx --yes ai-task-board-bridge@1.7.1 setup antigravity
-npx --yes ai-task-board-bridge@1.7.1 setup claude
-npx --yes ai-task-board-bridge@1.7.1 setup both
-npx --yes ai-task-board-bridge@1.7.1 setup all
+npx --yes ai-task-board-bridge@1.8.0 setup codex
+npx --yes ai-task-board-bridge@1.8.0 setup kimi
+npx --yes ai-task-board-bridge@1.8.0 setup antigravity
+npx --yes ai-task-board-bridge@1.8.0 setup claude
+npx --yes ai-task-board-bridge@1.8.0 setup both
+npx --yes ai-task-board-bridge@1.8.0 setup all
 ```
 
 Every target installs the same single user service, environment file, and
@@ -74,16 +74,18 @@ directories default to Web-side management and are added later in "AI 连接 →
 Bridge 设置 / 新建项目", while the Codex home
 (`~/.codex` unless `CODEX_HOME` is set), the `codex` executable on `PATH`,
 thread limits, and permission/approval modes come from their defaults or the
-environment. Fresh installs opt in to thread-title upload and Codex history
-sync; the Web console can later turn either off. Thread and concurrent-turn
-limits are owned by the Web settings after the first configuration exchange.
+environment. Thread and concurrent-turn limits, plus the Codex permission and
+approval modes, are owned by the Web settings after the first configuration
+exchange. Fresh installs opt in to thread-title upload and Codex history sync;
+the Web console can later turn either off.
 It then installs and starts `ai-task-board-bridge.service` in the effective
 user's systemd user manager.
 
-Because Web-side directory management is the default, setup enables both
-`CODEX_BRIDGE_WEB_CONFIG=true` and
-`CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` in the installed
-environment file. The generated unit still needs an existing
+Because Web-side directory management is the default, setup writes the legacy
+compatibility variables `CODEX_BRIDGE_WEB_CONFIG=true` and
+`CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` to the installed
+environment file; the runtime ignores them because Web configuration is always
+enabled. The generated unit still needs an existing
 `WorkingDirectory=` for the App Server startup fallback, so setup uses the
 user's home directory for that unit field only; it is not registered as a
 managed project directory and no `CODEX_WORKING_DIRECTORY` or
@@ -96,7 +98,7 @@ wizard:
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-npx --yes ai-task-board-bridge@1.7.1 setup codex
+npx --yes ai-task-board-bridge@1.8.0 setup codex
 ```
 
 Providing `AI_TASK_BOARD_CONNECTION_TOKEN` switches both `setup` and `run` to
@@ -118,7 +120,8 @@ Provider variables referenced by `env_key` or `env_http_headers` in
 `config.toml` are detected by name and copied from the environment; setup does
 not copy the user's entire shell environment.
 
-New installs default to `safe` permissions and `decline` approvals. The wizard
+New installs default to `danger-full-access` permissions and `accept`
+(automatic) approvals. The wizard
 requires a final confirmation before installing, and rerunning it updates the
 configuration and restarts the service. Upgrades disable the legacy
 `ai-task-board-codex-bridge.service` before starting
@@ -139,7 +142,7 @@ foreground:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.7.1 run codex
+npx --yes ai-task-board-bridge@1.8.0 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -157,7 +160,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.7.1 run codex
+npx --yes ai-task-board-bridge@1.8.0 run codex
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -165,7 +168,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.7.1 run codex
+npx --yes ai-task-board-bridge@1.8.0 run codex
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -178,7 +181,7 @@ is applied (default `50`, range `1..500` across all configured directories).
 Once Web configuration is enabled, the Web value is authoritative and is not
 clamped to this local value.
 `CODEX_MAX_CONCURRENT_TURNS` remains a compatibility startup value (default
-`2`) before Web configuration is applied; once enabled, the Web value directly
+`5`) before Web configuration is applied; once enabled, the Web value directly
 controls device-wide turn concurrency from `1..32`. The installer enables
 thread-title upload by default; set
 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=false` to disable that disclosure.
@@ -187,17 +190,19 @@ label to the Board Workspace.
 
 ## Optional Web configuration
 
-Web configuration is disabled locally by default. Enable it on the device with
-`CODEX_BRIDGE_WEB_CONFIG=true`; the Bridge then checks `/api/ai/config` every
-10 seconds and applies safe runtime changes without restarting systemd. The
-interval can be set with `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` from `1000` to
-`600000` milliseconds.
+Web configuration is always enabled; the legacy `CODEX_BRIDGE_WEB_CONFIG`
+variable is ignored. The Bridge checks `/api/ai/config` every 10 seconds and
+applies safe runtime changes without restarting systemd. The interval can be
+set with `AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS` from `1000` to `600000`
+milliseconds.
 
 The Web console may enable or pause this Bridge, hide or show thread titles,
 enable bounded history sync, set the thread and device-wide turn limits, and
 set the history limit,
-and—only after a separate local opt-in—replace the effective working-directory
-list. `enabled=false` stops all Session
+and replace the effective working-directory list. The Web console is the sole
+configuration entry point: title upload and Codex history sync are enabled by
+default for new connections, and no device-side allow variables are required.
+`enabled=false` stops all Session
 workers, releases their work, and uploads an authoritative empty inventory,
 while keeping the device Bridge process alive so it can be re-enabled. A
 concurrency reduction lets active turns finish and only delays new turns.
@@ -207,21 +212,18 @@ The device environment remains the immutable security boundary:
 - Web `max_threads` and `max_concurrent_turns` are authoritative in the
   supported `1..500` and `1..32` ranges; neither is clamped by a local
   `*_MAX_THREADS` or `*_MAX_CONCURRENT_TURNS` value.
-- Web title upload is denied unless
-  `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` or the device already opted in
-  with `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`.
-- Web history sync is denied unless the device explicitly sets
-  `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` (the installer enables this by
-  default). The requested recent-turn count is clamped to
-  `CODEX_BRIDGE_MAX_HISTORY_TURNS` (default `50`, maximum `200`).
-- Web working-directory configuration is denied unless the device explicitly
-  sets `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`. A remote list must
-  contain 1 to 100 unique entries with absolute paths that already exist and are
-  directories. An entry may carry `create_if_missing: true`, which authorizes
-  the device to create the path with `mkdir -p` before validating it; without
-  the flag the check stays fail-closed. Missing, null, or locally denied
-  remote values retain the immutable `CODEX_WORKING_DIRECTORIES` /
-  `CODEX_WORKING_DIRECTORY` startup list.
+- Web title upload, history sync, and working-directory configuration apply
+  the Board's desired values directly. The legacy
+  `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES`, `CODEX_BRIDGE_ALLOW_HISTORY_SYNC`,
+  and `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` variables are ignored.
+  The requested recent-turn count is clamped to the shared `1..500` range
+  (default `50`).
+- A remote directory list must contain 1 to 100 unique entries with absolute
+  paths that already exist and are directories. An entry may carry
+  `create_if_missing: true`, which authorizes the device to create the path
+  with `mkdir -p` before validating it; without the flag the check stays
+  fail-closed. A null desired list retains the immutable
+  `CODEX_WORKING_DIRECTORIES` / `CODEX_WORKING_DIRECTORY` startup list.
 - The Board cannot change the URL/token, Codex executable, thread scope/fixed
   thread, permission mode, approval mode, or the immutable local fallback list.
 
@@ -255,7 +257,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.7.1 setup` for the same runtime.
+rerunning `npx --yes ai-task-board-bridge@1.8.0 setup` for the same runtime.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>` (120-second timeout), extracts the tarball
@@ -310,14 +312,14 @@ work. It immediately hides and fences the Board Session, then calls the Codex
 App Server's hard-delete method. Compatible older App Server builds that lack
 hard delete fall back to archive. Board audit/history rows are retained.
 
-## Optional bounded history sync
+## Bounded history sync
 
-History upload is off by default and requires both
-`CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` on the device and `sync_history=true` in
-Web configuration. Bridge 0.5 scans at most the configured number of recent
-completed turns for ordinary CLI/VS Code threads in a separate, cancellable,
-bounded background loop. Runtime-lease renewal, inventory, and live turns do
-not wait for this scan.
+History upload is enabled by default for new connections and is controlled
+solely by `sync_history=true` in Web configuration; no device-side variable is
+required. Bridge 0.5 scans at most the configured number of recent completed
+turns for ordinary CLI/VS Code threads in a separate, cancellable, bounded
+background loop. Runtime-lease renewal, inventory, and live turns do not wait
+for this scan.
 
 The user's `userMessage` and the final `agentMessage` are imported. A turn
 carrying a non-empty persisted `clientUserMessageId` is skipped because it came
@@ -394,7 +396,7 @@ Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@1.7.1 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.8.0 --help` for the complete
 environment-variable list.
 
 ## Kimi Bridge
@@ -413,7 +415,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run kimi
+npx --yes ai-task-board-bridge@1.8.0 run kimi
 ```
 
 `KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -443,7 +445,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run antigravity
+npx --yes ai-task-board-bridge@1.8.0 run antigravity
 ```
 
 `ANTIGRAVITY_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -480,7 +482,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run claude
+npx --yes ai-task-board-bridge@1.8.0 run claude
 ```
 
 `CLAUDE_WORKING_DIRECTORIES` accepts 1 to 100 unique exact `{key,name?,path}`

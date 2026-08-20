@@ -32,6 +32,8 @@ function configuration(
       sync_history: false,
       history_turn_limit: 50,
       working_directories: null,
+      permission_mode: "danger-full-access",
+      approval_mode: "accept",
     },
     applied: {
       version: 3,
@@ -42,6 +44,8 @@ function configuration(
         max_concurrent_turns: 2,
         sync_history: false,
         history_turn_limit: 50,
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
         working_directories: [
           {
             directory_key: "default",
@@ -203,6 +207,8 @@ describe("Bridge configuration UI model", () => {
       sync_history: true,
       history_turn_limit: 50,
       working_directories: null,
+      permission_mode: "danger-full-access" as const,
+      approval_mode: "accept" as const,
     };
     const first = bridgeConfigMutationFingerprint("conn-1", "codex", input);
     expect(

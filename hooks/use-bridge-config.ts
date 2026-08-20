@@ -90,6 +90,12 @@ export function bridgeDesiredConfigsEqual(
           directory.working_directory === other.working_directory
         );
       }));
+  const permissionModeMatch =
+    left.permission_mode === null ||
+    left.permission_mode === right.permission_mode;
+  const approvalModeMatch =
+    left.approval_mode === null ||
+    left.approval_mode === right.approval_mode;
   return (
     left.enabled === right.enabled &&
     left.include_thread_titles === right.include_thread_titles &&
@@ -97,7 +103,9 @@ export function bridgeDesiredConfigsEqual(
     left.max_concurrent_turns === right.max_concurrent_turns &&
     (left.sync_history ?? false) === (right.sync_history ?? false) &&
     (left.history_turn_limit ?? 50) === (right.history_turn_limit ?? 50) &&
-    directoriesMatch
+    directoriesMatch &&
+    permissionModeMatch &&
+    approvalModeMatch
   );
 }
 
@@ -205,6 +213,8 @@ export function bridgeConfigMutationFingerprint(
     input.max_concurrent_turns,
     input.sync_history ? 1 : 0,
     input.history_turn_limit,
+    input.permission_mode ?? "",
+    input.approval_mode ?? "",
     JSON.stringify(
       input.working_directories?.map((directory) => [
         directory.directory_key,

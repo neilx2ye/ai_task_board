@@ -71,7 +71,7 @@ describe("Kimi Bridge 工作目录管理模式", () => {
       approvalMode: "decline",
       includeTitles: false,
       maxThreads: "50",
-      maxConcurrentTurns: "2",
+      maxConcurrentTurns: "5",
       webConfiguration: false,
       kimiBinary: "/usr/bin/kimi",
       pathValue: "/usr/bin:/bin",

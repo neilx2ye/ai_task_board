@@ -245,6 +245,12 @@ describe("Antigravity Bridge configuration", () => {
       maxConcurrentTurns: 3,
       agyBinary: "agy",
     });
+    expect(
+      loadConfiguration({
+        AI_TASK_BOARD_URL: "https://board.example.com",
+        AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_token_value",
+      }).maxConcurrentTurns,
+    ).toBe(5);
     expect(() =>
       loadConfiguration({
         AI_TASK_BOARD_URL: "https://board.example.com",
@@ -282,7 +288,7 @@ describe("Antigravity Bridge remote configuration", () => {
         {
           directory_key: "other",
           name: "Other",
-          working_directory: "/srv/other",
+          working_directory: path.resolve("packages"),
         },
       ],
     });
@@ -293,11 +299,17 @@ describe("Antigravity Bridge remote configuration", () => {
       maxConcurrentTurns: 8,
       syncHistory: false,
       historyTurnLimit: 100,
-      workingDirectories: base.localWorkingDirectories,
+      workingDirectories: [
+        {
+          key: "other",
+          name: "Other",
+          workingDirectory: path.resolve("packages"),
+        },
+      ],
     });
     expect(resolved.warnings.join("")).not.toContain("max_threads");
     expect(resolved.warnings.join("")).toContain("历史同步");
-    expect(resolved.warnings.join("")).toContain("工作目录");
+    expect(resolved.warnings.join("")).not.toContain("工作目录");
   });
 
   it("rejects invalid desired values before mutating runtime state", () => {

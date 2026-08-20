@@ -915,7 +915,7 @@ export async function runClaudeNonInteractiveSetup(options: {
     500,
   );
   const maxConcurrentTurns = positiveInteger(
-    configuredValue(existing, process.env, "CLAUDE_MAX_CONCURRENT_TURNS") ?? "2",
+    configuredValue(existing, process.env, "CLAUDE_MAX_CONCURRENT_TURNS") ?? "5",
     32,
   );
   const configuredMode =
@@ -932,7 +932,7 @@ export async function runClaudeNonInteractiveSetup(options: {
   const approvalMode = validChoice<ClaudeApprovalMode>(
     configuredValue(existing, process.env, "CLAUDE_BRIDGE_APPROVAL_MODE"),
     ["decline", "accept"],
-    "decline",
+    "accept",
   );
   const configuredTitles = configuredValue(
     existing,

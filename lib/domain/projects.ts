@@ -28,12 +28,18 @@ type BridgeSettingsSnapshot = {
   desired_max_concurrent_turns: number;
   desired_sync_history: boolean;
   desired_history_turn_limit: number;
+  desired_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  desired_approval_mode: "decline" | "accept" | "accept-session" | null;
   desired_working_directories: unknown;
   effective_working_directories: unknown;
 };
 
 const SETTINGS_SNAPSHOT_COLUMNS =
-  "platform, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_working_directories, effective_working_directories" as const;
+  "platform, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_permission_mode, desired_approval_mode, desired_working_directories, effective_working_directories" as const;
 
 function parseDirectoryList(value: unknown): BridgeWorkingDirectory[] | null {
   if (value === null || value === undefined) return null;
@@ -185,6 +191,8 @@ async function dispatchToConnection(
             max_concurrent_turns: snapshot.desired_max_concurrent_turns,
             sync_history: snapshot.desired_sync_history,
             history_turn_limit: snapshot.desired_history_turn_limit,
+            permission_mode: snapshot.desired_permission_mode,
+            approval_mode: snapshot.desired_approval_mode,
             working_directories: [...baseline, entry],
           },
           // 批次内每个 Bridge 平台使用独立的派生幂等键；冲突重试换新键。
@@ -392,6 +400,8 @@ async function dispatchProjectUpdate(
             max_concurrent_turns: snapshot.desired_max_concurrent_turns,
             sync_history: snapshot.desired_sync_history,
             history_turn_limit: snapshot.desired_history_turn_limit,
+            permission_mode: snapshot.desired_permission_mode,
+            approval_mode: snapshot.desired_approval_mode,
             working_directories: workingDirectories,
           },
           // 批次内每个 Bridge 平台使用独立的派生幂等键；冲突重试换新键。
@@ -673,6 +683,8 @@ async function dispatchProjectDelete(
             max_concurrent_turns: snapshot.desired_max_concurrent_turns,
             sync_history: snapshot.desired_sync_history,
             history_turn_limit: snapshot.desired_history_turn_limit,
+            permission_mode: snapshot.desired_permission_mode,
+            approval_mode: snapshot.desired_approval_mode,
             working_directories: nextDirectories,
           },
           `${idempotencyKey.slice(0, 110)}:${connection.id}:${

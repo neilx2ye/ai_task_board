@@ -73,6 +73,13 @@ export type SessionRegistrationResult = {
   session: AISessionRow;
 };
 
+/** 单个 Bridge 运行时上报的能力版本与 Web 下发的升级目标。 */
+export type BridgeRuntimeVersion = {
+  platform: string;
+  bridge_version: string | null;
+  desired_bridge_version?: string | null;
+};
+
 export type SessionConnectionSummary = Pick<
   AIConnectionRow,
   | "id"
@@ -85,6 +92,8 @@ export type SessionConnectionSummary = Pick<
   /** Latest visible model catalog reported by this connection's local Agent. */
   model_catalog?: AgentModelCatalogEntry[] | null;
   model_catalog_updated_at?: string | null;
+  /** 统一设备连接下按运行时拆分的版本；单运行时连接也可能带一个条目。 */
+  bridge_versions?: BridgeRuntimeVersion[];
 };
 
 export type SessionCurrentTaskSummary = Pick<

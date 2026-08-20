@@ -27,10 +27,17 @@ export type BridgeUpdateTargetResponse = {
 export async function setBridgeUpdateTarget(
   connectionId: string,
   targetVersion: string | null,
+  platform?: string | null,
 ): Promise<BridgeUpdateTargetResponse> {
   return apiFetch<BridgeUpdateTargetResponse>(
     `/api/user/connections/${encodeURIComponent(connectionId)}/bridge-update`,
-    { method: "POST", json: { target_version: targetVersion } },
+    {
+      method: "POST",
+      json: {
+        target_version: targetVersion,
+        ...(platform ? { platform } : {}),
+      },
+    },
   );
 }
 
@@ -38,8 +45,13 @@ export async function setBridgeUpdateTarget(
 export function useSetBridgeUpdateTarget(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (targetVersion: string | null) =>
-      setBridgeUpdateTarget(connectionId, targetVersion),
+    mutationFn: ({
+      targetVersion,
+      platform,
+    }: {
+      targetVersion: string | null;
+      platform?: string | null;
+    }) => setBridgeUpdateTarget(connectionId, targetVersion, platform),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
     },

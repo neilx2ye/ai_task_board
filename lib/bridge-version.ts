@@ -1,6 +1,6 @@
 /**
  * Bridge 版本比较：提取前导 major.minor.patch 数字段比较；
- * 运行时后缀（如 1.7.1-kimi.1）与发布版同基时视为相等。
+ * 运行时后缀（如 1.8.0-kimi.1）与发布版同基时视为相等。
  * 无法解析时返回 null。
  */
 export function compareBridgeVersions(

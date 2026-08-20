@@ -110,8 +110,8 @@ Content-Type: application/json
 需要让网页主动排队下一轮 Agent 工作时，使用统一的 `ai-task-board-bridge` npm 包：
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup
-npx --yes ai-task-board-bridge@1.7.1 run
+npx --yes ai-task-board-bridge@1.8.0 setup
+npx --yes ai-task-board-bridge@1.8.0 run
 ```
 
 `setup` 与 `run` 是两个统一命令：一个系统用户只需要**一个 Bridge、一个命令、
@@ -137,12 +137,13 @@ Token，直接非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时�
 ```bash
 AI_TASK_BOARD_URL='https://task.neilx.online' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-npx --yes ai-task-board-bridge@1.7.1 setup codex
+npx --yes ai-task-board-bridge@1.8.0 setup codex
 ```
 
 Codex 的安装器显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的
-Codex 登录、`config.toml`、provider 和模型配置；新安装使用 `safe` + `decline`
-等安全默认值。Kimi、Antigravity 与 Claude Code 运行时已嵌入这个公开包，不需要
+Codex 登录、`config.toml`、provider 和模型配置；新安装默认使用
+`danger-full-access`（全权限）+ `accept`（审批自动通过）。Kimi、Antigravity 与
+Claude Code 运行时已嵌入这个公开包，不需要
 再发布或安装第二个 npm 包。前台模式
 未显式配置时继续使用 `CODEX_BRIDGE_PERMISSION_MODE=danger-full-access`（完全访问、
 无沙箱）和 `CODEX_BRIDGE_APPROVAL_MODE=accept`（设备端自动同意）；需要限制写入与
@@ -151,18 +152,19 @@ Codex 登录、`config.toml`、provider 和模型配置；新安装使用 `safe`
 仓库开发者仍可使用 `npm run bridge:codex` 运行同一份源码。非 Linux 或无需 systemd
 时，可继续使用环境变量方式交给其他进程管理器。
 
-一个常驻 Bridge 代表一台设备上的一个 AI Connection，并为自动发现的每个未归档顶层 Codex thread 同步独立 Board Session；默认 `CODEX_THREAD_SCOPE=cwd` 精确匹配 `CODEX_WORKING_DIRECTORY`，也可用 `CODEX_WORKING_DIRECTORIES` JSON 白名单同时管理多个目录，并在网页按“设备 → 工作目录 → Thread”展示。Bridge 0.8 在设备同时启用 `CODEX_BRIDGE_WEB_CONFIG=true` 与 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true` 后，允许 Owner 在“Bridge 设置”中管理项目名称、稳定 key 与本机绝对路径；Bridge 会在应用前验证路径确实存在且为目录。总计最多 50 个 thread（可调至 500）；设备级并行 turn 数可直接在 Web 设置为 1 到 32，默认启动值为 2。跨白名单发现必须显式设置高风险的 `CODEX_THREAD_SCOPE=all`；`CODEX_THREAD_ID` 是覆盖范围的单 thread 精确兼容过滤器。Bridge 必须以拥有本地 Codex 登录、会话存储和目标工作树的同一操作系统用户运行，不能放进 Next.js 服务进程。
+一个常驻 Bridge 代表一台设备上的一个 AI Connection，并为自动发现的每个未归档顶层 Codex thread 同步独立 Board Session；默认 `CODEX_THREAD_SCOPE=cwd` 精确匹配 `CODEX_WORKING_DIRECTORY`，也可用 `CODEX_WORKING_DIRECTORIES` JSON 白名单同时管理多个目录，并在网页按“设备 → 工作目录 → Thread”展示。Bridge 0.8 起，Owner 可直接在“Bridge 设置”中管理项目名称、稳定 key 与本机绝对路径；Bridge 会在应用前验证路径确实存在且为目录。总计最多 50 个 thread（可调至 500）；设备级并行 turn 数可直接在 Web 设置为 1 到 32，默认启动值为 5。跨白名单发现必须显式设置高风险的 `CODEX_THREAD_SCOPE=all`；`CODEX_THREAD_ID` 是覆盖范围的单 thread 精确兼容过滤器。Bridge 必须以拥有本地 Codex 登录、会话存储和目标工作树的同一操作系统用户运行，不能放进 Next.js 服务进程。
 
 Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 回复增量会聚合后近实时写入 Board，思考摘要、命令、工具过程和用量不会同步。默认 `danger-full-access` 权限 profile 仍显式使用 `on-request` 和用户 reviewer，但不启用沙箱，不限制该 OS 用户本来可以写入的路径或网络；默认 `accept` 会在设备端立即批准与当前活跃 turn 关联的受支持审批请求，因此无需网页逐次确认。这两个默认值相互独立，但组合后会在当前 OS 用户权限范围内无沙箱执行，属于高风险配置。可将权限模式显式设为 `safe`，把 turn 限制到 `workspace-write`、该 thread cwd、无隐式 tmp 写根且无网络；`inherit` 则完全不发送权限与审批覆盖，沿用 thread 或本机 Codex 设置，可能同样继承完全访问，只有明确了解本机配置时才应使用。审批也可设为 `decline` 或 `accept-session`；审批模式不会改变沙箱。
+Bridge 通过 REST 与认证 SSE 工作，正常使用不需要 Board MCP。SSE 只推送无任务内容的 `wake` 提示；App Server 的 AI 回复增量会聚合后近实时写入 Board，思考摘要、命令、工具过程和用量不会同步。默认 `danger-full-access` 权限 profile 仍显式使用 `on-request` 和用户 reviewer，但不启用沙箱，不限制该 OS 用户本来可以写入的路径或网络；默认 `accept` 会在设备端立即批准与当前活跃 turn 关联的受支持审批请求，因此无需网页逐次确认。这两个默认值相互独立，但组合后会在当前 OS 用户权限范围内无沙箱执行，属于高风险配置。权限模式与审批模式如今也可以在「AI 连接 → Bridge 设置」由 Web 调整（仅 Codex 运行时）。可将权限模式显式设为 `safe`，把 turn 限制到 `workspace-write`、该 thread cwd、无隐式 tmp 写根且无网络；`inherit` 则完全不发送权限与审批覆盖，沿用 thread 或本机 Codex 设置，可能同样继承完全访问，只有明确了解本机配置时才应使用。审批也可设为 `decline` 或 `accept-session`；审批模式不会改变沙箱。
 
-Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保留原 turn 与 claim，提交后原地继续。安装时默认上传 thread 标题/首条 prompt（`CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`）并授权 Codex 历史同步（`CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`）；启用 `CODEX_BRIDGE_WEB_CONFIG=true` 后，可在“AI 连接 → Bridge 设置”调整启停、标题、历史同步及数量/并发上限。最大 thread 数（1..500）与最大并行 turn 数（1..32）都由 Web 直接控制，不再与本机上限做二次比较。网页开启标题还要求本机允许 `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES=true` 或已经设置 `CODEX_BRIDGE_INCLUDE_THREAD_TITLES=true`；开启历史还要求 `CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true`；管理本机工作目录还要求 `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES=true`，三类敏感能力均保持设备端显式授权。历史同步受默认 50、最大 200 个最近完成 turn 的本机上限约束，并上传用户消息与最终 AI 回复；历史用户消息会对有权访问该 Workspace 的成员可见。关闭同步或降低上限不会删除 Board 已导入的只追加历史。Inventory 会同步 thread ID、绝对工作目录和当前模型标签；Bridge 还会通过 App Server `model/list` 上报当前 provider 的可见模型及支持强度，供新建 Thread 和每个 Turn 的输入框动态选择，provider 凭据仍只保留在设备上。Bridge 0.5 起，Workspace Owner 可在“AI 会话”页新建、重命名和删除当前设备清单内的 Thread，也可在“AI 连接”页重命名连接；Bridge 0.7 会在选中的设备目录下新建，旧版仍使用设备默认工作目录，删除只接受没有活跃或已预留任务的 Thread。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先应用仓库当前 migration，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
+Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保留原 turn 与 claim，提交后原地继续。新连接默认开启 thread 标题上传与 Codex 历史同步（历史只对 Codex 运行时生效），Workspace Owner 可在“AI 连接 → Bridge 设置”调整启停、标题、历史同步及数量/并发上限；Web 是唯一配置入口，不再需要 `CODEX_BRIDGE_WEB_CONFIG`、`*_ALLOW_REMOTE_THREAD_TITLES`、`*_ALLOW_HISTORY_SYNC`、`*_ALLOW_WORKING_DIRECTORY_CONFIGURATION` 等设备端授权开关。最大 thread 数（1..500）与最大并行 turn 数（1..32）都由 Web 直接控制，不再与本机上限做二次比较。历史同步最多上传 500 个最近完成 turn（默认 50）的用户消息与最终 AI 回复；历史用户消息会对有权访问该 Workspace 的成员可见。关闭同步或降低上限不会删除 Board 已导入的只追加历史。Inventory 会同步 thread ID、绝对工作目录和当前模型标签；Bridge 还会通过 App Server `model/list` 上报当前 provider 的可见模型及支持强度，供新建 Thread 和每个 Turn 的输入框动态选择，provider 凭据仍只保留在设备上。Bridge 0.5 起，Workspace Owner 可在“AI 会话”页新建、重命名和删除当前设备清单内的 Thread，也可在“AI 连接”页重命名连接；Bridge 0.7 会在选中的设备目录下新建，旧版仍使用设备默认工作目录，删除只接受没有活跃或已预留任务的 Thread。当前仍没有可靠的运行中 steer、网页 interrupt 或网页逐次审批；不要让 TUI、IDE 与 Bridge 同时写入同一个 thread。Board schema/API 必须先应用仓库当前 migration，Bridge 不提供同步 `404` 的旧版回退。安装、变量、systemd、安全与 at-least-once 限制见上述指南。
 
 ### Kimi Bridge
 
 先在「AI 连接」中新建平台为 **Kimi Code** 的独立连接，再在已经登录 Kimi Code 的设备上运行：
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup kimi
+npx --yes ai-task-board-bridge@1.8.0 setup kimi
 ```
 
 前台或自动化部署可使用环境变量：
@@ -173,7 +175,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run kimi
+npx --yes ai-task-board-bridge@1.8.0 run kimi
 ```
 
 Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
@@ -184,7 +186,7 @@ Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该�
 的设备上运行（需要 `agy` 1.1.8+，可执行 `agy update` 升级）：
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup antigravity
+npx --yes ai-task-board-bridge@1.8.0 setup antigravity
 ```
 
 前台或自动化部署可使用环境变量：
@@ -195,7 +197,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run antigravity
+npx --yes ai-task-board-bridge@1.8.0 run antigravity
 ```
 
 Antigravity Bridge 只使用 Google 官方文档化的 `agy -p --output-format stream-json`
@@ -220,7 +222,7 @@ Anthropic 官方的 ACP 适配器自动安装到用户数据目录并配置 `CLA
 不需要单独安装：
 
 ```bash
-npx --yes ai-task-board-bridge@1.7.1 setup claude
+npx --yes ai-task-board-bridge@1.8.0 setup claude
 ```
 
 订阅用户请先用同一系统用户运行 `claude login`；API / 自定义网关用户请设置
@@ -233,7 +235,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run claude
+npx --yes ai-task-board-bridge@1.8.0 run claude
 ```
 
 Claude Code Bridge 启动独立的 `claude-agent-acp` 子进程，Board 令牌不会传入该子

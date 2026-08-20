@@ -62,6 +62,7 @@ export async function syncSessions(
     await persistModelCatalog(admin, auth, platform, input);
     await persistConnectionQuota(admin, auth, platform, input);
     await persistDeviceIdentity(admin, auth, platform, input);
+    await persistBridgeVersion(admin, auth, platform, input.bridge_version);
     await clearSatisfiedBridgeUpdate(
       admin,
       auth,
@@ -98,6 +99,7 @@ export async function syncSessions(
   await persistModelCatalog(admin, auth, platform, input);
   await persistConnectionQuota(admin, auth, platform, input);
   await persistDeviceIdentity(admin, auth, platform, input);
+  await persistBridgeVersion(admin, auth, platform, input.bridge_version);
   await clearSatisfiedBridgeUpdate(
     admin,
     auth,
@@ -105,6 +107,56 @@ export async function syncSessions(
     input.bridge_version,
   );
   return result;
+}
+
+/**
+ * 把每个运行时上报的版本落到平台维度的 settings 行：统一设备连接四个
+ * 运行时各记一份，避免共享 ai_connections.bridge_version 被最后同步者覆盖。
+ */
+async function persistBridgeVersion(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: AIAuthContext,
+  platform: string,
+  reportedVersion: string,
+): Promise<void> {
+  const { error } = await admin
+    .from("ai_connection_bridge_settings")
+    .upsert(
+      {
+        workspace_id: auth.workspaceId,
+        connection_id: auth.connectionId,
+        platform,
+        bridge_version: reportedVersion,
+      },
+      { onConflict: "connection_id,platform" },
+    );
+  if (!error || isMissingBridgeVersionColumn(error)) return;
+  throw mapDatabaseError(error);
+}
+
+function isMissingBridgeVersionColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    // 平台维度列或版本列尚未落地的旧库：跳过按运行时持久化即可，
+    // 连接级版本仍由旧 RPC 继续维护。
+    source.includes("platform") ||
+    (source.includes("bridge_version") &&
+      !source.includes("desired_bridge_version"))
+  );
 }
 
 /**

@@ -23,7 +23,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/hooks/api-client";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
-import { supportsManagedDirectoryCreation } from "@/hooks/use-connections";
+import {
+  bridgeVersionForPlatform,
+  supportsManagedDirectoryCreation,
+} from "@/hooks/use-connections";
 import {
   bridgeConfigSyncState,
   bridgeSupportsHistorySync,
@@ -55,6 +58,10 @@ type BridgeConnection = {
   name: string;
   platform: string;
   bridge_version: string | null;
+  bridge_versions?: {
+    platform: string;
+    bridge_version: string | null;
+  }[] | null;
 };
 
 export const BRIDGE_HISTORY_RETENTION_NOTICE =
@@ -246,11 +253,13 @@ function EffectiveValues({
   effective,
   reported,
   showHistoryRows,
+  showSafetyRows,
 }: {
   desired: BridgeDesiredConfig;
   effective: BridgeDesiredConfig | null;
   reported: boolean;
   showHistoryRows: boolean;
+  showSafetyRows: boolean;
 }) {
   const desiredDirectorySummary = desired.working_directories
     ? `${desired.working_directories.length} 个 Web 项目`
@@ -296,6 +305,20 @@ function EffectiveValues({
       ],
     );
   }
+  if (showSafetyRows) {
+    rows.push(
+      [
+        "权限模式",
+        desired.permission_mode ?? "—",
+        effective?.permission_mode ?? "等待上报",
+      ],
+      [
+        "审批模式",
+        desired.approval_mode ?? "—",
+        effective?.approval_mode ?? "等待上报",
+      ],
+    );
+  }
   rows.push(["工作目录", desiredDirectorySummary, effectiveDirectorySummary]);
 
   return (
@@ -321,8 +344,10 @@ function EffectiveValues({
 
 function LocalConstraints({
   constraints,
+  showSafetyModes,
 }: {
   constraints: BridgeConfigConstraints | null;
+  showSafetyModes: boolean;
 }) {
   if (!constraints) {
     return (
@@ -351,45 +376,49 @@ function LocalConstraints({
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Web 配置入口</dt>
+        <dt className="text-muted-foreground">Web 配置（设备上报）</dt>
         <dd className="mt-0.5 font-medium">
-          {constraints.remote_configuration_enabled ? "本机允许" : "本机禁止"}
+          {constraints.remote_configuration_enabled ? "已启用" : "旧 Bridge 未启用"}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Web 工作目录</dt>
+        <dt className="text-muted-foreground">Web 工作目录（设备上报）</dt>
         <dd className="mt-0.5 font-medium">
           {constraints.allow_working_directory_configuration
-            ? "本机允许"
-            : "本机未授权"}
+            ? "Web 管理"
+            : "旧 Bridge 未上报"}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">标题上传上限</dt>
+        <dt className="text-muted-foreground">标题上传（设备上报）</dt>
         <dd className="mt-0.5 font-medium">
-          {constraints.allow_thread_titles ? "本机允许" : "本机禁止"}
+          {constraints.allow_thread_titles ? "Web 控制" : "旧 Bridge 未启用"}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">历史同步上限</dt>
+        <dt className="text-muted-foreground">历史同步（设备上报）</dt>
         <dd className="mt-0.5 font-medium">
           {constraints.allow_history_sync
-            ? `本机允许 · 最多 ${constraints.max_history_turns} turns`
-            : "本机未授权"}
+            ? `Web 控制 · 最多 ${constraints.max_history_turns} turns`
+            : "旧 Bridge 未启用"}
         </dd>
       </div>
-      <div>
-        <dt className="text-muted-foreground">工具权限（只读）</dt>
-        <dd className="mt-0.5 font-medium">
-          {permissionLabel(constraints.permission_mode)}
-        </dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">审批策略（只读）</dt>
-        <dd className="mt-0.5 font-medium">
-          {approvalLabel(constraints.approval_mode)}
-        </dd>
-      </div>
+      {showSafetyModes ? (
+        <>
+          <div>
+            <dt className="text-muted-foreground">工具权限（只读）</dt>
+            <dd className="mt-0.5 font-medium">
+              {permissionLabel(constraints.permission_mode)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">审批策略（只读）</dt>
+            <dd className="mt-0.5 font-medium">
+              {approvalLabel(constraints.approval_mode)}
+            </dd>
+          </div>
+        </>
+      ) : null}
     </dl>
   );
 }
@@ -460,6 +489,12 @@ function BridgeConfigForm({
   const [syncHistory, setSyncHistory] = useState(
     configuration.desired.sync_history ?? false,
   );
+  const [permissionMode, setPermissionMode] = useState<
+    NonNullable<BridgeDesiredConfig["permission_mode"]>
+  >(configuration.desired.permission_mode ?? "danger-full-access");
+  const [approvalMode, setApprovalMode] = useState<
+    NonNullable<BridgeDesiredConfig["approval_mode"]>
+  >(configuration.desired.approval_mode ?? "accept");
   const [historyTurnLimit, setHistoryTurnLimit] = useState(
     String(configuration.desired.history_turn_limit ?? 50),
   );
@@ -484,13 +519,6 @@ function BridgeConfigForm({
   // 历史同步只有 Codex 运行时实现；Web 目录管理四个运行时都支持，
   // 但 Kimi / Antigravity / Claude Code 需要 Bridge 1.3.0 起的能力版本。
   const isCodexRuntime = platform === "codex";
-  const allowWorkingDirectoriesEnvVar = platform === "kimi"
-    ? "KIMI_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
-    : platform === "antigravity"
-      ? "ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
-      : platform === "claude"
-        ? "CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION"
-        : "CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES";
   const localWorkingDirectoriesEnvVar = platform === "kimi"
     ? "KIMI_WORKING_DIRECTORIES"
     : platform === "antigravity"
@@ -498,26 +526,15 @@ function BridgeConfigForm({
       : platform === "claude"
         ? "CLAUDE_WORKING_DIRECTORIES"
         : "CODEX_WORKING_DIRECTORIES";
-  const titleUploadBlocked = constraints?.allow_thread_titles === false;
-  // A locally blocked device must still let the Owner turn an already-saved
-  // desired value off; only enabling the disclosure is forbidden.
-  const titleToggleDisabled = titleUploadBlocked && !includeTitles;
   const historySupported = bridgeSupportsHistorySync(connection.bridge_version);
-  const historySyncBlocked = constraints?.allow_history_sync !== true;
-  // Keep an already-saved opt-in reversible even after a device removes its
-  // local authorization or temporarily reports from an older Bridge.
-  const historyToggleDisabled =
-    (!historySupported || historySyncBlocked) && !syncHistory;
+  // 历史同步只受 Bridge 能力版本约束；Web 是唯一配置入口。
+  const historyToggleDisabled = !historySupported && !syncHistory;
   const workingDirectoriesSupported = isCodexRuntime
     ? bridgeSupportsWorkingDirectoryConfiguration(connection.bridge_version)
     : supportsManagedDirectoryCreation(connection);
-  const workingDirectoriesBlocked =
-    constraints?.allow_working_directory_configuration !== true;
-  // An already-saved Web list must remain reversible when the device removes
-  // its local authorization or an older Bridge temporarily reconnects.
+  // 工作目录同样只受 Bridge 能力版本约束。
   const workingDirectoriesToggleDisabled =
-    (!workingDirectoriesSupported || workingDirectoriesBlocked) &&
-    !manageWorkingDirectories;
+    !workingDirectoriesSupported && !manageWorkingDirectories;
 
   const changeWorkingDirectory = (
     index: number,
@@ -601,6 +618,8 @@ function BridgeConfigForm({
         max_concurrent_turns: parsedMaxConcurrentTurns,
         sync_history: isCodexRuntime ? syncHistory : false,
         history_turn_limit: isCodexRuntime ? parsedHistoryTurnLimit : 50,
+        permission_mode: isCodexRuntime ? permissionMode : null,
+        approval_mode: isCodexRuntime ? approvalMode : null,
         working_directories: manageWorkingDirectories
           ? normalizedWorkingDirectories
           : null,
@@ -634,6 +653,7 @@ function BridgeConfigForm({
         effective={configuration.applied?.effective ?? null}
         reported={bridgeSupportsRemoteConfiguration(connection.bridge_version)}
         showHistoryRows={isCodexRuntime}
+        showSafetyRows={isCodexRuntime}
       />
 
       <fieldset className="flex flex-col gap-3">
@@ -672,8 +692,7 @@ function BridgeConfigForm({
                 同步 Codex Thread 历史
               </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
-                只会上传最近的 AI 最终回复；当前 Workspace 的所有成员
-                都可以查看，且必须先在设备上明确授权。
+                只会上传最近的 AI 最终回复；当前 Workspace 的所有成员都可以查看。
               </span>
               <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
                 {BRIDGE_HISTORY_RETENTION_NOTICE}
@@ -681,12 +700,6 @@ function BridgeConfigForm({
               {!historySupported ? (
                 <span className="mt-1 block text-xs text-muted-foreground">
                   需要 Bridge 0.4.0 或更高版本。
-                </span>
-              ) : historySyncBlocked ? (
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {constraints
-                    ? "本机尚未允许历史同步；需在设备设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"
-                    : "等待设备上报本机历史同步授权；需先设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true。"}
                 </span>
               ) : null}
             </span>
@@ -702,12 +715,10 @@ function BridgeConfigForm({
           </label>
         ) : null}
 
-        <label
-          htmlFor={`${fieldId}-titles`}
-          className={`flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5 ${
-            titleToggleDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-          }`}
-        >
+          <label
+            htmlFor={`${fieldId}-titles`}
+            className="flex cursor-pointer items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5"
+          >
           <span>
             <span className="block text-sm font-medium">上传 Thread 标题</span>
             <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
@@ -719,11 +730,67 @@ function BridgeConfigForm({
             type="checkbox"
             role="switch"
             checked={includeTitles}
-            disabled={titleToggleDisabled}
             onChange={(event) => setIncludeTitles(event.target.checked)}
             className="mt-0.5 size-4 shrink-0 accent-indigo-600"
           />
         </label>
+
+        {isCodexRuntime ? (
+          <div className="grid gap-3 rounded-md border border-border px-3 py-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${fieldId}-permission`}>权限模式</Label>
+              <Select
+                value={permissionMode}
+                onValueChange={(value) =>
+                  setPermissionMode(
+                    value as NonNullable<
+                      BridgeDesiredConfig["permission_mode"]
+                    >,
+                  )
+                }
+              >
+                <SelectTrigger id={`${fieldId}-permission`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="danger-full-access">
+                    全权限（无沙箱）
+                  </SelectItem>
+                  <SelectItem value="safe">安全模式</SelectItem>
+                  <SelectItem value="inherit">继承本机设置</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs leading-relaxed text-amber-700">
+                全权限无沙箱，属高风险；安全模式只允许写入项目目录并关闭网络。
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${fieldId}-approval`}>审批模式</Label>
+              <Select
+                value={approvalMode}
+                onValueChange={(value) =>
+                  setApprovalMode(
+                    value as NonNullable<
+                      BridgeDesiredConfig["approval_mode"]
+                    >,
+                  )
+                }
+              >
+                <SelectTrigger id={`${fieldId}-approval`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="accept">自动通过</SelectItem>
+                  <SelectItem value="accept-session">当前会话内允许</SelectItem>
+                  <SelectItem value="decline">自动拒绝</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs leading-relaxed text-amber-700">
+                自动通过会在设备端立即批准与活跃 turn 关联的审批请求。
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         <div
           className={`rounded-md border border-border px-3 py-3 ${
@@ -743,19 +810,13 @@ function BridgeConfigForm({
                 由 Web 管理项目工作目录
               </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-amber-700">
-                目录会成为 Bridge 可工作的本机范围；只有设备显式授权后才会应用。
+                目录会成为 Bridge 可工作的本机范围，并由 Web 直接下发应用。
               </span>
               {!workingDirectoriesSupported ? (
                 <span className="mt-1 block text-xs text-muted-foreground">
                   {isCodexRuntime
                     ? "需要 Bridge 0.8.0 或更高版本。"
                     : "需要 Bridge 1.3.0 或更高版本。"}
-                </span>
-              ) : workingDirectoriesBlocked ? (
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {constraints
-                    ? `本机尚未授权；需在设备设置 ${allowWorkingDirectoriesEnvVar}=true。`
-                    : `等待设备上报授权；需先设置 ${allowWorkingDirectoriesEnvVar}=true。`}
                 </span>
               ) : (
                 <span className="mt-1 block text-xs text-muted-foreground">
@@ -949,11 +1010,7 @@ function BridgeConfigForm({
                 onChange={(event) => setHistoryTurnLimit(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Web 最多请求最近 500 个 Turn；本机上限
-                {constraints
-                  ? ` ${constraints.max_history_turns}`
-                  : "尚未上报"}
-                。关闭历史同步时保留此期望值。
+                Web 可请求最近 1 到 500 个 Turn；关闭历史同步时保留此期望值。
               </p>
             </div>
           ) : null}
@@ -975,7 +1032,10 @@ function BridgeConfigForm({
 
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">设备本地安全边界</h3>
-        <LocalConstraints constraints={constraints} />
+        <LocalConstraints
+          constraints={constraints}
+          showSafetyModes={!isCodexRuntime}
+        />
         <h4 className="pt-1 text-xs font-medium text-muted-foreground">
           设备实际上报的工作目录
         </h4>
@@ -1022,6 +1082,7 @@ export function BridgeConfigDialog({
   const selectedPlatform = unified
     ? platform
     : canonicalBridgeKind(connection.platform);
+  const runtimeVersion = bridgeVersionForPlatform(connection, selectedPlatform);
   const configQuery = useBridgeConfig(
     connection.id,
     selectedPlatform,
@@ -1101,7 +1162,7 @@ export function BridgeConfigDialog({
             ) : null}
             <BridgeConfigForm
               key={`${platform}:${configQuery.data.configuration.version}`}
-              connection={connection}
+              connection={{ ...connection, bridge_version: runtimeVersion }}
               platform={selectedPlatform}
               configuration={configQuery.data.configuration}
               directories={(directoriesQuery.data ?? []).filter(

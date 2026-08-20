@@ -7,6 +7,7 @@ const databaseMocks = vi.hoisted(() => ({
   from: vi.fn(),
   select: vi.fn(),
   update: vi.fn(),
+  upsert: vi.fn(),
   eq: vi.fn(),
   maybeSingle: vi.fn(),
 }));
@@ -63,12 +64,14 @@ beforeEach(() => {
     error: null,
     select: databaseMocks.select,
     update: databaseMocks.update,
+    upsert: databaseMocks.upsert,
     eq: databaseMocks.eq,
     maybeSingle: databaseMocks.maybeSingle,
   };
   databaseMocks.from.mockReturnValue(updateQuery);
   databaseMocks.select.mockReturnValue(updateQuery);
   databaseMocks.update.mockReturnValue(updateQuery);
+  databaseMocks.upsert.mockReturnValue(updateQuery);
   databaseMocks.eq.mockReturnValue(updateQuery);
   // 默认无待升级目标：clearSatisfiedBridgeUpdate 读到 null 后直接返回。
   databaseMocks.maybeSingle.mockResolvedValue({
@@ -252,5 +255,46 @@ describe("Bridge update target clearing", () => {
     await syncSessions(auth, { ...input, bridge_version: "1.4.0" }, "update/4");
 
     expect(databaseMocks.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("Per-runtime Bridge version persistence", () => {
+  beforeEach(() => {
+    databaseMocks.rpc.mockResolvedValue({
+      data: { sessions: [] },
+      error: null,
+    });
+  });
+
+  it("stores the reported version on the runtime's settings row", async () => {
+    await syncSessions(
+      auth,
+      { ...input, platform: "kimi", bridge_version: "1.7.1-kimi.1" },
+      "version/kimi",
+    );
+
+    expect(databaseMocks.upsert).toHaveBeenCalledWith(
+      {
+        workspace_id: auth.workspaceId,
+        connection_id: auth.connectionId,
+        platform: "kimi",
+        bridge_version: "1.7.1-kimi.1",
+      },
+      { onConflict: "connection_id,platform" },
+    );
+  });
+
+  it("tolerates databases where the platform version column is not yet available", async () => {
+    databaseMocks.upsert.mockResolvedValue({
+      error: {
+        code: "PGRST204",
+        message:
+          "Could not find the 'bridge_version' column of 'ai_connection_bridge_settings' in the schema cache",
+      },
+    });
+
+    await expect(
+      syncSessions(auth, input, "version/missing-column"),
+    ).resolves.toEqual({ sessions: [] });
   });
 });

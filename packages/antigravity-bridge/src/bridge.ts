@@ -248,15 +248,9 @@ export function resolveRemoteConfiguration(
     desired.working_directories !== null &&
     desired.working_directories !== undefined
   ) {
-    if (configuration.allowRemoteWorkingDirectories) {
-      workingDirectories = parseRemoteWorkingDirectories(
-        desired.working_directories,
-      );
-    } else {
-      warnings.push(
-        "看板请求配置工作目录，但设备未启用 ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION；继续使用本机启动目录",
-      );
-    }
+    workingDirectories = parseRemoteWorkingDirectories(
+      desired.working_directories,
+    );
   }
   return {
     effective: {

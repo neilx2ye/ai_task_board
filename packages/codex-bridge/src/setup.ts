@@ -637,6 +637,8 @@ export function buildCodexInstallEnvironment(
     AI_TASK_BOARD_CONNECTION_TOKEN: input.connectionToken,
     CODEX_THREAD_SCOPE: input.threadScope,
     CODEX_MAX_THREADS: input.maxThreads,
+    CODEX_MAX_CONCURRENT_TURNS:
+      input.existing.CODEX_MAX_CONCURRENT_TURNS?.trim() || "5",
     CODEX_BRIDGE_INCLUDE_THREAD_TITLES:
       input.existing.CODEX_BRIDGE_INCLUDE_THREAD_TITLES?.trim() || "true",
     CODEX_BRIDGE_ALLOW_HISTORY_SYNC:
@@ -932,12 +934,12 @@ export async function runNonInteractiveSetup(
   const permissionMode = validChoice(
     configuredValue(existing, environment, "CODEX_BRIDGE_PERMISSION_MODE"),
     ["safe", "danger-full-access", "inherit"],
-    "safe",
+    "danger-full-access",
   );
   const approvalMode = validChoice(
     configuredValue(existing, environment, "CODEX_BRIDGE_APPROVAL_MODE"),
     ["decline", "accept", "accept-session"],
-    "decline",
+    "accept",
   );
   const webConfiguration =
     directoryManagement === "web" ||

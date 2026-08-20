@@ -32,15 +32,13 @@ workspaces:
 
 ```bash
 npm install -g @agentclientprotocol/claude-agent-acp
-npx --yes ai-task-board-bridge@1.7.1 setup claude
+npx --yes ai-task-board-bridge@1.8.0 setup claude
 ```
 
 The wizard asks only for the Board URL (leave it empty to use
 `https://task.neilx.online`) and the hidden Connection Token. Working
-directories default to Web-side management, which writes
-`CLAUDE_BRIDGE_WEB_CONFIG=true` and
-`CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`, leaving the
-directory list to the Board's "AI 连接 → Bridge 设置 / 新建项目"; passing
+directories default to Web-side management, leaving the directory list to the
+Board's "AI 连接 → Bridge 设置 / 新建项目"; passing
 `CLAUDE_WORKING_DIRECTORY(S)` pins a local allowlist at install time instead.
 With `AI_TASK_BOARD_CONNECTION_TOKEN` configured, `setup` runs
 non-interactively even in a terminal. The installer writes a `0600`
@@ -64,7 +62,7 @@ local allowlist instead. `AI_TASK_BOARD_URL` is optional and defaults to
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.7.1 setup claude
+npx --yes ai-task-board-bridge@1.8.0 setup claude
 ```
 
 ## Foreground mode
@@ -75,7 +73,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.7.1 run claude
+npx --yes ai-task-board-bridge@1.8.0 run claude
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -90,16 +88,15 @@ list, so a command cannot inject an arbitrary device path.
 
 ## Remote Web configuration
 
-Set `CLAUDE_BRIDGE_WEB_CONFIG=true` to let the Workspace Owner apply the
-Bridge settings from the Board UI:
+The Board UI is the sole configuration entry point; the Workspace Owner can
+apply the Bridge settings without any device-side opt-in:
 
 - enable/pause the Bridge (paused workers keep heartbeats but claim no new
   turns, and Web Thread creation is rejected);
 - change the Session cap and device-wide concurrent-turn cap;
-- toggle session-title upload; the installer enables it by default, and an
-  explicit `CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES=false` opts out;
-- replace the effective working-directory list, when the device authorizes it
-  with `CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true`.
+- toggle session-title upload; it is enabled by default for new connections,
+  and `CLAUDE_BRIDGE_INCLUDE_SESSION_TITLES` is only a startup fallback;
+- replace the effective working-directory list.
 
 `CLAUDE_MAX_THREADS` is a startup fallback only. With Web configuration enabled
 the Board owns the live 1..500 Session limit and 1..32 turn limit; neither is
@@ -107,15 +104,14 @@ clamped to the local environment value.
 Claude Code does not implement thread-history import, so that Codex-specific
 control is hidden.
 
-With `CLAUDE_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION=true` a
-Board-provided list must contain 1 to 100 unique entries with absolute paths
+A Board-provided list must contain 1 to 100 unique entries with absolute paths
 that already exist and are directories; an entry may carry
 `create_if_missing: true` to authorize the device to create the path with
 `mkdir -p` first. The applied list replaces the effective allowlist at
 runtime: the next inventory sync re-attributes Sessions to the new
 directories, Sessions outside it are retired, and Web Thread creation
-resolves `directory_key` against it. A null or locally denied remote list
-restores the immutable `CLAUDE_WORKING_DIRECTORIES` startup list.
+resolves `directory_key` against it. A null remote list restores the immutable
+`CLAUDE_WORKING_DIRECTORIES` startup list.
 
 Every session-inventory sync also reports `device_id` (a UUID generated on
 first start and persisted with `0600` permissions to
@@ -137,7 +133,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.7.1 setup claude`.
+rerunning `npx --yes ai-task-board-bridge@1.8.0 setup claude`.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Claude Code runtime

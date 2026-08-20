@@ -359,12 +359,8 @@ export function loadConfiguration(
       ...directory,
     })),
     includeSessionTitles: true,
-    allowRemoteWorkingDirectories: parseBoolean(
-      environment.ANTIGRAVITY_BRIDGE_ALLOW_WORKING_DIRECTORY_CONFIGURATION,
-    ),
-    webConfigurationEnabled: parseBoolean(
-      environment.ANTIGRAVITY_BRIDGE_WEB_CONFIG,
-    ),
+    allowRemoteWorkingDirectories: true,
+    webConfigurationEnabled: true,
     enabled: true,
     sessionNamePrefix: environment.ANTIGRAVITY_SESSION_NAME?.trim() || null,
     capabilities: parseList(
@@ -382,7 +378,7 @@ export function loadConfiguration(
     localMaxThreads,
     maxConcurrentTurns: parseInteger(
       environment.ANTIGRAVITY_MAX_CONCURRENT_TURNS,
-      2,
+      5,
       1,
       32,
     ),

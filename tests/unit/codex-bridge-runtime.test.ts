@@ -231,6 +231,7 @@ describe("Codex Bridge runtime primitives", () => {
 
     expect(defaults.permissionMode).toBe("danger-full-access");
     expect(defaults.approvalMode).toBe("accept");
+    expect(defaults.maxConcurrentTurns).toBe(5);
     expect(bridgeConfigurationConstraints(defaults)).toMatchObject({
       permission_mode: "danger-full-access",
       approval_mode: "accept",
@@ -270,7 +271,7 @@ describe("Codex Bridge runtime primitives", () => {
     ).toThrow("CODEX_BRIDGE_APPROVAL_MODE");
   });
 
-  it("keeps local safety gates while letting Web own thread and turn limits", () => {
+  it("lets Web own every remote-configurable field without device authorization", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
@@ -281,8 +282,10 @@ describe("Codex Bridge runtime primitives", () => {
       CODEX_BRIDGE_PERMISSION_MODE: "safe",
     });
 
-    expect(configuration.webConfigurationEnabled).toBe(false);
-    expect(configuration.allowRemoteThreadTitles).toBe(false);
+    expect(configuration.webConfigurationEnabled).toBe(true);
+    expect(configuration.allowRemoteThreadTitles).toBe(true);
+    expect(configuration.allowHistorySync).toBe(true);
+    expect(configuration.allowRemoteWorkingDirectories).toBe(true);
     const resolved = resolveRemoteConfiguration(configuration, {
       enabled: false,
       include_thread_titles: true,
@@ -292,42 +295,41 @@ describe("Codex Bridge runtime primitives", () => {
         {
           directory_key: "remote",
           name: "Remote",
-          working_directory: "/workspace/remote",
+          working_directory: path.resolve("packages"),
         },
       ],
-      // Extra fields from an untrusted response cannot expand local authority.
+      // Web now owns the safety modes; unrelated fields stay ignored.
       thread_scope: "all",
       permission_mode: "inherit",
     } as never);
 
     expect(resolved.effective).toEqual({
       enabled: false,
-      includeThreadTitles: false,
+      includeThreadTitles: true,
       maxThreads: 500,
       maxConcurrentTurns: 32,
       syncHistory: false,
       historyTurnLimit: 50,
-      workingDirectory: "/workspace/safe",
+      permissionMode: "inherit",
+      approvalMode: "accept",
+      workingDirectory: path.resolve("packages"),
       workingDirectories: [
         {
-          key: "default",
-          name: "safe",
-          workingDirectory: "/workspace/safe",
+          key: "remote",
+          name: "Remote",
+          workingDirectory: path.resolve("packages"),
         },
       ],
     });
-    expect(resolved.warnings).toHaveLength(2);
-    expect(resolved.warnings).toContainEqual(
-      expect.stringContaining("CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES"),
-    );
+    expect(resolved.warnings).toEqual([]);
     expect(bridgeConfigurationConstraints(configuration)).toMatchObject({
-      remote_configuration_enabled: false,
-      allow_thread_titles: false,
-      allow_working_directory_configuration: false,
+      remote_configuration_enabled: true,
+      allow_thread_titles: true,
+      allow_working_directory_configuration: true,
       max_threads: 500,
       max_concurrent_turns: 32,
-      allow_history_sync: false,
-      max_history_turns: 50,
+      allow_history_sync: true,
+      max_history_turns: 500,
       thread_scope: "cwd",
       working_directory: "/workspace/safe",
       permission_mode: "safe",
@@ -351,7 +353,7 @@ describe("Codex Bridge runtime primitives", () => {
     expect(configuration.localMaxHistoryTurns).toBe(50);
   });
 
-  it("applies Board working directories only behind the explicit local gate", () => {
+  it("applies Board working directories without a device authorization gate", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
@@ -408,13 +410,13 @@ describe("Codex Bridge runtime primitives", () => {
     );
   });
 
-  it("keeps history sync opt-in local and clamps the remote turn budget", () => {
-    const denied = loadConfiguration({
+  it("applies Web history sync and its turn budget without device authorization", () => {
+    const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
-      CODEX_BRIDGE_MAX_HISTORY_TURNS: "25",
+      CODEX_BRIDGE_MAX_HISTORY_TURNS: "200",
     });
-    const deniedResult = resolveRemoteConfiguration(denied, {
+    const resolved = resolveRemoteConfiguration(configuration, {
       enabled: true,
       include_thread_titles: false,
       max_threads: 1,
@@ -423,35 +425,14 @@ describe("Codex Bridge runtime primitives", () => {
       history_turn_limit: 500,
       working_directories: null,
     });
-    expect(deniedResult.effective).toMatchObject({
-      syncHistory: false,
-      historyTurnLimit: 25,
+    expect(resolved.effective).toMatchObject({
+      syncHistory: true,
+      historyTurnLimit: 500,
     });
-    expect(deniedResult.warnings).toEqual([
-      expect.stringContaining("CODEX_BRIDGE_ALLOW_HISTORY_SYNC"),
-      expect.stringContaining("history_turn_limit=500"),
-    ]);
-
-    const allowed = loadConfiguration({
-      AI_TASK_BOARD_URL: "https://board.example.com",
-      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
-      CODEX_BRIDGE_ALLOW_HISTORY_SYNC: "true",
-      CODEX_BRIDGE_MAX_HISTORY_TURNS: "200",
-    });
-    expect(
-      resolveRemoteConfiguration(allowed, {
-        enabled: true,
-        include_thread_titles: false,
-        max_threads: 1,
-        max_concurrent_turns: 1,
-        sync_history: true,
-        history_turn_limit: 80,
-        working_directories: null,
-      }).effective,
-    ).toMatchObject({ syncHistory: true, historyTurnLimit: 80 });
+    expect(resolved.warnings).toEqual([]);
   });
 
-  it("treats an existing local title opt-in as permission for Web titles", () => {
+  it("applies Web titles without device authorization", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
