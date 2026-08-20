@@ -26,7 +26,7 @@ Node.js 18 or newer is required. Run setup as the same OS user that owns the
 selected agent login and workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.2 setup
+npx --yes ai-task-board-bridge@1.8.3 setup
 ```
 
 The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
@@ -34,12 +34,12 @@ The first prompt offers `Codex Bridge`, `Kimi Bridge`, `Antigravity Bridge`,
 or repeat installs can bypass that first prompt:
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.2 setup codex
-npx --yes ai-task-board-bridge@1.8.2 setup kimi
-npx --yes ai-task-board-bridge@1.8.2 setup antigravity
-npx --yes ai-task-board-bridge@1.8.2 setup claude
-npx --yes ai-task-board-bridge@1.8.2 setup both
-npx --yes ai-task-board-bridge@1.8.2 setup all
+npx --yes ai-task-board-bridge@1.8.3 setup codex
+npx --yes ai-task-board-bridge@1.8.3 setup kimi
+npx --yes ai-task-board-bridge@1.8.3 setup antigravity
+npx --yes ai-task-board-bridge@1.8.3 setup claude
+npx --yes ai-task-board-bridge@1.8.3 setup both
+npx --yes ai-task-board-bridge@1.8.3 setup all
 ```
 
 Every target installs the same single user service, environment file, and
@@ -98,7 +98,7 @@ wizard:
 ```bash
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-npx --yes ai-task-board-bridge@1.8.2 setup codex
+npx --yes ai-task-board-bridge@1.8.3 setup codex
 ```
 
 Providing `AI_TASK_BOARD_CONNECTION_TOKEN` switches both `setup` and `run` to
@@ -142,7 +142,7 @@ foreground:
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.8.2 run codex
+npx --yes ai-task-board-bridge@1.8.3 run codex
 ```
 
 > **High-risk foreground defaults:** when these values are omitted, the Bridge uses
@@ -160,7 +160,7 @@ scope with one exact existing-thread compatibility filter:
 
 ```bash
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
-npx --yes ai-task-board-bridge@1.8.2 run codex
+npx --yes ai-task-board-bridge@1.8.3 run codex
 ```
 
 Bridge 0.7 and later can manage several exact working directories in one process:
@@ -168,7 +168,7 @@ Bridge 0.7 and later can manage several exact working directories in one process
 ```bash
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.8.2 run codex
+npx --yes ai-task-board-bridge@1.8.3 run codex
 ```
 
 The JSON array accepts 1 to 100 unique `{key,name?,path}` entries. Its first
@@ -257,7 +257,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.8.2 setup` for the same runtime.
+rerunning `npx --yes ai-task-board-bridge@1.8.3 setup` for the same runtime.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>` (120-second timeout), extracts the tarball
@@ -401,7 +401,7 @@ Run only one Bridge for the same device/Connection, and
 do not let another TUI, IDE, or automation writer submit turns to a managed
 thread at the same time.
 
-Use `npx --yes ai-task-board-bridge@1.8.2 --help` for the complete
+Use `npx --yes ai-task-board-bridge@1.8.3 --help` for the complete
 environment-variable list.
 
 ## Kimi Bridge
@@ -420,7 +420,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.2 run kimi
+npx --yes ai-task-board-bridge@1.8.3 run kimi
 ```
 
 `KIMI_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -450,7 +450,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.2 run antigravity
+npx --yes ai-task-board-bridge@1.8.3 run antigravity
 ```
 
 `ANTIGRAVITY_WORKING_DIRECTORIES` accepts 1 to 100 unique exact
@@ -487,7 +487,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.2 run claude
+npx --yes ai-task-board-bridge@1.8.3 run claude
 ```
 
 `CLAUDE_WORKING_DIRECTORIES` accepts 1 to 100 unique exact `{key,name?,path}`

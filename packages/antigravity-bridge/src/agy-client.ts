@@ -172,6 +172,7 @@ export type AgyStreamState = {
   initModel: string | null;
   response: string;
   status: string;
+  error: string | null;
   usage: AgyUsage | null;
   durationSeconds: number | null;
   numTurns: number | null;
@@ -189,6 +190,7 @@ export function initialAgyStreamState(
     initModel: null,
     response: "",
     status: "UNKNOWN",
+    error: null,
     usage: null,
     durationSeconds: null,
     numTurns: null,
@@ -255,6 +257,20 @@ export function reduceAgyStreamEvent(
     state.usage = result.usage ?? state.usage;
     state.durationSeconds = result.duration_seconds ?? null;
     state.numTurns = result.num_turns ?? null;
+    if (typeof result.error === "string" && result.error.trim()) {
+      state.error = result.error;
+    }
+    return;
+  }
+  if (event.event === "error" && isRecord(event.error)) {
+    // Older agy builds can emit a dedicated top-level error event instead of
+    // a result event with an error field; keep whichever detail arrives.
+    const detail = (event.error as Record<string, unknown>).message
+      ?? (event.error as Record<string, unknown>).error
+      ?? (event.error as Record<string, unknown>).detail;
+    if (typeof detail === "string" && detail.trim()) {
+      state.error = detail;
+    }
   }
 }
 
@@ -592,7 +608,9 @@ export class AgyClient {
           }
           if (state.status === "ERROR" || state.status === "INVALID") {
             const detail =
-              stderrBuffer.trim().split(/\r?\n/).slice(-5).join("；") || "未知错误";
+              state.error ??
+              (stderrBuffer.trim().split(/\r?\n/).slice(-5).join("；") ||
+                "未知错误");
             reject(
               new Error(
                 `agy headless 运行失败（${state.status}）：${detail.slice(0, 4_000)}`,

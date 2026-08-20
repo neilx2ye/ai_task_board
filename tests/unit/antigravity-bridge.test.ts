@@ -138,6 +138,31 @@ describe("Antigravity stream-json parsing", () => {
       failedToolCallCount: 1,
     });
   });
+
+  it("keeps result error details instead of discarding them", () => {
+    const state = initialAgyStreamState(null);
+    reduceAgyStreamEvent(state, {
+      event: "result",
+      result: {
+        conversation_id: "conv-1",
+        status: "ERROR",
+        response: "",
+        error: "permission check failed for read_file",
+      },
+    });
+    expect(state.error).toBe("permission check failed for read_file");
+    expect(state.status).toBe("ERROR");
+    expect(state.sawResult).toBe(true);
+  });
+
+  it("accepts a dedicated top-level error event", () => {
+    const state = initialAgyStreamState(null);
+    reduceAgyStreamEvent(state, {
+      event: "error",
+      error: { message: "invalid model selection" },
+    });
+    expect(state.error).toBe("invalid model selection");
+  });
 });
 
 describe("Antigravity model catalog parsing", () => {
