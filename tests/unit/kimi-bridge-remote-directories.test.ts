@@ -204,8 +204,8 @@ describe("Kimi Bridge session sync device identity", () => {
     });
     await client.syncSessions([], baseConfiguration().workingDirectories, [], undefined);
     const body = syncBody(fetchMock);
-    expect(body.bridge_version).toBe("1.8.3-kimi.1");
-    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.8.3-kimi.1");
+    expect(body.bridge_version).toBe("1.8.4-kimi.1");
+    expect(KIMI_BRIDGE_CAPABILITY_VERSION).toBe("1.8.4-kimi.1");
     expect(body.device_id).toBe("2f4b91c0-0000-4000-8000-0000000000ab");
     expect(body.device_label).toBe("test-host");
     expect(body.directories).toEqual([

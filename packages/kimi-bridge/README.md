@@ -22,7 +22,7 @@ reply to the matching Board conversation.
 Run setup as the same OS user that owns the Kimi login and target workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.3 setup kimi
+npx --yes ai-task-board-bridge@1.8.4 setup kimi
 ```
 
 The wizard asks only for the Board URL (leave it empty to use
@@ -46,7 +46,7 @@ allowlist instead. `AI_TASK_BOARD_URL` is optional and defaults to
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.8.3 setup kimi
+npx --yes ai-task-board-bridge@1.8.4 setup kimi
 ```
 
 ## Foreground mode
@@ -57,7 +57,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.3 run kimi
+npx --yes ai-task-board-bridge@1.8.4 run kimi
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -117,7 +117,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.8.3 setup kimi`.
+rerunning `npx --yes ai-task-board-bridge@1.8.4 setup kimi`.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Kimi runtime into

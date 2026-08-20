@@ -202,6 +202,28 @@ export function initialAgyStreamState(
 }
 
 /**
+ * 附加失败提示：当 Bridge 启用了 --sandbox，而 agy 报出操作系统级文件访问
+ * 拒绝时，说明沙箱把文件访问限制在线程工作目录内（agy 1.1.16 起会直接
+ * EACCES/EPERM），跨目录读取正是最常见的触发场景。
+ */
+export function appendSandboxFailureHint(
+  detail: string,
+  sandboxEnabled: boolean,
+): string {
+  if (
+    !sandboxEnabled ||
+    !/(?:permission denied|operation not permitted|eacces|eperm)/i.test(detail)
+  ) {
+    return detail;
+  }
+  return (
+    `${detail}（已启用 --sandbox：agy 会把文件访问限制在线程工作目录内，` +
+    "读取目录外文件会被系统拒绝；请扩大该线程的工作目录，或设置 " +
+    "ANTIGRAVITY_BRIDGE_SANDBOX=false 并重启 Bridge 后重试）"
+  );
+}
+
+/**
  * Pure NDJSON event reducer for agy's documented stream-json output. Kept
  * separate from the spawn plumbing so parsing stays unit-testable.
  */
@@ -601,7 +623,10 @@ export class AgyClient {
               `退出码 ${code ?? "unknown"}${signal ? `（signal ${signal}）` : ""}`;
             reject(
               new Error(
-                `agy headless 运行未返回 result 事件：${detail.slice(0, 4_000)}`,
+                `agy headless 运行未返回 result 事件：${appendSandboxFailureHint(
+                  detail,
+                  this.configuration.sandbox,
+                ).slice(0, 4_000)}`,
               ),
             );
             return;
@@ -613,7 +638,10 @@ export class AgyClient {
                 "未知错误");
             reject(
               new Error(
-                `agy headless 运行失败（${state.status}）：${detail.slice(0, 4_000)}`,
+                `agy headless 运行失败（${state.status}）：${appendSandboxFailureHint(
+                  detail,
+                  this.configuration.sandbox,
+                ).slice(0, 4_000)}`,
               ),
             );
             return;

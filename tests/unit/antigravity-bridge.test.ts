@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   ANTIGRAVITY_FALLBACK_MODEL_CATALOG,
   ANTIGRAVITY_IMAGE_MINIMUM_VERSION,
+  appendSandboxFailureHint,
   initialAgyStreamState,
   inventoryModelFromListItem,
   parseModelListText,
@@ -162,6 +163,18 @@ describe("Antigravity stream-json parsing", () => {
       error: { message: "invalid model selection" },
     });
     expect(state.error).toBe("invalid model selection");
+  });
+
+  it("appends a sandbox hint to file-access denials only when sandbox is on", () => {
+    const denial = "open /home/techpod/theme/Repod.html: permission denied";
+    expect(appendSandboxFailureHint(denial, true)).toContain(
+      "ANTIGRAVITY_BRIDGE_SANDBOX=false",
+    );
+    expect(appendSandboxFailureHint(denial, true)).toContain(denial);
+    expect(appendSandboxFailureHint(denial, false)).toBe(denial);
+    expect(appendSandboxFailureHint("invalid model selection", true)).toBe(
+      "invalid model selection",
+    );
   });
 });
 

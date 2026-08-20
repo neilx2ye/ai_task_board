@@ -1,6 +1,6 @@
 {
   "name": "@ai-task-board/claude-code-bridge-runtime",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "private": true,
   "description": "Internal Claude Code ACP runtime bundled with ai-task-board-bridge",
   "type": "module",
