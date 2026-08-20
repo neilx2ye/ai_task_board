@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.1 setup codex
+npx --yes ai-task-board-bridge@1.8.2 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi、Antigravity 与 Claude Code Bridge 的唯一公开
@@ -88,7 +88,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.8.1 run codex
+npx --yes ai-task-board-bridge@1.8.2 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -110,7 +110,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.8.1 run codex
+npx --yes ai-task-board-bridge@1.8.2 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -122,7 +122,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.8.1 run codex
+npx --yes ai-task-board-bridge@1.8.2 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -297,7 +297,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 - **历史同步是限量白名单，不是完整原始日志镜像。** 只补录最近完成 turn 的用户消息与最终 AI 回复；思考、工具过程、附件与本机路径都不会补录。扩大 turn 上限后会从最近历史重新幂等扫描；关闭或降低上限不会反向删除已导入内容。
 - **没有可靠的运行中 steer。** 忙碌时的新网页消息排到下一张 Task，当前 turn 完成后才执行。
 - **没有网页审批。** 默认 `danger-full-access` 不施加沙箱写入或网络限制，默认 `accept` 会在设备端自动批准与当前活跃 turn 关联的受支持请求；这个高风险组合不是用户逐次确认。可用 `safe` 收紧沙箱，用 `decline` 统一拒绝审批，两者需要分别设置。
-- **没有可靠的网页 interrupt。** 网页状态或取消操作不能保证立即终止本地命令；停止 systemd 服务只会走尽力的 App Server interrupt。
+- **网页 interrupt 是尽力的。** 暂停 `claimed`/`running` 任务会立即把任务置为 `paused` 并清理领取，Bridge 在下一个命令轮询周期内请求 App Server 中断当前 turn；已完成的 turn 按成功空操作处理。网页取消或状态操作仍不保证立即终止本地命令；停止 systemd 服务只会走尽力的 App Server interrupt。
 - **只转换协议级结构化问题。** blocking `item/tool/requestUserInput` 会自动显示 Web 选择框并保留原 turn；普通 AI 文本里的疑问句不会自动暂停，网页普通消息仍会成为下一张 Task。
 - **默认 cwd scope 不是令牌强隔离。** 默认只选 cwd 完全相同的 thread，能避免静默暴露其他项目的最近 thread；但同 UID 的 Codex/TUI/Bridge 仍共享用户级数据与进程权限。更强边界需要 `CODEX_THREAD_ID`、独立 UID 和/或 token proxy；`CODEX_THREAD_SCOPE=all` 会显式扩大到跨项目 thread。
 - **同一 thread 仍是单写入者。** 不要同时从 Bridge、TUI、IDE 或另一自动化进程提交 turn；不同 thread 才能安全并行。

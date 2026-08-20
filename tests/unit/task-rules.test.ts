@@ -17,6 +17,7 @@ const statuses: TaskStatus[] = [
   "running",
   "waiting_user",
   "blocked",
+  "paused",
   "completed",
   "failed",
   "cancelled",
@@ -65,6 +66,13 @@ describe("parent status aggregation", () => {
     [["ready", "failed", "blocked"], "failed"],
     [["ready", "blocked", "inbox"], "ready"],
     [["blocked", "inbox", "cancelled"], "blocked"],
+    [["paused"], "paused"],
+    [["completed", "paused", "cancelled"], "paused"],
+    [["blocked", "paused"], "blocked"],
+    [["ready", "paused"], "ready"],
+    [["failed", "paused"], "failed"],
+    [["running", "paused"], "running"],
+    [["waiting_user", "paused"], "waiting_user"],
   ] as Array<[TaskStatus[], TaskStatus]>)(
     "aggregates %j as %s using database precedence",
     (children, expected) => {
@@ -135,13 +143,14 @@ describe("claim candidate ordering", () => {
 describe("task state transitions", () => {
   const allowedLeafTransitions: Record<TaskStatus, TaskStatus[]> = {
     inbox: ["ready", "blocked", "cancelled"],
-    ready: ["claimed", "cancelled"],
+    ready: ["claimed", "paused", "cancelled"],
     claimed: [
       "claimed",
       "running",
       "ready",
       "waiting_user",
       "blocked",
+      "paused",
       "completed",
       "failed",
       "cancelled",
@@ -152,12 +161,14 @@ describe("task state transitions", () => {
       "ready",
       "waiting_user",
       "blocked",
+      "paused",
       "completed",
       "failed",
       "cancelled",
     ],
     waiting_user: ["ready", "blocked", "cancelled"],
     blocked: ["ready", "cancelled"],
+    paused: ["ready", "blocked", "cancelled"],
     completed: ["ready", "blocked", "cancelled"],
     failed: ["ready", "blocked", "cancelled"],
     cancelled: [],
@@ -181,6 +192,7 @@ describe("task state transitions", () => {
       "running",
       "waiting_user",
       "failed",
+      "paused",
       "completed",
     ];
 

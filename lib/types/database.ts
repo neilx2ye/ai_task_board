@@ -15,12 +15,13 @@ export type TaskStatus =
   | "blocked"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "paused";
 
 export type MemberRole = "owner" | "member";
 export type ActorType = "user" | "ai" | "system";
 export type SessionStatus = "online" | "busy" | "waiting" | "offline";
-export type AIThreadCommandAction = "create" | "rename" | "delete";
+export type AIThreadCommandAction = "create" | "rename" | "delete" | "pause";
 export type AIThreadCommandStatus =
   | "queued"
   | "running"
@@ -360,6 +361,8 @@ export type AIThreadCommandRow = {
   session_id: string | null;
   action: AIThreadCommandAction;
   name: string | null;
+  /** 暂停命令锚定的任务；Bridge 只中断与该任务匹配的活跃 turn。 */
+  task_id: string | null;
   directory_key: string | null;
   model: string | null;
   reasoning_effort: string | null;
@@ -384,6 +387,7 @@ export type AIThreadCommandInsert = {
   session_id?: string | null;
   action: AIThreadCommandAction;
   name?: string | null;
+  task_id?: string | null;
   directory_key?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
@@ -1932,6 +1936,14 @@ export interface Database {
         Returns: TaskResponse;
       };
       reopen_task: {
+        Args: UserTaskCommandArgs;
+        Returns: TaskResponse;
+      };
+      pause_task: {
+        Args: UserTaskCommandArgs;
+        Returns: TaskResponse;
+      };
+      resume_task: {
         Args: UserTaskCommandArgs;
         Returns: TaskResponse;
       };

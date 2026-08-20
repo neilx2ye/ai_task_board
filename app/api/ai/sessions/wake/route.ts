@@ -21,6 +21,41 @@ function eventFrame(event: string): Uint8Array {
   return encoder.encode(`event: ${event}\ndata: {}\n\n`);
 }
 
+type OpenWakeStream = {
+  enqueue: (chunk: Uint8Array) => void;
+  close: () => void;
+};
+
+/**
+ * Live wake streams, used by a single process-wide signal listener. `next
+ * start` drains in-flight requests on SIGTERM/SIGINT, and a wake stream can
+ * live for up to MAX_STREAM_AGE_MS. Without ending the streams first, every
+ * graceful stop blocks until systemd force-kills the server, turning each
+ * deploy into a 502 window for all devices.
+ */
+const openWakeStreams = new Set<OpenWakeStream>();
+let shutdownListenersInstalled = false;
+
+function installShutdownListeners(): void {
+  if (shutdownListenersInstalled) return;
+  shutdownListenersInstalled = true;
+  const shutdown = () => {
+    for (const stream of [...openWakeStreams]) {
+      // Reconnect hint first so each Bridge re-establishes the channel as
+      // soon as the new process is up.
+      try {
+        stream.enqueue(eventFrame("reconnect"));
+      } catch {
+        // The stream may already be closing; ending it is all that matters.
+      }
+      stream.close();
+    }
+    openWakeStreams.clear();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
 /**
  * Authenticated, data-free wake hints for one AI Session.
  *
@@ -46,6 +81,7 @@ export async function GET(request: Request): Promise<Response> {
           keepalive?: ReturnType<typeof setInterval>;
           maxAge?: ReturnType<typeof setTimeout>;
         } = {};
+        let registration: OpenWakeStream | null = null;
 
         const finalize = () => {
           if (finalized) return;
@@ -53,6 +89,7 @@ export async function GET(request: Request): Promise<Response> {
           if (timers.keepalive) clearInterval(timers.keepalive);
           if (timers.maxAge) clearTimeout(timers.maxAge);
           request.signal.removeEventListener("abort", close);
+          if (registration) openWakeStreams.delete(registration);
           const activeChannel = channel;
           channel = null;
           if (activeChannel) {
@@ -81,6 +118,9 @@ export async function GET(request: Request): Promise<Response> {
         }
 
         cancelStream = finalize;
+        registration = { enqueue, close };
+        openWakeStreams.add(registration);
+        installShutdownListeners();
         request.signal.addEventListener("abort", close, { once: true });
         if (request.signal.aborted) {
           close();

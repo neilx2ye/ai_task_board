@@ -22,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.8.1-antigravity.2";
+export const ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION = "1.8.2-antigravity.1";
 
 export type BoardSession = {
   id: string;
@@ -50,8 +50,12 @@ export type TaskImageArtifact = {
 
 export type ThreadCommand = {
   id: string;
-  action: "create" | "rename" | "delete";
+  action: "create" | "rename" | "delete" | "pause";
   name: string | null;
+  /** Board session UUID; set on pause commands, null on thread management. */
+  session_id?: string | null;
+  /** Paused task UUID on pause commands; null only from older Boards. */
+  task_id?: string | null;
   directory_key: string | null;
   model?: string | null;
   reasoning_effort?: string | null;

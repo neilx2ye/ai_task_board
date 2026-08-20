@@ -403,8 +403,8 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
             也只补录最近完成 turn 的 AI 最终回复。
           </li>
           <li>
-            当前版本支持 Web Thread 管理和同 turn 结构化问答转发；仍不支持网页逐次审批、
-            可靠的运行中 steer/interrupt。默认 <code>danger-full-access</code>
+            当前版本支持 Web Thread 管理和同 turn 结构化问答转发；暂停命令可尽力中断
+            运行中的 turn（一个轮询周期内生效），但仍不支持运行中 steer 与网页逐次审批。默认 <code>danger-full-access</code>
             不启用 sandbox，默认 <code>accept</code> 会在设备端自动同意与当前活跃 turn
             关联的受支持请求，无需网页确认；组合使用会在当前 OS 用户权限范围内无沙箱执行，
             属于高风险配置。
@@ -711,6 +711,10 @@ systemctl --user restart ai-task-board-bridge.service`}</CopyableCodeBlock>
           <StatusRow
             status="waiting_user"
             description="AI 正在等你回答。Codex Bridge 转发的结构化问题会显示为选择框，并保留原 turn 与 claim（Kimi / Antigravity / Claude Code 通道暂不支持结构化问答）；REST/MCP 纯文字提问仍会结束租约，回复后回到原会话队列。"
+          />
+          <StatusRow
+            status="paused"
+            description="已暂停的任务不会被认领；暂停运行中任务会尽力中断设备上的 turn（最长约一个轮询周期）；恢复后回到原会话队列重新执行。"
           />
           <StatusRow
             status="completed"

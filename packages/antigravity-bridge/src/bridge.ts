@@ -334,6 +334,8 @@ class SessionWorker {
   private runPromise: Promise<void> | null = null;
   private stopping = false;
   private activePrompt = false;
+  private pauseRequested = false;
+  private promptController: AbortController | null = null;
 
   constructor(
     private thread: ManagedThread,
@@ -353,6 +355,10 @@ class SessionWorker {
     return this.thread.bindingId;
   }
 
+  get sessionId(): string {
+    return this.boardSession.id;
+  }
+
   get busy(): boolean {
     return this.activeClaim !== null || this.activePrompt;
   }
@@ -360,6 +366,21 @@ class SessionWorker {
   update(thread: ManagedThread, boardSession: BoardSession): void {
     this.thread = thread;
     this.boardSession = boardSession;
+  }
+
+  /**
+   * Web 暂停指令：任务已在看板侧置 paused 并清除 claim，这里只做本地清理。
+   * 中断当前 prompt（经 agy-client 的 onAbort 杀掉整个 agy 进程组）；
+   * 完全空闲时是成功 no-op，保证命令重放幂等。
+   * 指令携带 taskId 时只作用于对应任务：worker 已空闲或已在执行该 session
+   * 的下一个任务时，指令是过期重放，绝不能误杀当前 prompt。taskId 为 null
+   * （旧版 Board）时保持无条件中断。
+   */
+  requestPause(taskId: string | null): void {
+    if (taskId !== null && this.activeClaim?.id !== taskId) return;
+    if (!this.busy) return;
+    this.pauseRequested = true;
+    this.promptController?.abort(new Error("用户从 Web Console 暂停了任务"));
   }
 
   start(): Promise<void> {
@@ -463,7 +484,13 @@ class SessionWorker {
           `完成 Antigravity 任务 [${this.thread.bindingId.slice(0, 8)}]：${task.title}\n`,
         );
       } catch (error) {
-        if (this.stopping) {
+        if (this.pauseRequested) {
+          // 看板已把任务置 paused 并清除 claim：pause 只做强杀后的本地清理，
+          // 绝不能 failTask/completeTask/releaseTask（只会得到 409）。
+          process.stdout.write(
+            `已暂停 Antigravity 任务 [${this.thread.bindingId.slice(0, 8)}]：${task.title}\n`,
+          );
+        } else if (this.stopping) {
           await this.board
             .releaseTask(
               this.boardSession.id,
@@ -471,6 +498,12 @@ class SessionWorker {
               "Antigravity Bridge 正在停止",
             )
             .catch(() => undefined);
+        } else if (errorStatus(error) === 409) {
+          // 任务在看板侧已被暂停/释放（claim 已清除），而 pause 指令尚未轮询
+          // 到。与 user-release 竞态一致：记录日志、不上报失败、不重试。
+          process.stderr.write(
+            `Antigravity 任务 [${this.thread.bindingId}] 的 claim 已被看板清除（可能已暂停或释放）：${redactText(errorMessage(error), 2_000)}\n`,
+          );
         } else {
           const reason = redactText(errorMessage(error), 10_000);
           await this.board
@@ -487,6 +520,7 @@ class SessionWorker {
         }
       } finally {
         this.activeClaim = null;
+        this.pauseRequested = false;
       }
     } finally {
       release?.();
@@ -570,6 +604,23 @@ class SessionWorker {
     const recorder = new TurnRecorder();
     let learnedConversationId = this.thread.conversationId;
     this.activePrompt = true;
+    // 每个 prompt 独立的 AbortController：pause 只中断本轮 prompt（杀掉 agy
+    // 进程组），不影响心跳等其它看板调用；worker 停止仍联动中断 prompt。
+    const promptController = new AbortController();
+    this.promptController = promptController;
+    const forwardStopAbort = () =>
+      promptController.abort(this.stopController.signal.reason);
+    if (this.stopController.signal.aborted) {
+      forwardStopAbort();
+    } else {
+      this.stopController.signal.addEventListener("abort", forwardStopAbort, {
+        once: true,
+      });
+    }
+    // prompt 开始前就收到的 pause 仍然生效：让 agy 一启动即被中断。
+    if (this.pauseRequested) {
+      promptController.abort(new Error("用户从 Web Console 暂停了任务"));
+    }
     let result: AgyPromptResult;
     try {
       result = await this.agy.prompt({
@@ -578,13 +629,15 @@ class SessionWorker {
         conversationId: this.thread.conversationId,
         model,
         reasoningEffort,
-        signal: this.stopController.signal,
+        signal: promptController.signal,
         onTextDelta: (delta) => recorder.consumeDelta(delta),
         onConversationId: (conversationId) => {
           learnedConversationId = conversationId;
         },
       });
     } finally {
+      this.stopController.signal.removeEventListener("abort", forwardStopAbort);
+      this.promptController = null;
       this.activePrompt = false;
       if (stagingDirectory) {
         await rm(stagingDirectory, { recursive: true, force: true }).catch(
@@ -1388,6 +1441,21 @@ export class AntigravityBridge {
       });
       this.managedThreadIds.add(bindingId);
       this.knownModels.set(bindingId, stringValue(command.model));
+      return bindingId;
+    }
+
+    if (command.action === "pause") {
+      const sessionId = commandString(command.session_id);
+      const bindingId = commandString(command.external_thread_id);
+      const worker =
+        (sessionId
+          ? [...this.workers.values()].find(
+              (candidate) => candidate.sessionId === sessionId,
+            )
+          : undefined) ?? (bindingId ? this.workers.get(bindingId) : undefined);
+      // 任务已在看板侧置 paused 并清除 claim；找不到 worker、worker 空闲或
+      // task_id 已对不上（过期重放）都是成功 no-op，保证指令重放幂等。
+      worker?.requestPause(stringValue(command.task_id) ?? null);
       return bindingId;
     }
 

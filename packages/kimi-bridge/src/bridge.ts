@@ -351,6 +351,7 @@ class SessionWorker {
   private runPromise: Promise<void> | null = null;
   private stopping = false;
   private activePrompt = false;
+  private pauseRequested = false;
   private goalClient: KimiWebGoalClient | null = null;
   private goalClientError: Error | null = null;
 
@@ -371,6 +372,10 @@ class SessionWorker {
     return this.info.sessionId;
   }
 
+  get boardSessionId(): string {
+    return this.boardSession.id;
+  }
+
   get busy(): boolean {
     return this.activeClaim !== null || this.activePrompt;
   }
@@ -378,6 +383,25 @@ class SessionWorker {
   update(info: SessionInfo, boardSession: BoardSession): void {
     this.info = info;
     this.boardSession = boardSession;
+  }
+
+  /**
+   * Best-effort Web pause. The Board has already marked the task paused and
+   * cleared its claim, so the unwind path must only clean up locally — never
+   * fail/complete/release the task. A command naming a different task is stale
+   * (this worker is idle or already runs the session's next task) and must not
+   * interrupt the current prompt; a null taskId comes from an older Board and
+   * pauses unconditionally. Fully idle workers are a no-op so replays of the
+   * pause command stay harmless.
+   */
+  requestPause(taskId: string | null): void {
+    if (this.stopping) return;
+    if (taskId !== null && this.activeClaim?.id !== taskId) return;
+    if (!this.activeClaim && !this.activePrompt) return;
+    this.pauseRequested = true;
+    if (this.activePrompt) {
+      void this.acp.cancel(this.info.sessionId).catch(() => undefined);
+    }
   }
 
   start(): Promise<void> {
@@ -481,10 +505,17 @@ class SessionWorker {
       try {
         await this.executeTask(task);
         process.stdout.write(
-          `完成 Kimi 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`,
+          `${this.pauseRequested ? "已暂停" : "完成"} Kimi 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`,
         );
       } catch (error) {
-        if (this.stopping) {
+        if (this.pauseRequested) {
+          // The Board already paused the task and cleared its claim, so a
+          // pause-interrupted turn — or a late 409 from complete/fail/heartbeat
+          // on that cleared claim — needs local cleanup only, never failTask.
+          process.stdout.write(
+            `已暂停 Kimi 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`,
+          );
+        } else if (this.stopping) {
           await this.board
             .releaseTask(this.boardSession.id, task, "Kimi Bridge 正在停止")
             .catch(() => undefined);
@@ -504,6 +535,7 @@ class SessionWorker {
         }
       } finally {
         this.activeClaim = null;
+        this.pauseRequested = false;
       }
     } finally {
       release?.();
@@ -566,11 +598,21 @@ class SessionWorker {
     const unsubscribe = this.acp.subscribe(this.info.sessionId, (notification) =>
       recorder.consume(notification),
     );
+    // A pause requested while the turn was being prepared skips the prompt
+    // entirely; the Board already paused the task and cleared the claim.
+    if (this.pauseRequested) {
+      unsubscribe();
+      return;
+    }
     this.activePrompt = true;
     this.acp.setTaskActive(this.info.sessionId, true);
     let response: Awaited<ReturnType<KimiAcpClient["prompt"]>>;
     try {
       response = await this.acp.prompt(this.info.sessionId, task.id, prompt);
+    } catch (error) {
+      // A pause-cancelled prompt may reject instead of resolving "cancelled".
+      if (this.pauseRequested) return;
+      throw error;
     } finally {
       this.activePrompt = false;
       this.acp.setTaskActive(this.info.sessionId, false);
@@ -582,6 +624,7 @@ class SessionWorker {
       throw new Error("Kimi 拒绝执行本轮任务");
     }
     if (response.stopReason === "cancelled") {
+      if (this.pauseRequested) return;
       throw new Error("Kimi 本轮任务已取消");
     }
     const resultData = recorder.resultData(
@@ -1345,6 +1388,19 @@ export class KimiBridge {
     );
   }
 
+  private pauseTargetWorker(command: ThreadCommand): SessionWorker | null {
+    // Pause commands address the Board session UUID; external_thread_id may
+    // be null, so resolve through the worker's Board session mapping first.
+    const boardSessionId = commandString(command.session_id);
+    if (boardSessionId) {
+      for (const worker of this.workers.values()) {
+        if (worker.boardSessionId === boardSessionId) return worker;
+      }
+    }
+    const externalThreadId = commandString(command.external_thread_id);
+    return externalThreadId ? (this.workers.get(externalThreadId) ?? null) : null;
+  }
+
   private async executeThreadCommand(
     command: ThreadCommand,
   ): Promise<string | null> {
@@ -1393,6 +1449,16 @@ export class KimiBridge {
       this.createdSessions.set(created.sessionId, info);
       this.managedSessionIds.add(created.sessionId);
       return created.sessionId;
+    }
+
+    if (command.action === "pause") {
+      // The task is already paused server-side; pausing is a local,
+      // best-effort interrupt. An unknown or idle session — or a command
+      // naming a task this worker no longer runs — is a successful no-op so
+      // command replays stay harmless.
+      const pauseTarget = this.pauseTargetWorker(command);
+      pauseTarget?.requestPause(commandString(command.task_id));
+      return pauseTarget?.sessionId ?? null;
     }
 
     const sessionId = commandString(command.external_thread_id);

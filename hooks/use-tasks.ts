@@ -154,6 +154,14 @@ export function useCancelTask(taskId: string) {
   return useTaskAction(taskId, "cancel");
 }
 
+export function usePauseTask(taskId: string) {
+  return useTaskAction(taskId, "pause");
+}
+
+export function useResumeTask(taskId: string) {
+  return useTaskAction(taskId, "resume");
+}
+
 export function useReopenTask(taskId: string) {
   return useTaskAction(taskId, "reopen");
 }

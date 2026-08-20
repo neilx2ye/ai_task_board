@@ -19,7 +19,7 @@ describe("legacy unassigned task normalization", () => {
     await database.exec(`
       create type public.task_status as enum (
         'inbox', 'ready', 'claimed', 'running', 'waiting_user',
-        'blocked', 'completed', 'failed', 'cancelled'
+        'blocked', 'completed', 'failed', 'cancelled', 'paused'
       );
       create type public.actor_type as enum ('user', 'ai', 'system');
 

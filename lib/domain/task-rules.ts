@@ -50,6 +50,8 @@ export function aggregateParentStatus(statuses: readonly TaskStatus[]): TaskStat
   }
   if (active.includes("failed")) return "failed";
   if (active.includes("ready")) return "ready";
+  if (active.includes("blocked")) return "blocked";
+  if (active.includes("paused")) return "paused";
   return "blocked";
 }
 
@@ -84,13 +86,14 @@ export function compareClaimCandidates(
 
 const allowedTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   inbox: new Set(["ready", "blocked", "cancelled"]),
-  ready: new Set(["claimed", "cancelled"]),
+  ready: new Set(["claimed", "paused", "cancelled"]),
   claimed: new Set([
     "claimed",
     "running",
     "ready",
     "waiting_user",
     "blocked",
+    "paused",
     "completed",
     "failed",
     "cancelled",
@@ -101,12 +104,14 @@ const allowedTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
     "ready",
     "waiting_user",
     "blocked",
+    "paused",
     "completed",
     "failed",
     "cancelled",
   ]),
   waiting_user: new Set(["ready", "blocked", "cancelled"]),
   blocked: new Set(["ready", "cancelled"]),
+  paused: new Set(["ready", "blocked", "cancelled"]),
   completed: new Set(["ready", "blocked", "cancelled"]),
   failed: new Set(["ready", "blocked", "cancelled"]),
   cancelled: new Set(),
@@ -118,6 +123,7 @@ const parentAggregateStates = new Set<TaskStatus>([
   "running",
   "waiting_user",
   "failed",
+  "paused",
   "completed",
 ]);
 

@@ -452,7 +452,7 @@ describe("Codex Bridge runtime primitives", () => {
     expect(resolved.effective.includeThreadTitles).toBe(true);
   });
 
-  it("caps the runtime lease at 30 seconds even with a long config poll", () => {
+  it("defaults the runtime lease to 120 seconds independent of config poll", () => {
     const configuration = loadConfiguration({
       AI_TASK_BOARD_URL: "https://board.example.com",
       AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
@@ -460,7 +460,17 @@ describe("Codex Bridge runtime primitives", () => {
     });
 
     expect(configuration.configurationPollIntervalMs).toBe(600_000);
-    expect(configuration.configurationLeaseSeconds).toBe(30);
+    expect(configuration.configurationLeaseSeconds).toBe(120);
+  });
+
+  it("allows the runtime lease to be raised through the environment", () => {
+    const configuration = loadConfiguration({
+      AI_TASK_BOARD_URL: "https://board.example.com",
+      AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test",
+      CODEX_BRIDGE_RUNTIME_LEASE_SECONDS: "300",
+    });
+
+    expect(configuration.configurationLeaseSeconds).toBe(300);
   });
 
   it("fails closed and preserves the worker mapping when retirement rejects", async () => {

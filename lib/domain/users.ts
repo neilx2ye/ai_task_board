@@ -801,7 +801,12 @@ export async function postUserTaskMessage(
 }
 
 async function taskCommand(
-  operation: "release_task_by_user" | "cancel_task" | "reopen_task",
+  operation:
+    | "release_task_by_user"
+    | "cancel_task"
+    | "reopen_task"
+    | "pause_task"
+    | "resume_task",
   context: UserWorkspaceContext,
   taskId: string,
   reason: string | null,
@@ -818,6 +823,8 @@ async function taskCommand(
 export const releaseUserTask = taskCommand.bind(null, "release_task_by_user");
 export const cancelUserTask = taskCommand.bind(null, "cancel_task");
 export const reopenUserTask = taskCommand.bind(null, "reopen_task");
+export const pauseUserTask = taskCommand.bind(null, "pause_task");
+export const resumeUserTask = taskCommand.bind(null, "resume_task");
 
 export async function listConnections(context: UserWorkspaceContext) {
   const admin = createAdminClient();

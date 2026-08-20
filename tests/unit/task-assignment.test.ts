@@ -114,6 +114,31 @@ const CASES: Case[] = [
     selected: "s-1",
     expected: { include: false },
   },
+  // paused 与 ready 同规则：允许改派，走默认分支
+  {
+    ...base,
+    name: "编辑 paused：未变化时省略",
+    status: "paused",
+    original: "s-1",
+    selected: "s-1",
+    expected: { include: false },
+  },
+  {
+    ...base,
+    name: "编辑 paused：改派时包含新值",
+    status: "paused",
+    original: "s-1",
+    selected: "s-2",
+    expected: { include: true, value: "s-2" },
+  },
+  {
+    ...base,
+    name: "编辑 paused：解除指派发送 null",
+    status: "paused",
+    original: "s-1",
+    selected: null,
+    expected: { include: true, value: null },
+  },
   // 聚合父规则（优先于 claimed/running）
   {
     ...base,
@@ -205,6 +230,15 @@ describe("isSessionSelectLocked", () => {
       expected: false,
     },
     {
+      name: "paused 不锁定（可改派）",
+      input: {
+        ...lockBase,
+        status: "paused" as TaskStatus,
+        original: "s-1",
+      },
+      expected: false,
+    },
+    {
       name: "新建不锁定",
       input: { ...lockBase, isEdit: false, status: "claimed" as TaskStatus },
       expected: false,
@@ -275,6 +309,13 @@ describe("sessionOptionsForStatus", () => {
 
   it("其他状态不限制选项", () => {
     expect(sessionOptionsForStatus({ ...optBase, original: "s-1" })).toBeNull();
+    expect(
+      sessionOptionsForStatus({
+        ...optBase,
+        status: "paused",
+        original: "s-1",
+      }),
+    ).toBeNull();
     expect(
       sessionOptionsForStatus({ ...optBase, isEdit: false, hasChildren: true }),
     ).toBeNull();

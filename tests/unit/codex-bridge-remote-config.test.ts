@@ -383,7 +383,7 @@ describe("Codex Bridge Web configuration", () => {
     expect(finalStatus).toMatchObject({
       runtime_instance_id: expect.any(String),
       report_sequence: expect.any(Number),
-      lease_seconds: 15,
+      lease_seconds: 120,
       release_runtime: false,
       applied_version: 4,
       effective: {
@@ -1040,6 +1040,7 @@ describe("Codex Bridge Web configuration", () => {
           AI_TASK_BOARD_CONNECTION_TOKEN: "atb_self_fence",
           AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS: "1000",
           AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
+          CODEX_BRIDGE_RUNTIME_LEASE_SECONDS: "15",
           CODEX_BINARY: fakeCodex,
           CODEX_BRIDGE_WEB_CONFIG: "false",
           CODEX_THREAD_ID: "",
@@ -1177,7 +1178,7 @@ describe("Codex Bridge Web configuration", () => {
     expect(activeStatuses[0]).toMatchObject({
       runtime_instance_id: expect.any(String),
       report_sequence: 1,
-      lease_seconds: 15,
+      lease_seconds: 120,
       release_runtime: false,
       applied_version: null,
       effective: {

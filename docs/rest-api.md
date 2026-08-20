@@ -442,6 +442,12 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/release" \
   }"
 ```
 
+### 用户暂停与恢复
+
+Workspace 成员可在 Web Console 暂停 `ready`/`claimed`/`running` 的叶子任务（`POST /api/user/tasks/:taskId/pause`，幂等键必填，可选 `reason`）。任务立即进入 `paused`：保留 `assigned_session_id`、清理领取与租约，此后任何 claim 接口都不会再分发它，直到用户恢复（`POST /api/user/tasks/:taskId/resume`）按依赖检查回到 `ready`/`blocked`。聚合父任务与 `waiting_user` 任务不能暂停。
+
+对 AI 客户端的契约：暂停 `claimed`/`running` 任务时服务端即刻失效其 `claim_token`，并向 owning Bridge 下发尽力的中断命令（一个命令轮询周期内生效）。因此你在暂停后的 `complete`/`fail`/心跳/进度上报会因领取失效返回 `INVALID_CLAIM_TOKEN`（403），此时应把该任务当作已被接管，停止重试并丢弃本地 turn 状态，不要做补偿写入。
+
 ## 7. 同步已经在外部执行的任务
 
 `external_task_ref` 在连接/Workspace 对应的外部来源内用于去重。重复上报更新同一张卡片，不会生成重复 Task。

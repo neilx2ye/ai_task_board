@@ -73,7 +73,7 @@ describe("aggregate child status migration regression", () => {
   const setLeafStatus = async (
     aggregateTaskId: string,
     leafTaskId: string,
-    status: "blocked" | "completed" | "waiting_user",
+    status: "blocked" | "completed" | "paused" | "waiting_user",
   ) => {
     await database.query(
       `update public.tasks
@@ -265,6 +265,21 @@ describe("aggregate child status migration regression", () => {
         bucket_id text not null,
         name text not null
       );
+
+      -- Minimal stand-in for the Web thread command table (created by the
+      -- 20260810180000 migration, which this subset does not load) so the
+      -- task-pause migration's constraint rewrite applies cleanly.
+      create table public.ai_thread_commands (
+        id uuid primary key default pg_catalog.gen_random_uuid(),
+        workspace_id uuid,
+        connection_id uuid,
+        session_id uuid,
+        action text not null,
+        name text,
+        external_thread_id text,
+        platform text,
+        requested_by_user_id uuid
+      );
     `);
 
     for (const migrationName of [
@@ -276,6 +291,7 @@ describe("aggregate child status migration regression", () => {
       "20260809141643_session_activity_fk_indexes.sql",
       "20260809150155_heartbeat_idempotency_maintenance.sql",
       "20260810100000_bridge_v2_thread_inventory.sql",
+      "20260830000000_task_paused_status.sql",
     ]) {
       const migration = await readFile(
         path.join(migrationsDirectory, migrationName),
@@ -1996,6 +2012,29 @@ describe("aggregate child status migration regression", () => {
     expect((await taskState(singleWaiting.leafTaskId)).status).toBe("waiting_user");
     expect((await taskState(singleSiblingId)).status).toBe("ready");
     expect((await taskState(singleParentId)).status).toBe("waiting_user");
+  }, 30_000);
+
+  it("derives paused aggregates from paused leaves and keeps blocked precedence", async () => {
+    // Every active child paused -> the parent surfaces paused (not blocked).
+    const pausedParentId = await createTask(null, "Paused parent");
+    const pausedLeafAId = await createTask(pausedParentId, "Paused leaf A");
+    const pausedLeafBId = await createTask(pausedParentId, "Paused leaf B");
+    await setLeafStatus(pausedParentId, pausedLeafAId, "paused");
+    expect((await taskState(pausedParentId)).status).toBe("ready");
+    await setLeafStatus(pausedParentId, pausedLeafBId, "paused");
+    expect((await taskState(pausedParentId)).status).toBe("paused");
+
+    // A blocked sibling still outranks paused children.
+    const mixedParentId = await createTask(null, "Blocked and paused parent");
+    const mixedBlockedLeafId = await createTask(mixedParentId, "Blocked leaf");
+    const mixedPausedLeafId = await createTask(mixedParentId, "Paused leaf");
+    await setLeafStatus(mixedParentId, mixedBlockedLeafId, "blocked");
+    await setLeafStatus(mixedParentId, mixedPausedLeafId, "paused");
+    expect((await taskState(mixedParentId)).status).toBe("blocked");
+
+    // Moving one leaf out of paused re-derives the parent from the new mix.
+    await setLeafStatus(pausedParentId, pausedLeafAId, "blocked");
+    expect((await taskState(pausedParentId)).status).toBe("blocked");
   }, 30_000);
 
   it("keeps identity sequences private while service_role can insert events", async () => {

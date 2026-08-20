@@ -332,7 +332,12 @@ export function loadConfiguration(
       1_000,
       600_000,
     ),
-    runtimeLeaseSeconds: 30,
+    runtimeLeaseSeconds: parseInteger(
+      environment.KIMI_BRIDGE_RUNTIME_LEASE_SECONDS,
+      120,
+      15,
+      1_800,
+    ),
     approvalMode: parseApprovalMode(environment.KIMI_BRIDGE_APPROVAL_MODE),
     agentMode: parseAgentMode(environment.KIMI_BRIDGE_MODE),
     kimiBinary: environment.KIMI_BINARY?.trim() || "kimi",

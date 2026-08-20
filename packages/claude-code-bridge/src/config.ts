@@ -338,7 +338,12 @@ export function loadConfiguration(
       1_000,
       600_000,
     ),
-    runtimeLeaseSeconds: 30,
+    runtimeLeaseSeconds: parseInteger(
+      environment.CLAUDE_BRIDGE_RUNTIME_LEASE_SECONDS,
+      120,
+      15,
+      1_800,
+    ),
     approvalMode: parseApprovalMode(environment.CLAUDE_BRIDGE_APPROVAL_MODE),
     agentMode: parseAgentMode(environment.CLAUDE_BRIDGE_MODE),
     claudeBinary:

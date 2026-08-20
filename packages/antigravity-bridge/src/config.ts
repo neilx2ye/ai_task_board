@@ -395,7 +395,12 @@ export function loadConfiguration(
       1_000,
       600_000,
     ),
-    runtimeLeaseSeconds: 30,
+    runtimeLeaseSeconds: parseInteger(
+      environment.ANTIGRAVITY_RUNTIME_LEASE_SECONDS,
+      120,
+      15,
+      1_800,
+    ),
     approvalMode: parseApprovalMode(
       environment.ANTIGRAVITY_BRIDGE_APPROVAL_MODE,
     ),

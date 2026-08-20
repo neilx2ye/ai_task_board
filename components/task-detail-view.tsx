@@ -6,7 +6,9 @@ import {
   ArrowLeftIcon,
   CircleSlashIcon,
   DownloadIcon,
+  PauseIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   RotateCcwIcon,
   SendIcon,
@@ -34,10 +36,12 @@ import { findPendingQuestion } from "@/hooks/pending-question";
 import { taskDisplayStatus } from "@/lib/domain/task-rules";
 import {
   useCancelTask,
+  usePauseTask,
   usePostTaskMessage,
   useReleaseTask,
   useReopenTask,
   useReplyToTask,
+  useResumeTask,
 } from "@/hooks/use-tasks";
 import { cn, formatBytes, formatDateTime, formatRelativeTime, isPast } from "@/components/utils";
 import type { TaskDetails } from "@/lib/types/domain";
@@ -172,11 +176,14 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   const cancelTask = useCancelTask(task.id);
   const reopenTask = useReopenTask(task.id);
   const releaseTask = useReleaseTask(task.id);
+  const pauseTask = usePauseTask(task.id);
+  const resumeTask = useResumeTask(task.id);
   const postMessage = usePostTaskMessage(task.id);
 
   const [editOpen, setEditOpen] = useState(false);
   const [subtaskOpen, setSubtaskOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
   const [composer, setComposer] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -250,10 +257,19 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   const canRelease =
     ["claimed", "running"].includes(task.status) &&
     task.claimed_by_session_id !== null;
+  // 暂停/恢复仅适用于叶子任务；聚合父的状态由子任务派生，不提供操作。
+  const canPause =
+    ["ready", "claimed", "running"].includes(task.status) &&
+    children.length === 0;
+  const canResume = task.status === "paused" && children.length === 0;
   // 已取消任务不可编辑。
   const canEdit = task.status !== "cancelled";
   const actionPending =
-    cancelTask.isPending || reopenTask.isPending || releaseTask.isPending;
+    cancelTask.isPending ||
+    reopenTask.isPending ||
+    releaseTask.isPending ||
+    pauseTask.isPending ||
+    resumeTask.isPending;
 
   // 拆分限制与数据库一致：等待回复 / 已取消不可拆分；
   // 只要存在领取记录（即使租约已过期）也不允许用户拆分，需先释放。
@@ -354,6 +370,28 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
               >
                 <UnlockIcon />
                 释放任务
+              </Button>
+            ) : null}
+            {canPause ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionPending}
+                onClick={() => setPauseOpen(true)}
+              >
+                <PauseIcon />
+                暂停任务
+              </Button>
+            ) : null}
+            {canResume ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionPending}
+                onClick={() => runAction(() => resumeTask.mutateAsync(undefined))}
+              >
+                <PlayIcon />
+                恢复任务
               </Button>
             ) : null}
             {canReopen ? (
@@ -738,6 +776,20 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
         onOpenChange={setSubtaskOpen}
         parentTask={task}
         siblings={children}
+      />
+      <ConfirmDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        title="暂停该任务？"
+        description="暂停后任务进入“已暂停”状态，不会再被会话认领。若任务正在执行，会在一个轮询周期内尽力中断设备上的当前 turn（不保证立即停止）。之后可随时恢复，恢复后回到原会话队列重新执行。"
+        confirmLabel="确认暂停"
+        pending={pauseTask.isPending}
+        onConfirm={() =>
+          runAction(async () => {
+            await pauseTask.mutateAsync(undefined);
+            setPauseOpen(false);
+          })
+        }
       />
       <ConfirmDialog
         open={cancelOpen}

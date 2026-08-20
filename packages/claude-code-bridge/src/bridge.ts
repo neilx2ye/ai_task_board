@@ -343,12 +343,13 @@ class TurnRecorder {
   }
 }
 
-class SessionWorker {
+export class SessionWorker {
   private readonly stopController = new AbortController();
   private activeClaim: ClaimedTask | null = null;
   private runPromise: Promise<void> | null = null;
   private stopping = false;
   private activePrompt = false;
+  private pauseRequested = false;
 
   constructor(
     private info: SessionInfo,
@@ -367,6 +368,10 @@ class SessionWorker {
     return this.info.sessionId;
   }
 
+  get boardSessionId(): string {
+    return this.boardSession.id;
+  }
+
   get busy(): boolean {
     return this.activeClaim !== null || this.activePrompt;
   }
@@ -379,6 +384,23 @@ class SessionWorker {
   start(): Promise<void> {
     if (!this.runPromise) this.runPromise = this.run();
     return this.runPromise;
+  }
+
+  /**
+   * 看板暂停当前任务：任务已在服务端置为 paused 且 claim 已清空，
+   * 这里只尽力中断当前 prompt（本地清理，不上报 complete/fail）。
+   * 完全空闲时是成功的 no-op（幂等，兼容命令重放）。
+   * taskId 非空时校验当前活跃任务：不匹配说明命令已过期（worker 已
+   * 空闲或已在跑下一个任务），直接忽略，避免误中断新任务的 prompt。
+   */
+  async requestPause(taskId: string | null): Promise<void> {
+    if (this.stopping) return;
+    if (taskId != null && this.activeClaim?.id !== taskId) return;
+    if (!this.activeClaim && !this.activePrompt) return;
+    this.pauseRequested = true;
+    if (this.activePrompt) {
+      await this.acp.cancel(this.info.sessionId).catch(() => undefined);
+    }
   }
 
   async stop(reason = "Claude Bridge 正在停止"): Promise<void> {
@@ -477,13 +499,21 @@ class SessionWorker {
       try {
         await this.executeTask(task);
         process.stdout.write(
-          `完成 Claude 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`,
+          this.pauseRequested
+            ? `已暂停 Claude 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`
+            : `完成 Claude 任务 [${this.info.sessionId.slice(0, 8)}]：${task.title}\n`,
         );
       } catch (error) {
         if (this.stopping) {
           await this.board
             .releaseTask(this.boardSession.id, task, "Claude Bridge 正在停止")
             .catch(() => undefined);
+        } else if (this.pauseRequested) {
+          // 暂停中断的 prompt：任务已由看板置为 paused 且 claim 已失效，
+          // 不能 failTask/releaseTask（会 409），仅记录并做本地清理。
+          process.stdout.write(
+            `Claude 任务已被看板暂停 [${this.info.sessionId}]：${task.title}（${redactText(errorMessage(error), 200)}）\n`,
+          );
         } else {
           const reason = redactText(errorMessage(error), 10_000);
           await this.board
@@ -500,6 +530,7 @@ class SessionWorker {
         }
       } finally {
         this.activeClaim = null;
+        this.pauseRequested = false;
       }
     } finally {
       release?.();
@@ -587,6 +618,12 @@ class SessionWorker {
       await this.acp.closeSession(this.info.sessionId).catch(() => undefined);
     }
 
+    if (this.pauseRequested) {
+      // 任务已被看板暂停（服务端已置 paused 并清空 claim）：
+      // 无论 prompt 是 cancelled 还是恰好自然完成，都不再上报
+      // complete/fail（claim 已失效，上报只会 409），仅做本地清理。
+      return;
+    }
     if (response.stopReason === "refusal") {
       throw new Error("Claude 拒绝执行本轮任务");
     }
@@ -1347,6 +1384,23 @@ export class ClaudeBridge {
       this.createdSessions.set(created.sessionId, info);
       this.managedSessionIds.add(created.sessionId);
       return created.sessionId;
+    }
+
+    if (command.action === "pause") {
+      // 任务暂停：尽力中断对应 Session 当前运行的 prompt。任务已在
+      // 服务端置为 paused 且 claim 已清空，因此 worker 未知或空闲时
+      // 直接成功（幂等 no-op，兼容命令重放）。
+      const externalId = commandString(command.external_thread_id);
+      const boardSessionId = commandString(command.session_id);
+      const worker =
+        (externalId ? this.workers.get(externalId) : undefined) ??
+        (boardSessionId
+          ? [...this.workers.values()].find(
+              (candidate) => candidate.boardSessionId === boardSessionId,
+            )
+          : undefined);
+      await worker?.requestPause(commandString(command.task_id));
+      return externalId;
     }
 
     const sessionId = commandString(command.external_thread_id);

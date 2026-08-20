@@ -22,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.8.1-kimi.1";
+export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.8.2-kimi.1";
 
 export type BoardSession = {
   id: string;
@@ -50,12 +50,16 @@ export type TaskImageArtifact = {
 
 export type ThreadCommand = {
   id: string;
-  action: "create" | "rename" | "delete";
+  action: "create" | "rename" | "delete" | "pause";
   name: string | null;
   directory_key: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
   external_thread_id: string | null;
+  /** Board session UUID; pause commands carry it (external_thread_id may be null). */
+  session_id?: string | null;
+  /** Paused task UUID on pause commands; null only from older Boards. */
+  task_id?: string | null;
   attempt_count?: number;
 };
 

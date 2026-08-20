@@ -66,7 +66,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.8.1";
+const BRIDGE_VERSION = "1.8.2";
 /** Canonical settings-row kind shared with the unified device Bridge. */
 const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
@@ -333,12 +333,14 @@ type SyncSessionsResponse = {
 
 type ThreadCommand = {
   id: string;
-  action: "create" | "rename" | "delete";
+  action: "create" | "rename" | "delete" | "pause";
   name: string | null;
   directory_key: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
   external_thread_id: string | null;
+  session_id?: string | null;
+  task_id?: string | null;
   attempt_count?: number;
 };
 
@@ -797,9 +799,11 @@ export function loadConfiguration(
       10 * 60_000,
     ),
     configurationPollIntervalMs,
-    configurationLeaseSeconds: Math.max(
+    configurationLeaseSeconds: boundedInteger(
+      environment.CODEX_BRIDGE_RUNTIME_LEASE_SECONDS,
+      120,
       15,
-      Math.ceil(Math.min(configurationPollIntervalMs, 10_000) / 1_000) * 3,
+      1_800,
     ),
     approvalMode: parseApprovalMode(environment.CODEX_BRIDGE_APPROVAL_MODE),
     permissionMode: parsePermissionMode(
@@ -1838,6 +1842,9 @@ class SessionWorker {
   private readonly backgroundBoardOperations = new Set<Promise<void>>();
   private readonly retirementWaiters = new Set<() => void>();
   private awaitingTurnStart = false;
+  private pauseRequested = false;
+  private turnAbortController: AbortController | null = null;
+  private turnAbortCleanup: (() => void) | null = null;
   private mutatingRequestCount = 0;
   private heartbeatInFlightPromise: Promise<void> | null = null;
   private usageSequence = 0;
@@ -1859,6 +1866,10 @@ class SessionWorker {
       throw new Error(`Thread ${this.thread.id} received a different Session id`);
     }
     this.session = session;
+  }
+
+  get boardSessionId(): string {
+    return this.session.id;
   }
 
   start(): Promise<void> {
@@ -2072,12 +2083,16 @@ class SessionWorker {
     const task = this.activeClaim;
     const requestId = randomUUID();
     const externalRequestId = String(request.id);
+    // 每 turn 一个中断信号：stop() 仍通过 stopController 联动中止轮询；Web
+    // 暂停时 requestPause 只中止本 turn。中止使本 handler 抛出，App Server
+    // 客户端随即把错误响应写回，挂起的 server request 不会无人应答。
+    const signal = this.turnAbortController?.signal ?? this.stopController.signal;
 
     await this.board.request("/api/ai/tasks/user-input-requests", {
       method: "POST",
       sessionId: this.session.id,
       idempotencyKey: idempotencyKey(`user-input-register/${externalRequestId}`),
-      signal: this.stopController.signal,
+      signal,
       body: {
         task_id: task.id,
         claim_token: task.claim_token,
@@ -2095,13 +2110,13 @@ class SessionWorker {
         .map((question) => question.header)
         .join(" / ")}\n`,
     );
-    while (!this.stopController.signal.aborted) {
+    while (!signal.aborted) {
       const response = await this.board.request<UserInputPollResponse>(
         `/api/ai/tasks/user-input-requests/${requestId}/poll`,
         {
           method: "POST",
           sessionId: this.session.id,
-          signal: this.stopController.signal,
+          signal,
           body: {
             task_id: task.id,
             claim_token: task.claim_token,
@@ -2142,9 +2157,9 @@ class SessionWorker {
           }`,
         );
       }
-      await delay(USER_INPUT_POLL_INTERVAL_MS, this.stopController.signal);
+      await delay(USER_INPUT_POLL_INTERVAL_MS, signal);
     }
-    throw this.stopController.signal.reason ?? new Error("Codex Bridge 已停止");
+    throw signal.reason ?? new Error("Codex Bridge 已停止");
   }
 
   async stop(reason = "Codex Bridge 已停止"): Promise<void> {
@@ -2180,6 +2195,52 @@ class SessionWorker {
         .catch(() => undefined);
     }
     await (this.runPromise ?? Promise.resolve());
+  }
+
+  /**
+   * Web 暂停：任务已在 Board 侧置为 paused 且 claim 已清除，这里只做本地
+   * 尽力中断；complete/fail/release 都不可再调用（会因 claim 失效返回 409）。
+   * turn 已结束或 worker 空闲时为幂等 no-op（兼容命令重放）。
+   * taskId 非空且与当前 active claim 不符时，命令已过期（worker 空闲或已在
+   * 执行该 session 的下一个任务），直接 no-op，绝不能误中断新 turn；
+   * taskId 为空（旧 Board）时保持无条件尽力中断的 legacy 行为。
+   */
+  async requestPause(
+    taskId: string | null,
+    reason = "用户从 Web Console 暂停了任务",
+  ): Promise<void> {
+    if (this.stopping) return;
+    if (taskId !== null && this.activeClaim?.id !== taskId) return;
+    if (!this.activeClaim && !this.activeTurnId && !this.awaitingTurnStart) {
+      return;
+    }
+    this.pauseRequested = true;
+    const controller = this.turnAbortController;
+    if (controller && !controller.signal.aborted) {
+      controller.abort(new Error(reason));
+    }
+    if (this.activeTurnId) {
+      await this.appServer
+        .turnInterrupt(
+          { threadId: this.thread.id, turnId: this.activeTurnId },
+          { timeoutMs: 5_000 },
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  private createTurnAbortController(): AbortController {
+    const controller = new AbortController();
+    const parent = this.stopController.signal;
+    const onParentAbort = () => controller.abort(parent.reason);
+    if (parent.aborted) {
+      controller.abort(parent.reason);
+    } else {
+      parent.addEventListener("abort", onParentAbort, { once: true });
+    }
+    this.turnAbortCleanup = () =>
+      parent.removeEventListener("abort", onParentAbort);
+    return controller;
   }
 
   private async run(): Promise<void> {
@@ -2320,6 +2381,12 @@ class SessionWorker {
       } catch (error) {
         if (this.stopping) {
           await this.releaseActiveTask("Codex Bridge 正在停止");
+        } else if (this.pauseRequested) {
+          // Web 暂停：Board 已把任务置为 paused 并清除 claim，这里只做本地
+          // 清理；complete/fail/release 都会因 claim 失效而 409，一律不上报。
+          process.stdout.write(
+            `任务已暂停 [${shortThreadTitle(this.thread)}]：${response.task.title}\n`,
+          );
         } else {
           const reason = redactHarnessText(errorMessage(error), 10_000);
           await this.board
@@ -2347,6 +2414,10 @@ class SessionWorker {
         this.preStartNotifications.length = 0;
         this.awaitingTurnStart = false;
         this.buffers.clear();
+        this.pauseRequested = false;
+        this.turnAbortCleanup?.();
+        this.turnAbortCleanup = null;
+        this.turnAbortController = null;
       }
     } finally {
       releasePermit?.();
@@ -2439,6 +2510,8 @@ class SessionWorker {
       );
     }
     if (this.stopping) throw new Error("Codex Bridge 正在停止");
+    this.turnAbortCleanup?.();
+    this.turnAbortController = this.createTurnAbortController();
     this.awaitingTurnStart = true;
     this.preStartNotifications.length = 0;
     let started: Awaited<ReturnType<CodexAppServerClient["turnStart"]>>;
@@ -2486,6 +2559,17 @@ class SessionWorker {
         )
         .catch(() => undefined);
       throw this.stopController.signal.reason ?? new Error("Codex Bridge 正在停止");
+    }
+    if (this.pauseRequested) {
+      // 暂停命令在 turn/start 在途期间到达：立即中断刚启动的 turn，随后
+      // runOneIteration 的 catch 按 pauseRequested 走本地清理（不上报 fail）。
+      await this.appServer
+        .turnInterrupt(
+          { threadId: this.thread.id, turnId },
+          { timeoutMs: 5_000 },
+        )
+        .catch(() => undefined);
+      throw new Error("任务已被用户暂停");
     }
     const turn = await this.waitForTurn(turnId, this.stopController.signal);
     await this.eventChain;
@@ -3747,6 +3831,16 @@ class DeviceBridge {
     return inventoryChanged;
   }
 
+  private findWorkerByBoardSessionId(
+    sessionId: string | null,
+  ): SessionWorker | null {
+    if (!sessionId) return null;
+    for (const worker of this.workers.values()) {
+      if (worker.boardSessionId === sessionId) return worker;
+    }
+    return null;
+  }
+
   private async executeThreadCommand(
     command: ThreadCommand,
   ): Promise<string | null> {
@@ -3791,6 +3885,20 @@ class DeviceBridge {
       }
       this.managedThreadIds.add(threadId);
       return threadId;
+    }
+
+    if (command.action === "pause") {
+      // 暂停载荷的 external_thread_id 可能为空：退化为按 Board session id
+      // 匹配 worker。worker 不存在或无活跃 turn 都是成功的幂等 no-op（任务
+      // 可能已自行完成，或命令是重放）；Board 侧任务已置 paused，本地尽力
+      // 中断即可。
+      const threadId = stringValue(command.external_thread_id);
+      const worker = threadId
+        ? this.workers.get(threadId)
+        : this.findWorkerByBoardSessionId(stringValue(command.session_id));
+      if (!worker) return threadId;
+      await worker.requestPause(stringValue(command.task_id));
+      return threadId ?? worker.thread.id;
     }
 
     const threadId = stringValue(command.external_thread_id);

@@ -64,7 +64,8 @@ function DispatchedStepRow({
 }) {
   const taskStatus = step.dispatched_task_status;
   const statusMeta = taskStatus ? TASK_STATUS_META[taskStatus] : null;
-  const cancellable = taskStatus === "ready" || taskStatus === "blocked";
+  const cancellable =
+    taskStatus === "ready" || taskStatus === "blocked" || taskStatus === "paused";
   return (
     <li className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
       <span className="mt-0.5 w-6 shrink-0 text-right text-xs tabular-nums text-muted-foreground">

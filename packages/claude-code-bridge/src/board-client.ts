@@ -21,7 +21,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const CLAUDE_BRIDGE_CAPABILITY_VERSION = "1.8.1-claude.1";
+export const CLAUDE_BRIDGE_CAPABILITY_VERSION = "1.8.2-claude.1";
 
 export type BoardSession = {
   id: string;
@@ -49,9 +49,13 @@ export type TaskImageArtifact = {
 
 export type ThreadCommand = {
   id: string;
-  action: "create" | "rename" | "delete";
+  action: "create" | "rename" | "delete" | "pause";
   name: string | null;
   directory_key: string | null;
+  /** Board session uuid; set on pause commands (external_thread_id may be null). */
+  session_id?: string | null;
+  /** Paused task uuid on pause commands; null only from older boards. */
+  task_id?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
   external_thread_id: string | null;

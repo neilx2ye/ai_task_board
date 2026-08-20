@@ -1,6 +1,6 @@
 {
   "name": "@ai-task-board/kimi-bridge-runtime",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "private": true,
   "description": "Internal Kimi Code ACP runtime bundled with ai-task-board-bridge",
   "type": "module",

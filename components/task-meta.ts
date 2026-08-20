@@ -33,6 +33,10 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     label: "已阻塞",
     badgeClass: "border-orange-200 bg-orange-50 text-orange-800",
   },
+  paused: {
+    label: "已暂停",
+    badgeClass: "border-stone-200 bg-stone-100 text-stone-600",
+  },
   completed: {
     label: "已完成",
     badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -143,6 +147,8 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   task_completed: "完成任务",
   task_failed: "任务失败",
   task_released: "释放任务",
+  task_paused: "暂停任务",
+  task_resumed: "恢复任务",
   task_cancelled: "取消任务",
   task_reopened: "重新打开",
   legacy_task_unbound: "修正为未绑定历史任务",
