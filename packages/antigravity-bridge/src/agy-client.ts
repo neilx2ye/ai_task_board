@@ -210,17 +210,22 @@ export function appendSandboxFailureHint(
   detail: string,
   sandboxEnabled: boolean,
 ): string {
-  if (
-    !sandboxEnabled ||
-    !/(?:permission denied|operation not permitted|eacces|eperm)/i.test(detail)
-  ) {
-    return detail;
+  if (!sandboxEnabled) return detail;
+  if (/(?:permission denied|operation not permitted|eacces|eperm)/i.test(detail)) {
+    return (
+      `${detail}（已启用 --sandbox：agy 会把文件访问限制在线程工作目录内，` +
+      "读取目录外文件会被系统拒绝；请扩大该线程的工作目录，或设置 " +
+      "ANTIGRAVITY_BRIDGE_SANDBOX=false 并重启 Bridge 后重试）"
+    );
   }
-  return (
-    `${detail}（已启用 --sandbox：agy 会把文件访问限制在线程工作目录内，` +
-    "读取目录外文件会被系统拒绝；请扩大该线程的工作目录，或设置 " +
-    "ANTIGRAVITY_BRIDGE_SANDBOX=false 并重启 Bridge 后重试）"
-  );
+  if (/(?:sandbox server|connection reset)/i.test(detail)) {
+    return (
+      `${detail}（已启用 --sandbox，但 agy 沙箱服务连接中断：常见于沙箱服务` +
+      "崩溃、被 OOM 终止，或 agy 升级打断了运行中的任务；请关闭 " +
+      "ANTIGRAVITY_BRIDGE_SANDBOX 并重启 Bridge，或升级 agy 后重试）"
+    );
+  }
+  return detail;
 }
 
 /**

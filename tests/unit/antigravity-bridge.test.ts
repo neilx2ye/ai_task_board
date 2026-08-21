@@ -178,6 +178,15 @@ describe("Antigravity stream-json parsing", () => {
     );
   });
 
+  it("flags sandbox-server connection resets when sandbox is on", () => {
+    const reset =
+      "connecting to sandbox server: read unix @->@: recvmsg: connection reset by peer";
+    expect(appendSandboxFailureHint(reset, true)).toContain(
+      "ANTIGRAVITY_BRIDGE_SANDBOX",
+    );
+    expect(appendSandboxFailureHint(reset, false)).toBe(reset);
+  });
+
   it("detects write_to_file artifact-path rejections", () => {
     expect(
       isAgyArtifactPathError(

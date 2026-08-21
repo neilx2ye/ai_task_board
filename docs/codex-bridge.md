@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.5 setup codex
+npx --yes ai-task-board-bridge@1.8.6 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi、Antigravity 与 Claude Code Bridge 的唯一公开
@@ -88,7 +88,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.8.5 run codex
+npx --yes ai-task-board-bridge@1.8.6 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -110,7 +110,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.8.5 run codex
+npx --yes ai-task-board-bridge@1.8.6 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -122,7 +122,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.8.5 run codex
+npx --yes ai-task-board-bridge@1.8.6 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
