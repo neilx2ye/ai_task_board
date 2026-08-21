@@ -224,6 +224,15 @@ export function appendSandboxFailureHint(
 }
 
 /**
+ * agy 1.1.16+ 把 write_to_file 限定为 artifact 写入工具；模型偶尔会用它写
+ * 工作区路径，此时 agy 在权限转换阶段直接判 invalid_args，报 “not a valid
+ * artifact path”。这类失败值得用纠正说明重试一次。
+ */
+export function isAgyArtifactPathError(message: string): boolean {
+  return /not a valid artifact path|artifacts must be in/i.test(message);
+}
+
+/**
  * Pure NDJSON event reducer for agy's documented stream-json output. Kept
  * separate from the spawn plumbing so parsing stays unit-testable.
  */

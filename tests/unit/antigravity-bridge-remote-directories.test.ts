@@ -181,8 +181,8 @@ describe("Antigravity Bridge session sync device identity", () => {
       | { body?: string }
       | undefined;
     const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
-    expect(body.bridge_version).toBe("1.8.4-antigravity.1");
-    expect(ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION).toBe("1.8.4-antigravity.1");
+    expect(body.bridge_version).toBe("1.8.5-antigravity.1");
+    expect(ANTIGRAVITY_BRIDGE_CAPABILITY_VERSION).toBe("1.8.5-antigravity.1");
     expect(body.device_id).toBe("7a1ce240-1111-4000-8000-0000000000cd");
     expect(body.device_label).toBe("antigravity-host");
   });

@@ -10,6 +10,7 @@ import {
   appendSandboxFailureHint,
   initialAgyStreamState,
   inventoryModelFromListItem,
+  isAgyArtifactPathError,
   parseModelListText,
   reduceAgyStreamEvent,
 } from "@/packages/antigravity-bridge/src/agy-client";
@@ -175,6 +176,18 @@ describe("Antigravity stream-json parsing", () => {
     expect(appendSandboxFailureHint("invalid model selection", true)).toBe(
       "invalid model selection",
     );
+  });
+
+  it("detects write_to_file artifact-path rejections", () => {
+    expect(
+      isAgyArtifactPathError(
+        "declaring permissions: cortex tool write_to_file: convert tool call for permissions: " +
+          "model output error: invalid tool call error (invalid_args) " +
+          "/home/techpod/theme/origin/.tmp/preview/mobile-test.cjs is not a valid artifact path; " +
+          "artifacts must be in /home/techpod/.gemini/antigravity-cli/brain/abc/",
+      ),
+    ).toBe(true);
+    expect(isAgyArtifactPathError("invalid model selection")).toBe(false);
   });
 });
 

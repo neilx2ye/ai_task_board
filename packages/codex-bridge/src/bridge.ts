@@ -66,7 +66,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.8.4";
+const BRIDGE_VERSION = "1.8.5";
 /** Canonical settings-row kind shared with the unified device Bridge. */
 const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";

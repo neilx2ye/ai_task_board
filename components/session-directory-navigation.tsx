@@ -1,6 +1,11 @@
 "use client";
 
-import { FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
+import {
+  CircleStopIcon,
+  FolderIcon,
+  ListFilterIcon,
+  PlusIcon,
+} from "lucide-react";
 
 import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import { sessionStatusMeta, TASK_STATUS_META } from "@/components/task-meta";
@@ -34,6 +39,8 @@ type SessionDirectoryNavigationProps = {
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
+  /** Thread 正在运行任务时提供「停止」入口，由页面层处理确认与提交。 */
+  onStopRunningTask?: (session: SessionListItem) => void;
   /**
    * 可选（规划页）：提供后目录行本身变为可选中，按项目（路径）跨 Bridge
    * 选中项目级规划；同一路径在不同 Bridge 下的目录行会同时高亮。
@@ -46,10 +53,12 @@ export function SessionListRow({
   session,
   selected,
   onSelect,
+  onStopRunningTask,
 }: {
   session: SessionListItem;
   selected: boolean;
   onSelect: () => void;
+  onStopRunningTask?: (session: SessionListItem) => void;
 }) {
   const statusMeta = sessionStatusMeta(session);
   const task = session.current_task;
@@ -60,6 +69,8 @@ export function SessionListRow({
       ]
     : null;
   const model = session.configured_model ?? session.model;
+  const runningTask =
+    task && ["claimed", "running"].includes(task.status) ? task : null;
 
   return (
     <div
@@ -120,6 +131,23 @@ export function SessionListRow({
           已预留 {session.queued_task_count} 项
         </p>
       </button>
+
+      {runningTask && onStopRunningTask ? (
+        <div className="flex shrink-0 items-center border-l border-border/70 px-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2 text-xs"
+            onClick={() => onStopRunningTask(session)}
+            aria-label={`停止 Thread「${session.name}」正在运行的任务「${runningTask.title}」`}
+            title="停止当前运行的任务"
+          >
+            <CircleStopIcon className="size-3.5" />
+            停止
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -133,6 +161,7 @@ function DirectorySection({
   onToggleSession,
   onManage,
   onCreate,
+  onStopRunningTask,
   selectedProjectId,
   onSelectProject,
 }: {
@@ -147,6 +176,7 @@ function DirectorySection({
     group: SessionConnectionGroup,
     directory: SessionDirectoryGroup,
   ) => void;
+  onStopRunningTask?: (session: SessionListItem) => void;
   selectedProjectId?: string | null;
   onSelectProject?: (projectId: string) => void;
 }) {
@@ -240,6 +270,7 @@ function DirectorySection({
             session={session}
             selected={selectedSessionIds.includes(session.id)}
             onSelect={() => onToggleSession(session.id)}
+            onStopRunningTask={onStopRunningTask}
           />
         ))}
         {directory.sessions.length === 0 ? (
@@ -264,6 +295,7 @@ function ConnectionSection({
   onToggleSession,
   onManage,
   onCreate,
+  onStopRunningTask,
   selectedProjectId,
   onSelectProject,
 }: Omit<SessionDirectoryNavigationProps, "groups"> & {
@@ -368,6 +400,7 @@ function ConnectionSection({
             onToggleSession={onToggleSession}
             onManage={onManage}
             onCreate={onCreate}
+            onStopRunningTask={onStopRunningTask}
             selectedProjectId={selectedProjectId}
             onSelectProject={onSelectProject}
           />

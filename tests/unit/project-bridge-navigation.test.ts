@@ -172,4 +172,52 @@ describe("Project-first Bridge navigation", () => {
     );
     expect(markup).toContain('title="打开项目级规划"');
   });
+
+  it("shows a stop control only for Threads with a running task", () => {
+    const runningSession = {
+      ...session("thread-a", "修复登录", "/workspace/app"),
+      current_task: {
+        id: "task-1",
+        title: "修复登录跳转",
+        status: "running" as const,
+        progress_note: null,
+        progress_percent_estimate: null,
+        updated_at: "2026-08-11T00:00:00.000Z",
+        awaiting_user_input: false,
+      },
+    };
+    const runningProject: SessionProjectBridgeGroup = {
+      ...project,
+      bridges: [
+        {
+          ...project.bridges[0],
+          directory: {
+            ...project.bridges[0].directory,
+            sessions: [
+              runningSession,
+              session("thread-idle", "清理依赖", "/workspace/app"),
+            ],
+          },
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProjectBridgeNavigation, {
+        projects: [runningProject],
+        visibleIds: new Set(["thread-a", "thread-idle"]),
+        selectedSessionIds: [],
+        isOwner: true,
+        onToggleSession: vi.fn(),
+        onManage: vi.fn(),
+        onCreate: vi.fn(),
+        onStopRunningTask: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain(
+      'aria-label="停止 Thread「修复登录」正在运行的任务「修复登录跳转」"',
+    );
+    expect(markup.match(/aria-label="停止 Thread/g)).toHaveLength(1);
+  });
 });

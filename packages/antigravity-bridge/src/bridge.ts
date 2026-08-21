@@ -7,6 +7,7 @@ import {
   ANTIGRAVITY_IMAGE_MINIMUM_VERSION,
   ANTIGRAVITY_FALLBACK_MODEL_CATALOG,
   AgyClient,
+  isAgyArtifactPathError,
   type AgyPromptResult,
   type InventoryModel,
 } from "./agy-client.js";
@@ -62,6 +63,14 @@ const IMAGE_STAGING_ROOT = ".ai-task-board/turn-images";
 const MAX_THREADS = 500;
 const MAX_CONCURRENT_TURNS = 32;
 const MAX_HISTORY_TURNS = 500;
+const AGY_TOOL_GUIDANCE =
+  "\n\n[运行环境约束] 修改工作区内的已有文件请使用 replace_file_content / " +
+  "multi_replace_file_content，新建文件请使用终端命令；write_to_file 只能写入 " +
+  "artifact 目录，不要给它传工作区路径。";
+const AGY_ARTIFACT_RETRY_NOTE =
+  "\n\n[自动重试] 上一轮你调用 write_to_file 写入了工作区路径，被 agy 拒绝：" +
+  "write_to_file 只能写入 artifact 目录。请改用 replace_file_content / " +
+  "multi_replace_file_content 或终端命令完成同样的目标，且不要重复已经成功的步骤。";
 
 function imageExtension(mimeType: string): string | null {
   switch (mimeType) {
@@ -600,8 +609,9 @@ class SessionWorker {
       }
       throw error;
     }
+    prompt = `${prompt}${AGY_TOOL_GUIDANCE}`;
 
-    const recorder = new TurnRecorder();
+    let recorder = new TurnRecorder();
     let learnedConversationId = this.thread.conversationId;
     this.activePrompt = true;
     // 每个 prompt 独立的 AbortController：pause 只中断本轮 prompt（杀掉 agy
@@ -623,18 +633,36 @@ class SessionWorker {
     }
     let result: AgyPromptResult;
     try {
-      result = await this.agy.prompt({
-        cwd: this.thread.workingDirectory,
-        prompt,
-        conversationId: this.thread.conversationId,
-        model,
-        reasoningEffort,
-        signal: promptController.signal,
-        onTextDelta: (delta) => recorder.consumeDelta(delta),
-        onConversationId: (conversationId) => {
-          learnedConversationId = conversationId;
-        },
-      });
+      let attemptPrompt = prompt;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          result = await this.agy.prompt({
+            cwd: this.thread.workingDirectory,
+            prompt: attemptPrompt,
+            conversationId: learnedConversationId ?? this.thread.conversationId,
+            model,
+            reasoningEffort,
+            signal: promptController.signal,
+            onTextDelta: (delta) => recorder.consumeDelta(delta),
+            onConversationId: (conversationId) => {
+              learnedConversationId = conversationId;
+            },
+          });
+          break;
+        } catch (error) {
+          const retryable =
+            attempt === 0 &&
+            !promptController.signal.aborted &&
+            !this.pauseRequested &&
+            isAgyArtifactPathError(errorMessage(error));
+          if (!retryable) throw error;
+          process.stderr.write(
+            `Antigravity 任务 [${this.thread.bindingId.slice(0, 8)}] 检测到 write_to_file 被限制在 artifact 目录，带纠正说明重试一次\n`,
+          );
+          recorder = new TurnRecorder();
+          attemptPrompt = `${prompt}${AGY_ARTIFACT_RETRY_NOTE}`;
+        }
+      }
     } finally {
       this.stopController.signal.removeEventListener("abort", forwardStopAbort);
       this.promptController = null;

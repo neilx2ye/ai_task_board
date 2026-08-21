@@ -22,6 +22,7 @@ import type {
   SessionProjectBridge,
   SessionProjectBridgeGroup,
 } from "@/lib/domain/session-directory-groups";
+import type { SessionListItem } from "@/lib/types/domain";
 
 type ProjectBridgeNavigationProps = {
   /** 项目优先分组；按项目 Tab 过滤后通常只有一个项目。 */
@@ -35,6 +36,8 @@ type ProjectBridgeNavigationProps = {
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
+  /** Thread 正在运行任务时提供「停止」入口，由页面层处理确认与提交。 */
+  onStopRunningTask?: (session: SessionListItem) => void;
   /**
    * 可选（规划页）：项目头变为可选中，打开跨 Bridge 的项目级规划视图。
    * 项目级规划不挂在单个 Bridge 上，因此 Bridge 行本身不可选中。
@@ -51,6 +54,7 @@ function BridgeSection({
   onToggleSession,
   onManage,
   onCreate,
+  onStopRunningTask,
 }: {
   bridge: SessionProjectBridge;
   visibleIds: ReadonlySet<string>;
@@ -62,6 +66,7 @@ function BridgeSection({
     group: SessionConnectionGroup,
     directory?: SessionDirectoryGroup,
   ) => void;
+  onStopRunningTask?: (session: SessionListItem) => void;
 }) {
   const { groupId, platform, connection, directory } = bridge;
   const headingId = `bridge-${groupId}-${
@@ -185,6 +190,7 @@ function BridgeSection({
             session={session}
             selected={selectedSessionIds.includes(session.id)}
             onSelect={() => onToggleSession(session.id)}
+            onStopRunningTask={onStopRunningTask}
           />
         ))}
         {directory.sessions.length === 0 ? (
