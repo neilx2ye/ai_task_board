@@ -45,7 +45,7 @@ export function aggregateParentStatus(statuses: readonly TaskStatus[]): TaskStat
   if (!active.length) return "blocked";
   if (active.every((status) => status === "completed")) return "completed";
   if (active.includes("waiting_user")) return "waiting_user";
-  if (active.some((status) => status === "claimed" || status === "running")) {
+  if (active.some(isTaskRunningStatus)) {
     return "running";
   }
   if (active.includes("failed")) return "failed";
@@ -53,6 +53,11 @@ export function aggregateParentStatus(statuses: readonly TaskStatus[]): TaskStat
   if (active.includes("blocked")) return "blocked";
   if (active.includes("paused")) return "paused";
   return "blocked";
+}
+
+/** claimed/running 都表示会话正在处理该任务，Web 可对其下发停止（暂停）指令。 */
+export function isTaskRunningStatus(status: TaskStatus): boolean {
+  return status === "claimed" || status === "running";
 }
 
 export function matchesCapabilities(

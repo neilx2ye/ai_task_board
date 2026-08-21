@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
 
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ProjectTabBar } from "@/components/project-tab-bar";
 import { ProjectBridgeNavigation } from "@/components/project-bridge-navigation";
 import type { ProjectEditInput } from "@/components/project-visibility-dialog";
 import { ResizableSessionPanel } from "@/components/resizable-session-panel";
 import { SessionDirectoryNavigation } from "@/components/session-directory-navigation";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/states";
+import { StopRunningTaskDialog } from "@/components/stop-running-task-dialog";
 import { ThreadPickerDialog } from "@/components/thread-picker-dialog";
 import {
   CreateThreadDialog,
@@ -20,19 +20,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/utils";
-import { ApiError } from "@/hooks/api-client";
 import { useVisibleSessionIds } from "@/hooks/use-visible-session-ids";
 import { useBridgeDirectories } from "@/hooks/use-bridge-directories";
 import { useDeleteProject } from "@/hooks/use-delete-project";
 import { useHiddenProjects } from "@/hooks/use-hidden-projects";
-import { SESSIONS_QUERY_KEY, sessionQueryKey } from "@/hooks/query-keys";
+import { sessionQueryKey } from "@/hooks/query-keys";
 import { useSelectedSessionIds } from "@/hooks/use-selected-session-ids";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 import {
   useMarkSessionCompletionsViewed,
   useSessions,
 } from "@/hooks/use-sessions";
-import { usePauseTask } from "@/hooks/use-tasks";
 import { useUpdateProject } from "@/hooks/use-update-project";
 import {
   supportsWorkingDirectoryInventory,
@@ -103,7 +101,6 @@ export default function SessionsPage() {
     null,
   );
   const [stopTarget, setStopTarget] = useState<SessionListItem | null>(null);
-  const [stopError, setStopError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   // 点击「待查看」且已打开的 Thread 时，用递增的 nonce 触发对应面板强调提示。
@@ -112,12 +109,6 @@ export default function SessionsPage() {
     nonce: number;
   } | null>(null);
   const hierarchyError = sessionsQuery.error ?? directoriesQuery.error;
-  const stopTask = stopTarget?.current_task;
-  const stopTaskRunning =
-    stopTask && ["claimed", "running"].includes(stopTask.status);
-  const pauseRunningTask = usePauseTask(
-    stopTaskRunning ? stopTask.id : "",
-  );
 
   const handleProjectUpdate = useCallback(
     async (project: SessionProjectGroup, input: ProjectEditInput) => {
@@ -318,30 +309,6 @@ export default function SessionsPage() {
       );
   }, [selectedSessionIds, sessions, visibleSessions]);
   const queryClient = useQueryClient();
-
-  const handleStopRunningTask = async () => {
-    if (!stopTarget || !stopTaskRunning) {
-      setStopTarget(null);
-      return;
-    }
-    setStopError(null);
-    try {
-      await pauseRunningTask.mutateAsync({});
-      await queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
-      setNotice(
-        `已停止 Thread「${stopTarget.name}」正在运行的任务「${stopTask.title}」，任务已置为已暂停；可在任务看板中恢复。`,
-      );
-      setStopTarget(null);
-    } catch (error) {
-      setStopError(
-        error instanceof ApiError && error.code === "INVALID_STATE_TRANSITION"
-          ? "该任务包含子任务，无法在 Threads 页直接停止；请在任务看板中停止对应子任务。"
-          : error instanceof Error
-            ? error.message
-            : "停止失败，请稍后重试",
-      );
-    }
-  };
 
   useEffect(() => {
     if (
@@ -613,10 +580,7 @@ export default function SessionsPage() {
                       setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
-                    onStopRunningTask={(session) => {
-                      setStopError(null);
-                      setStopTarget(session);
-                    }}
+                    onStopRunningTask={setStopTarget}
                   />
                 ) : (
                   <ProjectBridgeNavigation
@@ -629,10 +593,7 @@ export default function SessionsPage() {
                       setPickerTarget({ groupId, directoryId })
                     }
                     onCreate={openCreateDialog}
-                    onStopRunningTask={(session) => {
-                      setStopError(null);
-                      setStopTarget(session);
-                    }}
+                    onStopRunningTask={setStopTarget}
                   />
                 )}
               </div>
@@ -795,30 +756,16 @@ export default function SessionsPage() {
         />
       ) : null}
 
-      <ConfirmDialog
-        open={stopTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setStopTarget(null);
-            setStopError(null);
-          }
-        }}
-        title="停止运行中的任务？"
-        description={
-          stopTarget && stopTaskRunning
-            ? `将尽力中断设备上正在执行的 turn（最长约一个轮询周期），并把任务「${stopTask.title}」标记为已暂停；之后可在任务看板中恢复。`
-            : undefined
-        }
-        confirmLabel="停止运行"
-        pending={pauseRunningTask.isPending}
-        onConfirm={() => void handleStopRunningTask()}
-      >
-        {stopError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {stopError}
-          </p>
-        ) : null}
-      </ConfirmDialog>
+      {stopTarget ? (
+        <StopRunningTaskDialog
+          session={stopTarget}
+          open
+          onOpenChange={(open) => {
+            if (!open) setStopTarget(null);
+          }}
+          onStopped={setNotice}
+        />
+      ) : null}
     </div>
   );
 }

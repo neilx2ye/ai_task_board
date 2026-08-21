@@ -4,6 +4,7 @@ import {
   aggregateParentStatus,
   compareClaimCandidates,
   hasRequiredCapabilities,
+  isTaskRunningStatus,
   isTaskStatusTransitionAllowed,
   matchesCapabilities,
   taskDisplayStatus,
@@ -52,6 +53,20 @@ describe("task display status", () => {
     expect(
       taskDisplayStatus({ status: "completed", assigned_session_id: null }),
     ).toBe("completed");
+  });
+});
+
+describe("task running status", () => {
+  it("treats claimed and running as actively handled by a session", () => {
+    expect(isTaskRunningStatus("claimed")).toBe(true);
+    expect(isTaskRunningStatus("running")).toBe(true);
+  });
+
+  it("excludes queued, waiting, and terminal states", () => {
+    for (const status of statuses) {
+      if (status === "claimed" || status === "running") continue;
+      expect(isTaskRunningStatus(status)).toBe(false);
+    }
   });
 });
 

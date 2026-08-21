@@ -22,6 +22,7 @@ import {
 } from "@/lib/agent-platforms";
 import { isConnectionAlive } from "@/lib/domain/session-presence";
 import { sessionProjectIdForDirectory } from "@/lib/domain/session-directory-groups";
+import { isTaskRunningStatus } from "@/lib/domain/task-rules";
 import type {
   SessionConnectionGroup,
   SessionDirectoryGroup,
@@ -70,7 +71,7 @@ export function SessionListRow({
     : null;
   const model = session.configured_model ?? session.model;
   const runningTask =
-    task && ["claimed", "running"].includes(task.status) ? task : null;
+    task && isTaskRunningStatus(task.status) ? task : null;
 
   return (
     <div
