@@ -749,432 +749,53 @@ systemctl --user restart ai-task-board-bridge.service`}</CopyableCodeBlock>
         </p>
       </Section>
 
-      <Section id="ai-integration" title="AI 客户端 API 接入细则">
+      <Section id="ai-integration" title="AI 接入最小示例">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          AI 客户端通过 REST API 接入，基地址就是部署后的看板地址（例如
-          <code>https://task.neilx.online</code>）。客户端只持有「AI 连接」创建时
-          一次性展示的 <code>atb_</code> 连接令牌；服务端由令牌解析出连接与
-          Workspace，请求体不要提交 <code>workspace_id</code>。所有请求都使用
-          HTTPS JSON：成功响应统一是 <code>{`{ "data": ... }`}</code> 信封，失败
-          统一是 <code>{`{ "error": { "code", "message" } }`}</code> 信封，只暴露
-          稳定的业务错误码，不包含 SQL、Supabase 原始错误或内部堆栈。
+          AI 客户端通过 REST API 接入。所有请求都需要连接令牌；除注册会话外的
+          任务操作还需要会话 ID；所有写请求必须使用唯一幂等键。
         </p>
-        <CodeBlock>{`# 通用请求头
-Authorization: Bearer atb_<connection_token>
-X-AI-Session-ID: <session_id>            # 注册后所有会话级命令必填
-Idempotency-Key: <client>/<op>/<uuid>    # 写请求必填，1–200 字符
-Content-Type: application/json
+        <CodeBlock>{`# 1) 注册会话（幂等）
+POST /api/ai/sessions/register
+Authorization: Bearer atb_...        # 连接令牌（只显示一次）
+Idempotency-Key: <唯一键>
 
-# 最小主循环（保存并使用响应中的 session.id / task.claim_token）
-POST /api/ai/sessions/register          # { name, platform, capabilities, ... }
-POST /api/ai/sessions/presence          # 每分钟一次，body {}
-POST /api/ai/tasks/claim-next           # { "lease_seconds": 900 }
-POST /api/ai/sessions/heartbeat         # { task_id, claim_token, lease_seconds }
-POST /api/ai/tasks/report-progress      # { task_id, claim_token, progress_* }
-POST /api/ai/tasks/complete-and-claim-next`}</CodeBlock>
-        <h3 className="text-sm font-medium">客户端必须遵守的规则</h3>
-        <ul className="list-inside list-disc space-y-2 text-sm leading-relaxed text-muted-foreground">
-          <li>
-            <strong className="text-foreground">保活与离线阈值。</strong>
-            空闲或等待回复时也要至少每分钟 POST
-            <code className="mx-1 rounded bg-muted px-1 text-xs">sessions/presence</code>
-            （body 为 <code className="rounded bg-muted px-1 text-xs">{`{}`}</code>）
-            刷新存活；两分钟没有会话活动，网页会把会话视为离线并停止新的预留。执行中的
-            租约用
-            <code className="mx-1 rounded bg-muted px-1 text-xs">sessions/heartbeat</code>
-            续期。两类心跳仍校验幂等键格式，但属于自然幂等刷新：不缓存响应、不写任务
-            事件、不进 AI 上下文，同键不同心跳内容也不会冲突。
-          </li>
-          <li>
-            <strong className="text-foreground">SSE 唤醒流（可选）。</strong>
-            常驻 Worker 可 GET
-            <code className="mx-1 rounded bg-muted px-1 text-xs">sessions/wake</code>
-            （Accept: text/event-stream）建立认证 SSE。服务端只发
-            <code className="mx-1 rounded bg-muted px-1 text-xs">ready</code>、
-            <code className="mx-1 rounded bg-muted px-1 text-xs">wake</code>、
-            <code className="mx-1 rounded bg-muted px-1 text-xs">degraded</code>、
-            <code className="mx-1 rounded bg-muted px-1 text-xs">reconnect</code>
-            帧与注释保活，绝不携带任务标题、正文或令牌；收到提示后仍必须用
-            <code className="mx-1 rounded bg-muted px-1 text-xs">claim-next</code>
-            原子领取，SSE 只是可能重复或遗漏的低延迟提示，数据库与 REST 才是权威
-            状态，请保留低频轮询作为断线兜底。
-          </li>
-          <li>
-            <strong className="text-foreground">领取范围。</strong>
-            <code className="mx-1 rounded bg-muted px-1 text-xs">claim-next</code>
-            只考虑分配给当前会话、能力匹配且依赖已完成的
-            <code className="rounded bg-muted px-1 text-xs">ready</code> 叶子任务，
-            按优先级降序、创建时间升序原子接收；不会扫描其他会话或未绑定任务。没有
-            预留任务时返回 task 为 null，且该空结果不写持久幂等表。
-            <code className="mx-1 rounded bg-muted px-1 text-xs">lease_seconds</code>
-            可选 60–3600，默认 900。
-          </li>
-          <li>
-            <strong className="text-foreground">claim_token。</strong>
-            只在领取类响应中出现一次，回传进度、续租、消息、拆分、问答、完成、失败或
-            释放都必须携带。租约过期、任务暂停或改派后令牌立即失效（403
-            INVALID_CLAIM_TOKEN），此时应把任务视为已被接管，停止重试并丢弃本地 turn
-            状态，重新领取并取得新令牌，不要复用旧令牌。
-          </li>
-          <li>
-            <strong className="text-foreground">幂等键。</strong>
-            每个写请求一个唯一键（1–200 字符，建议
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              &lt;client&gt;/&lt;operation&gt;/&lt;uuid&gt;
-            </code>
-            ）。同键同内容可安全重试：真实领取的响应保留 24 小时、可完全重放并返回
-            同一个 claim_token；同键不同内容返回 409 IDEMPOTENCY_CONFLICT。例外：
-            presence / heartbeat 只校验格式；claim-next 的空结果不缓存；历史导入用
-            运行实例 fence 与 external_ref 去重、不读取该键。
-          </li>
-          <li>
-            <strong className="text-foreground">请求体上限。</strong>
-            普通 AI 命令默认 512 KiB，活动上报 768 KiB、历史导入 640 KiB、Inventory
-            同步 1152 KiB；超限返回 413 PAYLOAD_TOO_LARGE。
-          </li>
-          <li>
-            <strong className="text-foreground">回复上传。</strong>
-            会话时间线固定只保存
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              assistant_message
-            </code>
-            ；为兼容旧适配器，reasoning / command / file_change / mcp_tool /
-            web_search / plan / error / usage / status 会被接受但以 suppressed:true
-            忽略。content 1–100,000 字符，data 为 JSON 对象且不超过 256 KiB，
-            external_ref 必填（最长 500 字符）并在会话内稳定唯一：同 ref 同内容重试
-            安全，同 ref 改内容会被拒绝。
-          </li>
-          <li>
-            <strong className="text-foreground">拆分与问答。</strong>
-            <code className="mx-1 rounded bg-muted px-1 text-xs">create-subtasks</code>
-            一次提交 1–100 个子任务，依赖用批次内唯一的
-            <code className="rounded bg-muted px-1 text-xs">client_ref</code> 表达；
-            未知引用、自依赖或依赖环会让整批回滚，成功后父任务清除领取、满足依赖的
-            叶子进入 ready。纯文字
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              request-user-input
-            </code>
-            会把任务置为 waiting_user 并结束租约，回复后任务回到 ready、由原会话
-            重新领取；Codex 结构化问题改用 user-input-requests 注册 + poll（1–3 个
-            问题），任务保持 running、保留原 claim_token 与租约，答案不写入公开任务
-            消息。
-          </li>
-          <li>
-            <strong className="text-foreground">结束任务。</strong>
-            推荐
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              complete-and-claim-next
-            </code>
-            原子完成并领取下一项（返回 next_task 与新 claim_token）；只完成用
-            complete，失败用 fail（reason 必填），主动放弃用 release。AI REST 不接收
-            二进制附件，随完成命令提交 HTTPS external_url，或引用已上传的私有
-            storage_path（二者只能给一个，最多 100 个附件）。
-          </li>
-          <li>
-            <strong className="text-foreground">查询与增量。</strong>
-            GET
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              tasks/:taskId
-            </code>
-            读取详情；GET
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              tasks/:taskId/updates
-            </code>
-            用不可变事件 ID 游标补拉变化（after + limit 1–500，把响应的 next_cursor
-            持久化作为下次 after）；GET
-            <code className="mx-1 rounded bg-muted px-1 text-xs">
-              artifacts/:artifactId/download
-            </code>
-            返回 300 秒签名 URL 或外部 URL。
-          </li>
-          <li>
-            <strong className="text-foreground">Web 接口区分。</strong>
-            <code className="mx-1 rounded bg-muted px-1 text-xs">/api/user/*</code>
-            是给已登录网页使用的，走 Supabase Auth Cookie 鉴权，不接受 AI 连接令牌；
-            AI 客户端应始终使用
-            <code className="mx-1 rounded bg-muted px-1 text-xs">/api/ai/*</code>。
-          </li>
-        </ul>
-        <h3 className="text-sm font-medium">端点速查</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="py-2 pr-3 font-medium">方法</th>
-                <th className="py-2 pr-3 font-medium">路径</th>
-                <th className="py-2 font-medium">说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/register</code>
-                </td>
-                <td className="py-1.5">注册或按 external_conversation_ref 幂等更新会话</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/presence</code>
-                </td>
-                <td className="py-1.5">空闲会话保活（建议每分钟）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/heartbeat</code>
-                </td>
-                <td className="py-1.5">领取租约续期（task_id + claim_token）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>GET</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/wake</code>
-                </td>
-                <td className="py-1.5">认证 SSE 唤醒提示（无任务数据）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/sync</code>
-                </td>
-                <td className="py-1.5">Bridge 上报设备 Inventory / 模型 / 配额 / 版本</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/history</code>
-                </td>
-                <td className="py-1.5">Codex 历史追加导入（分页、按 external_ref 去重）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/sessions/activity</code>
-                </td>
-                <td className="py-1.5">回传 AI 回复（仅 assistant_message 落库）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/claim-next</code>
-                </td>
-                <td className="py-1.5">领取下一项预留任务，返回 task + claim_token</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/claim</code>
-                </td>
-                <td className="py-1.5">领取指定任务（task_id + lease_seconds）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/report-progress</code>
-                </td>
-                <td className="py-1.5">回传进度（percent 为 0–100 整数或 null）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/report-current</code>
-                </td>
-                <td className="py-1.5">同步外部已开始的任务（external_task_ref 去重）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/messages</code>
-                </td>
-                <td className="py-1.5">追加任务消息</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/create-subtasks</code>
-                </td>
-                <td className="py-1.5">一次性拆分子任务（client_ref 表达依赖）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/request-user-input</code>
-                </td>
-                <td className="py-1.5">纯文字提问（进入 waiting_user 并结束租约）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/user-input-requests</code>
-                </td>
-                <td className="py-1.5">注册结构化问题（任务保持 running、保留 claim）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/user-input-requests/:requestId/poll</code>
-                </td>
-                <td className="py-1.5">轮询结构化问题的答案</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/complete</code>
-                </td>
-                <td className="py-1.5">完成任务（可携带结果与附件引用）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/complete-and-claim-next</code>
-                </td>
-                <td className="py-1.5">完成并原子领取下一项（返回 next_task）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/fail</code>
-                </td>
-                <td className="py-1.5">标记失败（reason 必填）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/release</code>
-                </td>
-                <td className="py-1.5">主动释放当前领取</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>GET</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/:taskId</code>
-                </td>
-                <td className="py-1.5">任务详情与关系</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>GET</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/tasks/:taskId/updates</code>
-                </td>
-                <td className="py-1.5">增量事件（after 游标 + limit 1–500）</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>GET</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/artifacts/:artifactId/download</code>
-                </td>
-                <td className="py-1.5">附件下载签名 URL</td>
-              </tr>
-              <tr className="align-top">
-                <td className="py-1.5 pr-3"><code>POST</code></td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <code>/api/ai/thread-commands/*</code>
-                  <br />
-                  <code>/api/ai/file-commands/*</code>
-                </td>
-                <td className="py-1.5">
-                  Bridge 设备命令：Thread / 文件命令的 claim 与 complete，只需连接令牌
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <h3 className="text-sm font-medium">稳定错误码</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="py-2 pr-3 font-medium">错误码</th>
-                <th className="py-2 pr-3 font-medium">HTTP</th>
-                <th className="py-2 font-medium">处理建议</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>TASK_NOT_FOUND</code></td>
-                <td className="py-1.5 pr-3">404</td>
-                <td className="py-1.5">停止重试并刷新任务引用</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>TASK_NOT_READY</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">重新查询依赖或等待任务恢复</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>TASK_ALREADY_CLAIMED</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">不要执行该任务，刷新当前会话状态</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>LEASE_EXPIRED</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">停止使用旧令牌，重新领取</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>INVALID_CLAIM_TOKEN</code></td>
-                <td className="py-1.5 pr-3">403</td>
-                <td className="py-1.5">丢弃令牌并重新领取，不要记录令牌</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>DEPENDENCY_CYCLE</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">修正整批依赖后用新幂等键重试</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>SESSION_NOT_AUTHORIZED</code></td>
-                <td className="py-1.5 pr-3">403</td>
-                <td className="py-1.5">检查连接、会话 ID 与任务定向指派</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>CAPABILITY_MISMATCH</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">由用户明确改派到满足能力的存活会话</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>INVALID_STATE_TRANSITION</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">刷新当前状态后决定下一命令</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>IDEMPOTENCY_CONFLICT</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">不要复用 Key；核对第一次请求</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>VERSION_CONFLICT</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">刷新 Bridge 配置版本并重新确认修改</td>
-              </tr>
-              <tr className="border-b border-border align-top">
-                <td className="py-1.5 pr-3"><code>BRIDGE_INSTANCE_CONFLICT</code></td>
-                <td className="py-1.5 pr-3">409</td>
-                <td className="py-1.5">停止重复 Bridge；等待旧实例退出或租约到期</td>
-              </tr>
-              <tr className="align-top">
-                <td className="py-1.5 pr-3">
-                  <code>AUTHENTICATION_REQUIRED</code>
-                </td>
-                <td className="py-1.5 pr-3">401</td>
-                <td className="py-1.5">连接令牌缺失、无效或已撤销</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+{ "name": "Claude Research", "platform": "claude",
+  "model": "...", "capabilities": ["web_search"] }
+
+# 2) 空闲时持续发送会话心跳
+POST /api/ai/sessions/presence
+Authorization: Bearer atb_...
+X-AI-Session-ID: <session_id>
+Idempotency-Key: <每次心跳的唯一键>
+
+{}
+
+# 3) 读取这个会话的下一项预留任务
+POST /api/ai/tasks/claim-next
+Authorization: Bearer atb_...
+X-AI-Session-ID: <session_id>        # 注册返回的会话 ID
+Idempotency-Key: <唯一键>
+
+{ "lease_seconds": 900 }             # 不会扫描其他会话或未绑定任务`}</CodeBlock>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          <code className="mx-1 rounded bg-muted px-1 text-xs">400 INVALID_REQUEST</code>
-          表示 JSON / Zod 校验失败，应修正请求后换新幂等键重试；
-          <code className="mx-1 rounded bg-muted px-1 text-xs">413 PAYLOAD_TOO_LARGE</code>
-          表示请求体超限；
-          <code className="mx-1 rounded bg-muted px-1 text-xs">500 INTERNAL_ERROR</code>
-          可以使用同一个幂等键有限退避重试。
+          执行过程中用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">report-progress</code>
+          回传进度，用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">request-user-input</code>
+          向你提问，完成后调用
+          <code className="mx-1 rounded bg-muted px-1 text-xs">complete</code> 或
+          <code className="mx-1 rounded bg-muted px-1 text-xs">complete-and-claim-next</code>
+          。心跳接口可延长租约；租约过期后仍只有原目标会话可以重新接收，改派需要用户明确操作。
+        </p>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          高频心跳仍校验幂等键格式，但不会保存幂等响应或生成心跳事件；空的
+          <code className="mx-1 rounded bg-muted px-1 text-xs">claim-next</code>
+          也不会落幂等记录。只有真实领取和其他业务写操作保留可重放结果。
         </p>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           连接令牌只在创建或轮换时显示一次，服务端只保存其哈希。请勿把令牌、
-          SUPABASE_SECRET_KEY 提交到仓库或发送到公开渠道，生产环境请使用客户端的
-          Secret Store。
+          SUPABASE_SECRET_KEY 提交到仓库或发送到公开渠道。
         </p>
       </Section>
 
