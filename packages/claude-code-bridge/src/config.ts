@@ -132,10 +132,9 @@ export function parseRemoteWorkingDirectories(
 ): ManagedWorkingDirectory[] {
   if (
     !Array.isArray(value) ||
-    value.length < 1 ||
     value.length > MAX_DIRECTORIES
   ) {
-    throw new Error("看板配置 working_directories 必须包含 1 到 100 个目录");
+    throw new Error("看板配置 working_directories 必须包含 0 到 100 个目录");
   }
 
   const keys = new Set<string>();

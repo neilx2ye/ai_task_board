@@ -249,6 +249,7 @@ describe("Bridge configuration UI model", () => {
     expect(isAbsoluteWorkingDirectoryPath("C:\\work\\project")).toBe(true);
     expect(isAbsoluteWorkingDirectoryPath("relative/project")).toBe(false);
 
+    expect(validateWorkingDirectories([])).toBeNull();
     const valid = [
       {
         directory_key: "main",

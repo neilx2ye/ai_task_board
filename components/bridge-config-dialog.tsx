@@ -87,8 +87,8 @@ export function isAbsoluteWorkingDirectoryPath(value: string): boolean {
 export function validateWorkingDirectories(
   directories: readonly WorkingDirectoryInput[],
 ): string | null {
-  if (directories.length < 1 || directories.length > 100) {
-    return "Web 管理模式必须包含 1 到 100 个工作目录";
+  if (directories.length > 100) {
+    return "Web 管理模式最多包含 100 个工作目录";
   }
   const keys = new Set<string>();
   const paths = new Set<string>();
@@ -877,6 +877,12 @@ function BridgeConfigForm({
 
           {manageWorkingDirectories ? (
             <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
+              {workingDirectories.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                  当前未管理任何目录：设备不会同步任何工作目录。可添加项目目录，
+                  或关闭上方开关恢复设备启动时的目录配置。
+                </p>
+              ) : null}
               {workingDirectories.map((directory, index) => (
                 <div
                   key={index}

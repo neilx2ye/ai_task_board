@@ -177,6 +177,40 @@ describe("owner Bridge configuration API", () => {
     );
   });
 
+  it("accepts an empty directory list as an explicit manage-nothing state", async () => {
+    const request = jsonRequest(
+      `/api/user/connections/${connectionId}/bridge-config`,
+      {
+        expected_version: 3,
+        enabled: true,
+        include_thread_titles: false,
+        max_threads: 50,
+        max_concurrent_turns: 2,
+        sync_history: false,
+        history_turn_limit: 50,
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
+        working_directories: [],
+      },
+      {
+        method: "PATCH",
+        headers: { "Idempotency-Key": "web/bridge-config/empty" },
+      },
+    );
+    const response = await updateConfig(request, {
+      params: Promise.resolve({ connectionId }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(domainMocks.updateBridgeConfiguration).toHaveBeenCalledWith(
+      ownerContext,
+      connectionId,
+      undefined,
+      expect.objectContaining({ working_directories: [] }),
+      "web/bridge-config/empty",
+    );
+  });
+
   it.each([
     {
       expected_version: 3,
@@ -206,16 +240,6 @@ describe("owner Bridge configuration API", () => {
       max_concurrent_turns: 2,
       sync_history: false,
       history_turn_limit: 50,
-    },
-    {
-      expected_version: 3,
-      enabled: true,
-      include_thread_titles: false,
-      max_threads: 50,
-      max_concurrent_turns: 2,
-      sync_history: false,
-      history_turn_limit: 50,
-      working_directories: [],
     },
     {
       expected_version: 3,

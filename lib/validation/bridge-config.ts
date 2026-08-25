@@ -20,7 +20,7 @@ export const bridgeWorkingDirectorySchema = z
 
 export const bridgeWorkingDirectoriesSchema = z
   .array(bridgeWorkingDirectorySchema)
-  .min(1)
+  .min(0)
   .max(100)
   .superRefine((directories, context) => {
     const keys = new Set<string>();

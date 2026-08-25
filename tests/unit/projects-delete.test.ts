@@ -105,6 +105,7 @@ function settingsRow(overrides: Record<string, unknown> = {}) {
     connection_id: connectionId,
     platform: "codex",
     version: 4,
+    bridge_version: "1.8.7",
     desired_enabled: true,
     desired_include_thread_titles: false,
     desired_max_threads: 50,
@@ -219,7 +220,7 @@ describe("deleteProjectOnBridges", () => {
     });
   });
 
-  it("falls back to the device startup configuration when the last directory is removed", async () => {
+  it("takes over with an empty list when the last Web-managed directory is removed", async () => {
     state.tables.ai_connection_bridge_settings = [
       settingsRow({
         desired_working_directories: [mainDirectory],
@@ -234,7 +235,7 @@ describe("deleteProjectOnBridges", () => {
 
     expect(result.results[0]?.status).toBe("submitted");
     expect(state.updateConfig.mock.calls[0]?.[3]).toMatchObject({
-      working_directories: null,
+      working_directories: [],
     });
     expect(state.tables.ai_bridge_directories).toEqual([]);
   });
@@ -348,7 +349,7 @@ describe("deleteProjectOnBridges", () => {
     ]);
   });
 
-  it("keeps the device startup configuration when the deleted path is its only inventory entry", async () => {
+  it("takes over with an empty list when the deleted path is the only device-reported directory", async () => {
     state.tables.ai_connection_bridge_settings = [
       settingsRow({
         desired_working_directories: null,
@@ -371,7 +372,39 @@ describe("deleteProjectOnBridges", () => {
       "web/projects/delete/inventory-single",
     );
 
+    expect(result.results[0]?.status).toBe("submitted");
+    expect(state.updateConfig.mock.calls[0]?.[3]).toMatchObject({
+      working_directories: [],
+    });
+    expect(state.tables.ai_bridge_directories).toEqual([]);
+  });
+
+  it("asks for a Bridge upgrade when its version cannot express an empty list", async () => {
+    state.tables.ai_connection_bridge_settings = [
+      settingsRow({
+        bridge_version: "1.8.6-kimi.1",
+        desired_working_directories: null,
+        effective_working_directories: null,
+      }),
+    ];
+    state.tables.ai_bridge_directories = [
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...mainDirectory,
+        inventory_active: true,
+      },
+    ];
+
+    const result = await deleteProjectOnBridges(
+      ownerContext,
+      { working_directory: "/srv/main" },
+      "web/projects/delete/old-bridge",
+    );
+
     expect(result.results[0]?.status).toBe("skipped");
+    expect(result.results[0]?.reason).toContain("升级 Bridge");
     expect(state.updateConfig).not.toHaveBeenCalled();
     expect(state.tables.ai_bridge_directories).toEqual([]);
   });

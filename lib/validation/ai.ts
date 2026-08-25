@@ -138,7 +138,7 @@ export const syncSessionsSchema = z
     device_label: nonEmptyText.max(255).optional(),
     directories: z
       .array(syncedBridgeDirectorySchema)
-      .min(1)
+      .min(0)
       .max(100)
       .optional(),
     threads: z.array(syncedThreadSchema).max(500),

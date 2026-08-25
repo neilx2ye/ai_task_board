@@ -586,6 +586,78 @@ describe("Unified device Bridge migration", () => {
     });
   });
 
+  it("accepts an empty directory report and retires the runtime directories", async () => {
+    await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'codex', $5::jsonb,
+         $6::jsonb, $7::text, $8::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.8.1",
+        JSON.stringify([
+          {
+            directory_key: "retire",
+            name: "Retire",
+            working_directory: "/srv/retire",
+          },
+        ]),
+        JSON.stringify([
+          {
+            external_conversation_ref: "codex-thread-retire",
+            name: "codex retire thread",
+            platform: "codex",
+            working_directory: "/srv/retire",
+            directory_key: "retire",
+            capabilities: [],
+            archived: false,
+          },
+        ]),
+        "verify-empty-report-setup",
+        "verify-empty-report-hash-setup",
+      ],
+    );
+
+    await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'codex', '[]'::jsonb,
+         '[]'::jsonb, $5::text, $6::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.8.1",
+        "verify-empty-report",
+        "verify-empty-report-hash",
+      ],
+    );
+
+    const directory = await database.query<{ inventory_active: boolean }>(
+      `select inventory_active from public.ai_bridge_directories
+       where connection_id = $1 and platform = 'codex'
+         and working_directory = '/srv/retire'`,
+      [unifiedId],
+    );
+    expect(directory.rows[0]?.inventory_active).toBe(false);
+
+    const session = await database.query<{
+      status: string;
+      inventory_active: boolean;
+    }>(
+      `select status, inventory_active from public.ai_sessions
+       where connection_id = $1
+         and external_conversation_ref = 'codex-thread-retire'`,
+      [unifiedId],
+    );
+    expect(session.rows[0]).toMatchObject({
+      status: "offline",
+      inventory_active: false,
+    });
+  });
+
   it("scopes Web thread commands to the claiming runtime kind", async () => {
     const commandId = randomUUID();
     const kimiRuntimeId = randomUUID();

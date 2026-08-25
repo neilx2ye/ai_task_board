@@ -23,6 +23,7 @@ import type {
 type BridgeSettingsSnapshot = {
   platform: string;
   version: number;
+  bridge_version: string | null;
   desired_enabled: boolean;
   desired_include_thread_titles: boolean;
   desired_max_threads: number;
@@ -40,7 +41,30 @@ type BridgeSettingsSnapshot = {
 };
 
 const SETTINGS_SNAPSHOT_COLUMNS =
-  "platform, version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_permission_mode, desired_approval_mode, desired_working_directories, effective_working_directories" as const;
+  "platform, version, bridge_version, desired_enabled, desired_include_thread_titles, desired_max_threads, desired_max_concurrent_turns, desired_sync_history, desired_history_turn_limit, desired_permission_mode, desired_approval_mode, desired_working_directories, effective_working_directories" as const;
+
+function parseBridgeVersionParts(
+  version: string | null | undefined,
+): [number, number, number] | null {
+  if (!version) return null;
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** 空目录清单（Web 接管但暂不管理任何目录）从 Bridge 1.8.7 开始支持。 */
+function supportsEmptyDirectoryDesired(
+  version: string | null | undefined,
+): boolean {
+  const parts = parseBridgeVersionParts(version);
+  if (!parts) return false;
+  const [major, minor, patch] = parts;
+  return (
+    major > 1 ||
+    (major === 1 && minor > 8) ||
+    (major === 1 && minor === 8 && patch >= 7)
+  );
+}
 
 function parseDirectoryList(value: unknown): BridgeWorkingDirectory[] | null {
   if (value === null || value === undefined) return null;
@@ -698,18 +722,22 @@ async function dispatchProjectDelete(
         remainingPaths.add(directory.working_directory);
       }
 
-      // 清单不能为空：删除最后一个项目时回退到设备启动配置。
-      const nextDirectories: BridgeWorkingDirectory[] | null =
-        remaining.length > 0 ? remaining : null;
-      if (desired === null && nextDirectories === null) {
+      // 剩余清单允许为空：空数组表示“Web 接管但暂不管理任何目录”，与
+      // null（沿用设备启动配置）不同。删除最后一个目录时若回退到 null，
+      // 设备会继续按启动配置上报该路径，刚删除的项目随之复活。
+      if (
+        remaining.length === 0 &&
+        !supportsEmptyDirectoryDesired(snapshot.bridge_version)
+      ) {
         results.push({
           ...resultBase,
           status: "skipped",
           reason:
-            "该项目是最后一个托管目录；已回退设备启动配置，若启动配置仍包含该路径，设备同步后可能重新出现",
+            "需要升级 Bridge 到 1.8.7+ 才能彻底移除其最后一个托管目录",
         });
         break;
       }
+      const nextDirectories = remaining;
 
       try {
         await updateBridgeConfiguration(

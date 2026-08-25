@@ -150,7 +150,7 @@ describe("Codex Bridge runtime primitives", () => {
         },
       ]),
     ).toThrow("重复路径");
-    expect(() => parseRemoteWorkingDirectories([])).toThrow("1 到 100");
+    expect(parseRemoteWorkingDirectories([])).toEqual([]);
     expect(() =>
       parseRemoteWorkingDirectories([
         {
