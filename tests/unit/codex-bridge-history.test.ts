@@ -210,7 +210,7 @@ describe("Codex Bridge history sync", () => {
     expect(result).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
   });
 
-  it("requests unloaded turns, paginates items, and skips live Board turns", async () => {
+  it("consumes embedded full turn items and skips live Board turns", async () => {
     const boardItems = [
       {
         type: "userMessage",
@@ -245,25 +245,20 @@ describe("Codex Bridge history sync", () => {
           {
             id: "turn-board",
             status: "completed",
-            itemsView: "notLoaded",
-            items: [],
+            itemsView: "full",
+            items: boardItems,
           },
           {
             id: "turn-local",
             status: "completed",
             startedAt: 200,
-            itemsView: "notLoaded",
-            items: [],
+            itemsView: "full",
+            items: localItems,
           },
         ],
         nextCursor: null,
       });
-    const threadItemsList = vi.fn(async (params: { turnId: string }) => ({
-      data: (params.turnId === "turn-board" ? boardItems : localItems).map(
-        (item) => ({ turnId: params.turnId, item }),
-      ),
-      nextCursor: null,
-    }));
+    const threadItemsList = vi.fn();
     const result = await scanThreadHistory({
       appServer: { threadTurnsList, threadItemsList } as never,
       thread: { id: "thread-local", source: "cli", createdAt: 100 },
@@ -275,17 +270,9 @@ describe("Codex Bridge history sync", () => {
       expect.objectContaining({
         threadId: "thread-local",
         sortDirection: "desc",
-        itemsView: "notLoaded",
+        itemsView: "full",
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(threadItemsList).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId: "thread-local",
-        turnId: "turn-local",
-        sortDirection: "asc",
-      }),
-      expect.anything(),
     );
     expect(result).toMatchObject({
       scannedTurns: 1,
@@ -306,7 +293,7 @@ describe("Codex Bridge history sync", () => {
         items: localItems,
       }).map((item) => item.source_order),
     );
-    expect(threadItemsList).toHaveBeenCalledTimes(2);
+    expect(threadItemsList).not.toHaveBeenCalled();
   });
 
   it("streams a 1,104-item turn while retaining only the privacy whitelist", async () => {
@@ -573,6 +560,45 @@ describe("Codex Bridge history sync", () => {
     });
   });
 
+  it("marks an embedded full turn partial when it exceeds 10,000 raw items", async () => {
+    const threadItemsList = vi.fn();
+    const result = await scanThreadHistory({
+      appServer: {
+        threadTurnsList: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: "turn-embedded-cap",
+              status: "completed",
+              itemsView: "full",
+              items: Array.from(
+                { length: HISTORY_ITEMS_PER_TURN_LIMIT + 1 },
+                (_, index) => ({
+                  type: "commandExecution",
+                  id: `command-${index}`,
+                  aggregatedOutput: "HIDDEN COMMAND OUTPUT",
+                }),
+              ),
+            },
+          ],
+          nextCursor: null,
+        }),
+        threadItemsList,
+      } as never,
+      thread: { id: "thread-embedded-cap", source: "cli" },
+      turnLimit: 1,
+      signal: new AbortController().signal,
+    });
+
+    expect(threadItemsList).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      items: [],
+      scannedTurns: 0,
+      nextCursor: "local-safety-cap",
+      sourceExhausted: false,
+      safetyCapReached: true,
+    });
+  });
+
   it("keeps import batches within item and encoded-body limits", () => {
     const item = (index: number): HistoryImportItem => ({
       external_ref: `codex-history:thread:turn:item-${index}`,
@@ -616,6 +642,96 @@ describe("Codex Bridge history sync", () => {
         ),
       ).toBeLessThanOrEqual(HISTORY_IMPORT_BODY_LIMIT_BYTES);
     }
+  });
+
+  it("imports only AI replies", async () => {
+    const reports: Array<{
+      sync: HistorySyncReport;
+      items: HistoryImportItem[];
+    }> = [];
+    const synchronizer = new HistorySynchronizer({
+      appServer: {
+        threadTurnsList: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: "turn-private",
+              status: "completed",
+              startedAt: 100,
+              itemsView: "notLoaded",
+            },
+          ],
+          nextCursor: null,
+        }),
+        threadItemsList: vi.fn().mockResolvedValue({
+          data: [
+            {
+              turnId: "turn-private",
+              item: {
+                type: "userMessage",
+                id: "user-private",
+                content: [{ type: "text", text: "Please continue" }],
+              },
+            },
+            {
+              turnId: "turn-private",
+              item: {
+                type: "reasoning",
+                id: "reasoning-private",
+                summary: ["Readable summary"],
+              },
+            },
+            {
+              turnId: "turn-private",
+              item: {
+                type: "agentMessage",
+                id: "answer-private",
+                phase: "final_answer",
+                text: "Done",
+              },
+            },
+          ],
+          nextCursor: null,
+        }),
+      } as never,
+      runtimeInstanceId: "019f1234-5678-7abc-8def-0123456789ab",
+      configuration: () => ({ enabled: true, turnLimit: 1 }),
+      importHistory: vi.fn(async (_sessionId, request) => {
+        reports.push({ sync: request.sync, items: request.items });
+        return {
+          imported: { inserted: request.items.length, replayed: 0 },
+          history_sync: {
+            ...request.sync,
+            imported_items: request.items.length,
+            started_at: "2026-08-10T00:00:00.000Z",
+            completed_at: null,
+            updated_at: "2026-08-10T00:00:00.000Z",
+          },
+        };
+      }),
+    });
+    const controller = new AbortController();
+    const running = synchronizer.start(controller.signal);
+    synchronizer.updateTargets([
+      {
+        sessionId: "session-private",
+        thread: { id: "thread-private", source: "cli", createdAt: 100 },
+      },
+    ]);
+
+    const deadline = Date.now() + 2_000;
+    while (!reports.some((report) => report.sync.status === "complete")) {
+      if (Date.now() >= deadline) {
+        throw new Error("history completion was not reported");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(
+      reports.flatMap((report) => report.items).map((item) => item.kind),
+    ).toEqual(["user_message", "assistant_message"]);
+    synchronizer.stop();
+    controller.abort(new Error("test complete"));
+    await expect(running).resolves.toBeUndefined();
   });
 
   it("reports history failures without terminating the background runtime", async () => {

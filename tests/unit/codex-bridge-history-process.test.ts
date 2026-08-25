@@ -52,6 +52,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-history-codex/0.147" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-history", source: "cli", cwd: "/workspace/history", parentThreadId: null, createdAt: 1786290000 }],
@@ -59,11 +61,11 @@ lines.on("line", (line) => {
     } });
   } else if (message.method === "thread/turns/list") {
     send({ id: message.id, result: {
-      data: turns.slice(0, message.params.limit || turns.length).map(({ items, ...turn }) => ({
-        ...turn,
-        items: [],
-        itemsView: message.params.itemsView
-      })),
+      data: turns.slice(0, message.params.limit || turns.length).map(({ items, ...turn }) =>
+        message.params.itemsView === "full"
+          ? { ...turn, items, itemsView: "full" }
+          : { ...turn, items: [], itemsView: message.params.itemsView }
+      ),
       nextCursor: null,
       backwardsCursor: null
     } });
@@ -147,7 +149,8 @@ describe("Codex Bridge history process", () => {
               max_threads: 1,
               max_concurrent_turns: 1,
               sync_history: true,
-              history_turn_limit: 3
+              history_turn_limit: 3,
+              working_directories: null
             },
             applied: null,
             updated_at: new Date().toISOString()
@@ -177,7 +180,7 @@ describe("Codex Bridge history process", () => {
           },
           history_sync: {
             ...sync,
-            imported_items: 3,
+            imported_items: Array.isArray(body.items) ? body.items.length : 0,
             started_at: new Date().toISOString(),
             completed_at: sync.status === "syncing" ? null : new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -288,10 +291,15 @@ describe("Codex Bridge history process", () => {
         allImported.map((item) => [String(item.external_ref), item] as const),
       ).values(),
     ];
-    expect(imported).toMatchObject([
-      { kind: "user_message", content: "Local historical prompt" },
-      { kind: "reasoning", content: "Provider summary" },
-      { kind: "assistant_message", content: "Local historical answer" },
+    expect(imported).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        content: "Local historical prompt",
+      }),
+      expect.objectContaining({
+        kind: "assistant_message",
+        content: "Local historical answer",
+      }),
     ]);
     const serialized = JSON.stringify(imported);
     expect(serialized).not.toContain("Board live");

@@ -23,6 +23,8 @@ import type {
   ReportProgressInput,
   ReportSessionActivityInput,
   RequestUserInputInput,
+  RegisterTaskUserInputRequestInput,
+  PollTaskUserInputRequestInput,
 } from "@/lib/validation/ai";
 
 const DEFAULT_LEASE_SECONDS = 15 * 60;
@@ -48,7 +50,10 @@ type CompletionParameters = Pick<
 >;
 
 export const SAFE_TASK_COLUMNS =
-  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, model, reasoning_effort, goal_mode, steer, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+
+export const SAFE_TASK_USER_INPUT_REQUEST_COLUMNS =
+  "id, workspace_id, task_id, session_id, message_id, external_request_id, turn_id, item_id, is_blocking, status, questions, answered_at, created_at, updated_at" as const;
 
 function requestMetadata(
   operation: string,
@@ -139,6 +144,25 @@ export async function claimNextTask(
   return withClaimToken(result, claimToken);
 }
 
+/**
+ * 领取运行中 turn 的 steer 消息。与 claimNextTask 不同，它允许 Session 在
+ * 已有活跃主 Task 时再领取 steer = true 的辅助任务；Thread 空闲时返回空。
+ */
+export async function claimSteerTask(
+  context: AISessionContext,
+  input: ClaimOptionsInput,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const claimToken = issuedClaimToken(context, "claim_steer_task", idempotencyKey);
+  const result = await callDomainRpc("claim_steer_task", {
+    ...aiContext(context),
+    p_claim_token_hash: hashToken(claimToken, "claim"),
+    p_lease_seconds: input.lease_seconds ?? DEFAULT_LEASE_SECONDS,
+    ...requestMetadata("claim_steer_task", input, idempotencyKey),
+  });
+  return withClaimToken(result, claimToken);
+}
+
 export async function claimTask(
   context: AISessionContext,
   input: ClaimTaskInput,
@@ -212,6 +236,41 @@ export async function requestUserInput(
   });
 }
 
+export async function registerTaskUserInputRequest(
+  context: AISessionContext,
+  input: RegisterTaskUserInputRequestInput,
+  idempotencyKey: string,
+): Promise<unknown> {
+  return callDomainRpc("register_task_user_input_request", {
+    ...aiContext(context),
+    p_task_id: input.task_id,
+    p_claim_token_hash: hashToken(input.claim_token, "claim"),
+    p_request_id: input.request_id,
+    p_external_request_id: input.external_request_id,
+    p_turn_id: input.turn_id,
+    p_item_id: input.item_id,
+    p_is_blocking: input.is_blocking,
+    p_questions: input.questions,
+    ...requestMetadata(
+      "register_task_user_input_request",
+      input,
+      idempotencyKey,
+    ),
+  });
+}
+
+export async function pollTaskUserInputRequest(
+  context: AISessionContext,
+  input: PollTaskUserInputRequestInput,
+): Promise<unknown> {
+  return callDomainRpc("poll_task_user_input_request", {
+    ...aiContext(context),
+    p_task_id: input.task_id,
+    p_claim_token_hash: hashToken(input.claim_token, "claim"),
+    p_request_id: input.request_id,
+  });
+}
+
 export async function postTaskMessage(
   context: AISessionContext,
   input: PostTaskMessageInput,
@@ -232,6 +291,12 @@ export async function reportSessionActivity(
   input: ReportSessionActivityInput,
   idempotencyKey: string,
 ): Promise<unknown> {
+  // The conversation log intentionally stores model replies only. Keep this
+  // server-side guard even though first-party Bridges also filter locally so
+  // older or custom adapters cannot re-enable process-detail uploads.
+  if (input.kind !== "assistant_message") {
+    return { activity: null, message: null, suppressed: true };
+  }
   return callDomainRpc("report_session_activity", {
     ...aiContext(context),
     p_task_id: input.task_id,
@@ -333,6 +398,39 @@ export async function getTask(
   return loadTaskRelations(context.workspaceId, task);
 }
 
+export async function createAIArtifactDownload(
+  context: AISessionContext,
+  artifactId: string,
+) {
+  const admin = createAdminClient();
+  const { data: artifact, error } = await admin
+    .from("artifacts")
+    .select("task_id, storage_path, external_url")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", artifactId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!artifact) throw new AppError("TASK_NOT_FOUND", "Artifact not found");
+  const { data: task, error: taskError } = await admin
+    .from("tasks")
+    .select("id")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", artifact.task_id)
+    .or(`assigned_session_id.eq.${context.sessionId},claimed_by_session_id.eq.${context.sessionId}`)
+    .maybeSingle();
+  if (taskError) throw mapDatabaseError(taskError);
+  if (!task) throw new AppError("TASK_NOT_FOUND", "Artifact not found");
+  if (artifact.external_url) return { url: artifact.external_url, expires_in: null };
+  if (!artifact.storage_path) throw new AppError("INTERNAL_ERROR", "Artifact has no location");
+  const { data, error: signedError } = await admin.storage
+    .from("task-artifacts")
+    .createSignedUrl(artifact.storage_path, 300);
+  if (signedError || !data?.signedUrl) {
+    throw new AppError("INTERNAL_ERROR", "Artifact download URL could not be created");
+  }
+  return { url: data.signedUrl, expires_in: 300 };
+}
+
 export async function loadTaskRelations(
   workspaceId: string,
   task: TaskRow | TaskDatabaseRow,
@@ -369,7 +467,7 @@ export async function loadTaskRelations(
     }
   }
   const activityTaskIds = [task.id, ...descendantRows.map((row) => row.id)];
-  const [parentResult, childrenResult, dependenciesResult, messagesResult, eventsResult, artifactsResult] =
+  const [parentResult, childrenResult, dependenciesResult, messagesResult, eventsResult, artifactsResult, inputRequestsResult] =
     await Promise.all([
       task.parent_task_id
         ? admin
@@ -404,6 +502,13 @@ export async function loadTaskRelations(
         .eq("workspace_id", workspaceId)
         .in("task_id", activityTaskIds)
         .order("created_at"),
+      admin
+        .from("task_user_input_requests")
+        .select(SAFE_TASK_USER_INPUT_REQUEST_COLUMNS)
+        .eq("workspace_id", workspaceId)
+        .eq("status", "pending")
+        .in("task_id", activityTaskIds)
+        .order("created_at"),
     ]);
 
   const firstError = [
@@ -413,6 +518,7 @@ export async function loadTaskRelations(
     messagesResult.error,
     eventsResult.error,
     artifactsResult.error,
+    inputRequestsResult.error,
   ].find(Boolean);
   if (firstError) throw mapDatabaseError(firstError);
 
@@ -437,6 +543,7 @@ export async function loadTaskRelations(
     messages: messagesResult.data ?? [],
     events: eventsResult.data ?? [],
     artifacts: artifactsResult.data ?? [],
+    input_requests: inputRequestsResult.data ?? [],
   };
 }
 

@@ -1,17 +1,20 @@
 {
-  "name": "ai-task-board-codex-bridge",
-  "version": "0.4.1",
-  "description": "Device-level multi-thread Codex bridge for AI Task Board",
+  "name": "ai-task-board-bridge",
+  "version": "1.8.7",
+  "description": "Unified interactive installer and device bridge for Codex, Kimi Code, Antigravity, and Claude Code on AI Task Board",
   "type": "module",
   "types": "./dist/index.d.ts",
   "keywords": [
     "ai-task-board",
     "codex",
+    "kimi-code",
+    "claude-code",
+    "acp",
     "bridge",
     "cli"
   ],
   "bin": {
-    "ai-task-board-codex-bridge": "dist/cli.js"
+    "ai-task-board-bridge": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -24,7 +27,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "npm run build --workspace @ai-task-board/kimi-bridge-runtime && npm run build --workspace @ai-task-board/antigravity-bridge-runtime && npm run build --workspace @ai-task-board/claude-code-bridge-runtime && node scripts/embed-runtimes.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsx src/cli.ts",
     "prepack": "npm run build"
   },
@@ -42,7 +45,10 @@
   },
   "homepage": "https://github.com/neilx2ye/ai_task_board#readme",
   "license": "UNLICENSED",
-  "dependencies": {},
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.23.0",
+    "zod": "^4.1.11"
+  },
   "devDependencies": {
     "@types/node": "^22.18.6",
     "tsx": "^4.20.6",

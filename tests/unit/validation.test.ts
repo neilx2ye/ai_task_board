@@ -10,7 +10,14 @@ import {
   syncSessionsSchema,
 } from "@/lib/validation/ai";
 import { artifactReferenceSchema } from "@/lib/validation/common";
-import { createTaskSchema, updateTaskSchema } from "@/lib/validation/user";
+import {
+  createTaskSchema,
+  createTurnPlanStepSchema,
+  planningNotesQuerySchema,
+  updateTaskSchema,
+  updateTurnPlanStepSchema,
+  upsertPlanningNotesSchema,
+} from "@/lib/validation/user";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const artifactId = "22222222-2222-4222-8222-222222222222";
@@ -68,6 +75,78 @@ describe("AI command validation", () => {
           { external_conversation_ref: "same", name: "First" },
           { external_conversation_ref: "same", name: "Second" },
         ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a provider-neutral quota snapshot in Bridge inventory", () => {
+    const parsed = syncSessionsSchema.parse({
+      bridge_version: "1.2.0",
+      threads: [],
+      quota: {
+        provider: "codex",
+        status: "ok",
+        message: null,
+        account: null,
+        plan: "pro",
+        fetched_at: "2026-08-17T00:00:00.000Z",
+        buckets: [
+          {
+            id: "primary",
+            label: "5 小时",
+            remaining_percent: 62.5,
+            used_percent: 37.5,
+            limit: null,
+            used: null,
+            remaining: null,
+            resets_at: "2026-08-17T04:00:00.000Z",
+            unlimited: false,
+            description: null,
+          },
+        ],
+        credits: null,
+      },
+    });
+    expect(parsed.quota?.buckets[0]?.remaining_percent).toBe(62.5);
+  });
+
+  it("normalizes an App Server model catalog and rejects duplicate models", () => {
+    const model = {
+      id: " custom-fast ",
+      model: " provider/custom-fast ",
+      display_name: " Custom Fast ",
+      default_reasoning_effort: " balanced ",
+      supported_reasoning_efforts: [
+        { reasoning_effort: " quick ", description: " Fast response " },
+        { reasoning_effort: " balanced ", description: null },
+      ],
+      input_modalities: [" text ", " image "],
+      is_default: true,
+    };
+    const parsed = syncSessionsSchema.parse({
+      bridge_version: "0.10.0",
+      model_catalog: [model],
+      threads: [],
+    });
+
+    expect(parsed.model_catalog).toEqual([{
+      id: "custom-fast",
+      model: "provider/custom-fast",
+      display_name: "Custom Fast",
+      description: null,
+      default_reasoning_effort: "balanced",
+      supported_reasoning_efforts: [
+        { reasoning_effort: "quick", description: "Fast response" },
+        { reasoning_effort: "balanced", description: null },
+      ],
+      input_modalities: ["text", "image"],
+      is_default: true,
+    }]);
+    expect(
+      syncSessionsSchema.safeParse({
+        bridge_version: "0.10.0",
+        model_catalog: [model, { ...model, id: "duplicate-id" }],
+        threads: [],
       }).success,
     ).toBe(false);
   });
@@ -289,5 +368,58 @@ describe("user command validation", () => {
     expect(updateTaskSchema.safeParse({ assigned_session_id: null }).success).toBe(
       false,
     );
+  });
+});
+
+describe("planning workspace validation", () => {
+  it("accepts planning note upserts within limits", () => {
+    const parsed = upsertPlanningNotesSchema.parse({
+      project_ref: " path:/repo ",
+      content: "一些想法",
+    });
+
+    expect(parsed.project_ref).toBe("path:/repo");
+    expect(
+      upsertPlanningNotesSchema.safeParse({
+        project_ref: " ",
+        content: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires a project ref in planning note queries", () => {
+    expect(
+      planningNotesQuerySchema.safeParse({ project_ref: "path:/repo" })
+        .success,
+    ).toBe(true);
+    expect(planningNotesQuerySchema.safeParse({}).success).toBe(false);
+  });
+
+  it("validates turn plan step drafts", () => {
+    expect(createTurnPlanStepSchema.safeParse({ content: "第一步" }).success)
+      .toBe(true);
+    expect(createTurnPlanStepSchema.safeParse({ content: "  " }).success).toBe(
+      false,
+    );
+    expect(
+      createTurnPlanStepSchema.safeParse({
+        content: "x",
+        model: "gpt-5.6-sol",
+        reasoning_effort: "max",
+      }).success,
+    ).toBe(true);
+    expect(
+      createTurnPlanStepSchema.safeParse({ content: "x", position: 1 }).success,
+    ).toBe(false);
+  });
+
+  it("requires at least one turn plan patch field", () => {
+    expect(updateTurnPlanStepSchema.safeParse({}).success).toBe(false);
+    expect(updateTurnPlanStepSchema.safeParse({ position: 2048 }).success).toBe(
+      true,
+    );
+    expect(
+      updateTurnPlanStepSchema.safeParse({ position: 1.5 }).success,
+    ).toBe(false);
   });
 });

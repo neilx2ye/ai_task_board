@@ -8,6 +8,11 @@ import {
 } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
+import {
+  SESSIONS_QUERY_KEY,
+  taskQueryKey,
+  TASKS_QUERY_KEY,
+} from "@/hooks/query-keys";
 import type { TaskDetails } from "@/lib/types/domain";
 import type {
   ArtifactRow,
@@ -40,12 +45,9 @@ export type SubtaskInput = {
   depends_on_task_ids?: string[];
 };
 
-const TASKS_KEY = ["tasks"] as const;
-const taskKey = (taskId: string) => ["tasks", taskId] as const;
-
 export function useTasks() {
   return useQuery({
-    queryKey: TASKS_KEY,
+    queryKey: TASKS_QUERY_KEY,
     queryFn: async (): Promise<TaskListData> => {
       const data = await apiFetch<{
         tasks?: TaskRow[];
@@ -61,7 +63,7 @@ export function useTasks() {
 
 export function useTaskDetails(taskId: string | undefined) {
   return useQuery({
-    queryKey: taskKey(taskId ?? ""),
+    queryKey: taskQueryKey(taskId ?? ""),
     enabled: Boolean(taskId),
     queryFn: () => apiFetch<TaskDetails>(`/api/user/tasks/${taskId}`),
   });
@@ -70,9 +72,9 @@ export function useTaskDetails(taskId: string | undefined) {
 function useTaskInvalidation() {
   const queryClient = useQueryClient();
   return (taskId?: string) => {
-    void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+    void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     if (taskId) {
-      void queryClient.invalidateQueries({ queryKey: taskKey(taskId) });
+      void queryClient.invalidateQueries({ queryKey: taskQueryKey(taskId) });
     }
   };
 }
@@ -132,8 +134,32 @@ export function usePostTaskMessage(taskId: string) {
   return useTaskAction(taskId, "messages");
 }
 
+export function useAnswerTaskUserInput(taskId: string, requestId: string) {
+  const invalidate = useTaskInvalidation();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (answers: Record<string, string[]>) =>
+      apiFetch<unknown>(
+        `/api/user/tasks/${taskId}/input-requests/${requestId}/answer`,
+        { method: "POST", json: { answers } },
+      ),
+    onSuccess: () => {
+      invalidate(taskId);
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+    },
+  });
+}
+
 export function useCancelTask(taskId: string) {
   return useTaskAction(taskId, "cancel");
+}
+
+export function usePauseTask(taskId: string) {
+  return useTaskAction(taskId, "pause");
+}
+
+export function useResumeTask(taskId: string) {
+  return useTaskAction(taskId, "resume");
 }
 
 export function useReopenTask(taskId: string) {

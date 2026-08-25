@@ -3,10 +3,17 @@ import path from "node:path";
 
 import {
   type AppServerIncomingRequest,
+  type AppServerModel,
   type AppServerNotification,
   type AppServerThread,
+  AppServerRpcError,
   CodexAppServerClient,
 } from "./app-server-client.js";
+import {
+  normalizeCodexQuota,
+  quotaError,
+  type SyncedQuota,
+} from "./account-quota.js";
 import {
   type HistoryImportRequest,
   type HistoryImportResponse,
@@ -23,12 +30,45 @@ import {
   nextClaimAction,
 } from "./claim-retry.js";
 import {
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
+import {
+  listDeviceDirectory,
+  readDeviceFilePreview,
+  type DeviceFileListResult,
+  type DeviceFilePreviewResult,
+} from "./device-file-access.js";
+import {
   adaptiveIdlePollDelay,
   runSessionWakeListener,
   WakeLatch,
 } from "./wake-client.js";
+import {
+  managedDirectoryForWorkingDirectory,
+  type ManagedWorkingDirectory,
+  parseRemoteWorkingDirectories,
+  parseWorkingDirectories,
+  type RemoteWorkingDirectory,
+  remoteWorkingDirectories,
+  workingDirectoryForThreadCreate,
+} from "./working-directories.js";
+import { maybeApplyDesiredBridgeUpdate } from "./update-manager.js";
 
-const BRIDGE_VERSION = "0.4.1";
+export {
+  isExactWorkingDirectory,
+  managedDirectoryForWorkingDirectory,
+  type ManagedWorkingDirectory,
+  parseRemoteWorkingDirectories,
+  parseWorkingDirectories,
+  type RemoteWorkingDirectory,
+  remoteWorkingDirectories,
+  workingDirectoryForThreadCreate,
+} from "./working-directories.js";
+
+const BRIDGE_VERSION = "1.8.7";
+/** Canonical settings-row kind shared with the unified device Bridge. */
+const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
 const THREAD_SOURCE_KINDS = ["cli", "vscode", "exec", "appServer"];
 const DELTA_CHUNK_BYTES = 8_192;
@@ -36,21 +76,66 @@ const ACCUMULATED_TEXT_LIMIT = 100_000;
 const STREAM_TRUNCATION_MARKER = "\n…[流式输出已截断]";
 const MAX_NOTIFICATION_BACKLOG = 256;
 const MAX_ACTIVITY_BACKLOG = 64;
+const USER_INPUT_POLL_INTERVAL_MS = 1_500;
+const MAX_THREADS = 500;
+const MAX_CONCURRENT_TURNS = 32;
+/** Web 拥有历史上限；本机只保留启动默认值，设备侧的安全扫描硬顶同为 500。 */
+const MAX_HISTORY_TURNS = 500;
+const MAX_MODEL_CATALOG_ENTRIES = 500;
+const MODEL_CATALOG_PAGE_SIZE = 100;
 
 type ClaimedTask = {
   id: string;
   title: string;
   description: string | null;
   acceptance_criteria: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  goal_mode?: boolean | null;
+  steer?: boolean | null;
   claim_token: string;
 };
+
+type TaskImageArtifact = {
+  id: string;
+  name: string;
+  mime_type: string;
+  size: number;
+};
+
+type TaskDetailsResponse = { artifacts: TaskImageArtifact[] };
 
 type Session = {
   id: string;
   external_conversation_ref?: string | null;
+  deletion_requested_at?: string | null;
 };
 
 type ClaimResponse = { task: ClaimedTask | null };
+
+export type StructuredUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options: Array<{ label: string; description: string }> | null;
+  isOther: boolean;
+  isSecret: boolean;
+};
+
+export type StructuredUserInputRequest = {
+  turnId: string;
+  itemId: string;
+  isBlocking: true;
+  questions: StructuredUserInputQuestion[];
+};
+
+type UserInputPollResponse = {
+  request: {
+    id: string;
+    status: "pending" | "answered" | "consumed" | "cancelled";
+    answers: Record<string, string[]> | null;
+  };
+};
 
 type ThreadRecord = AppServerThread & {
   name?: unknown;
@@ -86,7 +171,7 @@ type TurnResult = {
 };
 
 type ApprovalMode = "decline" | "accept" | "accept-session";
-type PermissionMode = "safe" | "inherit";
+type PermissionMode = "danger-full-access" | "safe" | "inherit";
 type ThreadScope = "cwd" | "all";
 
 export type EffectiveBridgeConfiguration = {
@@ -96,6 +181,10 @@ export type EffectiveBridgeConfiguration = {
   maxConcurrentTurns: number;
   syncHistory: boolean;
   historyTurnLimit: number;
+  permissionMode: PermissionMode;
+  approvalMode: ApprovalMode;
+  workingDirectory: string;
+  workingDirectories: ManagedWorkingDirectory[];
 };
 
 export type RemoteBridgeConfigurationDesired = {
@@ -107,12 +196,19 @@ export type RemoteBridgeConfigurationDesired = {
   sync_history?: boolean;
   /** Optional only for compatibility with a Board that has not initialized 0.4 defaults yet. */
   history_turn_limit?: number;
+  /** Missing is normalized to null for compatibility with Boards before 0.8. */
+  working_directories: RemoteWorkingDirectory[] | null;
+  /** Missing/null keeps the current runtime value (older Boards). */
+  permission_mode?: PermissionMode | null;
+  /** Missing/null keeps the current runtime value (older Boards). */
+  approval_mode?: ApprovalMode | null;
 };
 
 export type RemoteBridgeConfigurationConstraints = {
   remote_configuration_enabled: boolean;
   allow_thread_titles: boolean;
   allow_history_sync: boolean;
+  allow_working_directory_configuration: boolean;
   max_threads: number;
   max_concurrent_turns: number;
   max_history_turns: number;
@@ -132,7 +228,10 @@ export type BridgeConfiguration = {
   boardUrl: string;
   connectionToken: string;
   threadIdFilter: string | null;
+  readonly localWorkingDirectory: string;
+  readonly localWorkingDirectories: readonly ManagedWorkingDirectory[];
   workingDirectory: string;
+  workingDirectories: ManagedWorkingDirectory[];
   sessionNamePrefix: string | null;
   model: string | null;
   capabilities: string[];
@@ -153,8 +252,9 @@ export type BridgeConfiguration = {
   localIncludeThreadTitles: boolean;
   allowRemoteThreadTitles: boolean;
   allowHistorySync: boolean;
+  allowRemoteWorkingDirectories: boolean;
+  /** Startup cap before the Web-owned live thread limit is applied. */
   localMaxThreads: number;
-  localMaxConcurrentTurns: number;
   localMaxHistoryTurns: number;
   webConfigurationEnabled: boolean;
   codexBinary: string;
@@ -165,6 +265,8 @@ type RemoteConfigurationResponse = {
     connection_id: string;
     version: number;
     desired: RemoteBridgeConfigurationDesired;
+    /** Board-requested npm package version; null when absent or not a string. */
+    desired_bridge_version: string | null;
     applied?: unknown;
     updated_at: string;
   };
@@ -172,6 +274,7 @@ type RemoteConfigurationResponse = {
 
 type RemoteConfigurationStatus = {
   runtime_instance_id: string;
+  platform: string;
   report_sequence: number;
   lease_seconds: number;
   release_runtime: boolean;
@@ -198,12 +301,67 @@ type InventoryThread = {
   platform: "codex";
   model: string | null;
   working_directory: string | null;
+  directory_key: string | null;
   capabilities: string[];
   archived: false;
 };
 
+type InventoryDirectory = {
+  directory_key: string;
+  name: string;
+  working_directory: string;
+};
+
+type InventoryModelReasoningEffort = {
+  reasoning_effort: string;
+  description: string | null;
+};
+
+type InventoryModel = {
+  id: string;
+  model: string;
+  display_name: string;
+  description: string | null;
+  default_reasoning_effort: string | null;
+  supported_reasoning_efforts: InventoryModelReasoningEffort[];
+  input_modalities: string[];
+  is_default: boolean;
+};
+
 type SyncSessionsResponse = {
   sessions: Session[];
+};
+
+type ThreadCommand = {
+  id: string;
+  action: "create" | "rename" | "delete" | "pause";
+  name: string | null;
+  directory_key: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  external_thread_id: string | null;
+  session_id?: string | null;
+  task_id?: string | null;
+  attempt_count?: number;
+};
+
+type ThreadCommandResponse = {
+  command: ThreadCommand | null;
+};
+
+type FileCommand = {
+  id: string;
+  action: "list" | "read";
+  path: string;
+  attempt_count?: number;
+};
+
+type FileCommandResponse = {
+  command: FileCommand | null;
+};
+
+type CreatedThreadIdsResponse = {
+  thread_ids?: string[];
 };
 
 type ActivityBuffer = {
@@ -223,6 +381,156 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function boundedCatalogString(
+  value: unknown,
+  maximumLength: number,
+): string | null {
+  const parsed = stringValue(value);
+  return parsed && parsed.length <= maximumLength ? parsed : null;
+}
+
+function inventoryModel(
+  value: AppServerModel,
+  allowDefault: boolean,
+): InventoryModel | null {
+  if (!isRecord(value)) return null;
+  const model = boundedCatalogString(value.model, 200);
+  const id = boundedCatalogString(value.id, 200) ?? model;
+  if (!id || !model) return null;
+
+  const efforts: InventoryModelReasoningEffort[] = [];
+  const seenEfforts = new Set<string>();
+  if (Array.isArray(value.supportedReasoningEfforts)) {
+    for (const candidate of value.supportedReasoningEfforts.slice(0, 20)) {
+      if (!isRecord(candidate)) continue;
+      const reasoningEffort = boundedCatalogString(
+        candidate.reasoningEffort,
+        100,
+      );
+      if (!reasoningEffort || seenEfforts.has(reasoningEffort)) continue;
+      seenEfforts.add(reasoningEffort);
+      efforts.push({
+        reasoning_effort: reasoningEffort,
+        description:
+          typeof candidate.description === "string"
+            ? candidate.description.trim().slice(0, 2_000) || null
+            : null,
+      });
+    }
+  }
+
+  const inputModalities = Array.isArray(value.inputModalities)
+    ? [
+        ...new Set(
+          value.inputModalities
+            .slice(0, 20)
+            .map((modality) => boundedCatalogString(modality, 100))
+            .filter((modality): modality is string => Boolean(modality)),
+        ),
+      ]
+    : [];
+  const defaultEffort = boundedCatalogString(
+    value.defaultReasoningEffort,
+    100,
+  );
+
+  return {
+    id,
+    model,
+    display_name:
+      boundedCatalogString(value.displayName, 200) ?? model,
+    description:
+      typeof value.description === "string"
+        ? value.description.trim().slice(0, 2_000) || null
+        : null,
+    default_reasoning_effort: defaultEffort,
+    supported_reasoning_efforts: efforts,
+    input_modalities: inputModalities,
+    is_default: allowDefault && value.isDefault === true,
+  };
+}
+
+export function parseStructuredUserInputRequest(
+  value: unknown,
+): StructuredUserInputRequest {
+  if (!isRecord(value)) throw new Error("结构化问题参数无效");
+  const turnId = stringValue(value.turnId);
+  const itemId = stringValue(value.itemId);
+  if (!turnId || !itemId || value.isBlocking !== true) {
+    throw new Error("结构化问题缺少 blocking turn/item 标识");
+  }
+  if (!Array.isArray(value.questions) || value.questions.length < 1 || value.questions.length > 3) {
+    throw new Error("结构化问题数量必须为 1 到 3");
+  }
+  const ids = new Set<string>();
+  const questions = value.questions.map((candidate): StructuredUserInputQuestion => {
+    if (!isRecord(candidate)) throw new Error("结构化问题格式无效");
+    const id = stringValue(candidate.id);
+    const header = stringValue(candidate.header);
+    const question = stringValue(candidate.question);
+    if (!id || id.length > 200 || ids.has(id) || !header || !question) {
+      throw new Error("结构化问题字段无效或 id 重复");
+    }
+    ids.add(id);
+    let options: StructuredUserInputQuestion["options"] = null;
+    if (candidate.options !== null && candidate.options !== undefined) {
+      if (
+        !Array.isArray(candidate.options) ||
+        candidate.options.length < 1 ||
+        candidate.options.length > 20
+      ) {
+        throw new Error("结构化问题选项无效");
+      }
+      const labels = new Set<string>();
+      options = candidate.options.map((option) => {
+        if (!isRecord(option)) throw new Error("结构化问题选项格式无效");
+        const label = stringValue(option.label);
+        if (!label || label.length > 500 || labels.has(label)) {
+          throw new Error("结构化问题选项标签无效或重复");
+        }
+        if (typeof option.description !== "string" || option.description.length > 2_000) {
+          throw new Error("结构化问题选项说明无效");
+        }
+        labels.add(label);
+        return { label, description: option.description };
+      });
+    }
+    return {
+      id,
+      header: header.slice(0, 100),
+      question: question.slice(0, 10_000),
+      options,
+      isOther: candidate.isOther === true,
+      isSecret: candidate.isSecret === true,
+    };
+  });
+  return { turnId, itemId, isBlocking: true, questions };
+}
+
+export function parseStructuredUserInputAnswers(
+  value: unknown,
+  questions: readonly StructuredUserInputQuestion[],
+): Record<string, { answers: string[] }> {
+  if (!isRecord(value)) throw new Error("Web Console 回答格式无效");
+  const result: Record<string, { answers: string[] }> = {};
+  for (const question of questions) {
+    const candidate = value[question.id];
+    if (
+      !Array.isArray(candidate) ||
+      candidate.length !== 1 ||
+      typeof candidate[0] !== "string" ||
+      !candidate[0].trim()
+    ) {
+      throw new Error(`Web Console 未返回问题 ${question.id} 的有效答案`);
+    }
+    result[question.id] = { answers: [candidate[0]] };
+  }
+  if (Object.keys(value).length !== questions.length) {
+    throw new Error("Web Console 回答包含未知问题");
+  }
+  return result;
 }
 
 function parseList(value: string): string[] {
@@ -249,12 +557,76 @@ function boundedInteger(
 }
 
 function parseApprovalMode(value: string | undefined): ApprovalMode {
-  if (value === "accept" || value === "accept-session") return value;
-  return "decline";
+  const mode = value?.trim();
+  if (!mode || mode === "accept") return "accept";
+  if (mode === "decline" || mode === "accept-session") return mode;
+  throw new Error(
+    "CODEX_BRIDGE_APPROVAL_MODE must be accept, decline, or accept-session",
+  );
 }
 
 function parsePermissionMode(value: string | undefined): PermissionMode {
-  return value === "inherit" ? "inherit" : "safe";
+  const mode = value?.trim();
+  if (!mode || mode === "danger-full-access") {
+    return "danger-full-access";
+  }
+  if (mode === "safe" || mode === "inherit") return mode;
+  throw new Error(
+    "CODEX_BRIDGE_PERMISSION_MODE must be danger-full-access, safe, or inherit",
+  );
+}
+
+function parseWebPermissionMode(value: unknown): PermissionMode {
+  if (value === "safe" || value === "inherit" || value === "danger-full-access") {
+    return value;
+  }
+  throw new Error(
+    "看板配置 permission_mode 必须是 danger-full-access、safe 或 inherit",
+  );
+}
+
+function parseWebApprovalMode(value: unknown): ApprovalMode {
+  if (value === "decline" || value === "accept" || value === "accept-session") {
+    return value;
+  }
+  throw new Error(
+    "看板配置 approval_mode 必须是 decline、accept 或 accept-session",
+  );
+}
+
+function threadPermissionOverrides(
+  mode: PermissionMode,
+  cwd: string,
+): Record<string, unknown> {
+  if (mode === "inherit") return {};
+  return {
+    cwd,
+    approvalPolicy: "on-request",
+    approvalsReviewer: "user",
+    sandbox: mode === "safe" ? "workspace-write" : "danger-full-access",
+  };
+}
+
+function turnPermissionOverrides(
+  mode: PermissionMode,
+  cwd: string,
+): Record<string, unknown> {
+  if (mode === "inherit") return {};
+  return {
+    cwd,
+    approvalPolicy: "on-request",
+    approvalsReviewer: "user",
+    sandboxPolicy:
+      mode === "safe"
+        ? {
+            type: "workspaceWrite",
+            writableRoots: [cwd],
+            networkAccess: false,
+            excludeTmpdirEnvVar: true,
+            excludeSlashTmp: true,
+          }
+        : { type: "dangerFullAccess" },
+  };
 }
 
 function parseThreadScope(value: string | undefined): ThreadScope {
@@ -263,6 +635,12 @@ function parseThreadScope(value: string | undefined): ThreadScope {
 
 function parseBoolean(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === "true";
+}
+
+function copyWorkingDirectories(
+  directories: readonly ManagedWorkingDirectory[],
+): ManagedWorkingDirectory[] {
+  return directories.map((directory) => ({ ...directory }));
 }
 
 export function appendBoundedPrefix(
@@ -353,17 +731,17 @@ export function loadConfiguration(
     1,
     500,
   );
-  const localMaxConcurrentTurns = boundedInteger(
+  const startupMaxConcurrentTurns = boundedInteger(
     environment.CODEX_MAX_CONCURRENT_TURNS,
-    2,
+    5,
     1,
-    32,
+    MAX_CONCURRENT_TURNS,
   );
   const localMaxHistoryTurns = boundedInteger(
     environment.CODEX_BRIDGE_MAX_HISTORY_TURNS,
     50,
     1,
-    200,
+    MAX_HISTORY_TURNS,
   );
   const localIncludeThreadTitles = parseBoolean(
     environment.CODEX_BRIDGE_INCLUDE_THREAD_TITLES,
@@ -374,14 +752,27 @@ export function loadConfiguration(
     1_000,
     10 * 60_000,
   );
+  const legacyWorkingDirectory = path.resolve(
+    environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
+  );
+  const localWorkingDirectories = parseWorkingDirectories(
+    environment.CODEX_WORKING_DIRECTORIES,
+    legacyWorkingDirectory,
+  );
+  const localWorkingDirectory =
+    localWorkingDirectories[0]?.workingDirectory ?? legacyWorkingDirectory;
 
   return {
     boardUrl,
     connectionToken,
     threadIdFilter: environment.CODEX_THREAD_ID?.trim() || null,
-    workingDirectory: path.resolve(
-      environment.CODEX_WORKING_DIRECTORY?.trim() || process.cwd(),
-    ),
+    // The local list is an immutable device startup boundary. The effective
+    // list begins as a copy and may later be replaced by an explicitly gated
+    // Web configuration without losing the local fallback.
+    localWorkingDirectory,
+    localWorkingDirectories: copyWorkingDirectories(localWorkingDirectories),
+    workingDirectory: localWorkingDirectory,
+    workingDirectories: copyWorkingDirectories(localWorkingDirectories),
     sessionNamePrefix: environment.CODEX_SESSION_NAME?.trim() || null,
     model: environment.CODEX_MODEL?.trim() || null,
     capabilities: parseList(
@@ -401,7 +792,7 @@ export function loadConfiguration(
       3_600,
     ),
     maxThreads: localMaxThreads,
-    maxConcurrentTurns: localMaxConcurrentTurns,
+    maxConcurrentTurns: startupMaxConcurrentTurns,
     syncIntervalMs: boundedInteger(
       environment.AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS,
       60_000,
@@ -409,9 +800,11 @@ export function loadConfiguration(
       10 * 60_000,
     ),
     configurationPollIntervalMs,
-    configurationLeaseSeconds: Math.max(
+    configurationLeaseSeconds: boundedInteger(
+      environment.CODEX_BRIDGE_RUNTIME_LEASE_SECONDS,
+      120,
       15,
-      Math.ceil(Math.min(configurationPollIntervalMs, 10_000) / 1_000) * 3,
+      1_800,
     ),
     approvalMode: parseApprovalMode(environment.CODEX_BRIDGE_APPROVAL_MODE),
     permissionMode: parsePermissionMode(
@@ -423,18 +816,14 @@ export function loadConfiguration(
     syncHistory: false,
     historyTurnLimit: localMaxHistoryTurns,
     localIncludeThreadTitles,
-    allowRemoteThreadTitles:
-      localIncludeThreadTitles ||
-      parseBoolean(environment.CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES),
-    allowHistorySync: parseBoolean(
-      environment.CODEX_BRIDGE_ALLOW_HISTORY_SYNC,
-    ),
+    // Web 是唯一配置入口：这些授权字段已不再从设备环境读取，
+    // 仅保留在约束报告中兼容旧看板校验。
+    allowRemoteThreadTitles: true,
+    allowHistorySync: true,
+    allowRemoteWorkingDirectories: true,
     localMaxThreads,
-    localMaxConcurrentTurns,
     localMaxHistoryTurns,
-    webConfigurationEnabled: parseBoolean(
-      environment.CODEX_BRIDGE_WEB_CONFIG,
-    ),
+    webConfigurationEnabled: true,
     codexBinary: environment.CODEX_BINARY?.trim() || "codex",
   };
 }
@@ -449,6 +838,12 @@ export function effectiveBridgeConfiguration(
     maxConcurrentTurns: configuration.maxConcurrentTurns,
     syncHistory: configuration.syncHistory,
     historyTurnLimit: configuration.historyTurnLimit,
+    permissionMode: configuration.permissionMode,
+    approvalMode: configuration.approvalMode,
+    workingDirectory: configuration.workingDirectory,
+    workingDirectories: copyWorkingDirectories(
+      configuration.workingDirectories,
+    ),
   };
 }
 
@@ -459,11 +854,17 @@ export function bridgeConfigurationConstraints(
     remote_configuration_enabled: configuration.webConfigurationEnabled,
     allow_thread_titles: configuration.allowRemoteThreadTitles,
     allow_history_sync: configuration.allowHistorySync,
-    max_threads: configuration.localMaxThreads,
-    max_concurrent_turns: configuration.localMaxConcurrentTurns,
-    max_history_turns: configuration.localMaxHistoryTurns,
+    allow_working_directory_configuration:
+      configuration.allowRemoteWorkingDirectories,
+    // Thread count and turn concurrency are owned by the Web setting across
+    // the full supported product range. These fixed values mirror the
+    // Board-side schema caps for older Boards/Bridges and are not device
+    // ceilings.
+    max_threads: MAX_THREADS,
+    max_concurrent_turns: MAX_CONCURRENT_TURNS,
+    max_history_turns: MAX_HISTORY_TURNS,
     thread_scope: configuration.threadScope,
-    working_directory: configuration.workingDirectory,
+    working_directory: configuration.localWorkingDirectory,
     fixed_thread: configuration.threadIdFilter !== null,
     permission_mode: configuration.permissionMode,
     approval_mode: configuration.approvalMode,
@@ -499,13 +900,7 @@ export function resolveRemoteConfiguration(
     throw new Error("看板配置 include_thread_titles 必须是布尔值");
   }
   const warnings: string[] = [];
-  const includeThreadTitles =
-    desired.include_thread_titles && configuration.allowRemoteThreadTitles;
-  if (desired.include_thread_titles && !includeThreadTitles) {
-    warnings.push(
-      "看板请求上传 thread 标题，但设备未启用 CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES",
-    );
-  }
+  const includeThreadTitles = desired.include_thread_titles;
   if (
     desired.sync_history !== undefined &&
     typeof desired.sync_history !== "boolean"
@@ -518,36 +913,56 @@ export function resolveRemoteConfiguration(
   ) {
     throw new Error("看板配置 history_turn_limit 必须是整数");
   }
-  const syncHistory =
-    desired.sync_history === true && configuration.allowHistorySync;
-  if (desired.sync_history === true && !syncHistory) {
-    warnings.push(
-      "看板请求同步历史，但设备未启用 CODEX_BRIDGE_ALLOW_HISTORY_SYNC",
+  const syncHistory = desired.sync_history === true;
+  const permissionMode =
+    desired.permission_mode === null || desired.permission_mode === undefined
+      ? configuration.permissionMode
+      : parseWebPermissionMode(desired.permission_mode);
+  const approvalMode =
+    desired.approval_mode === null || desired.approval_mode === undefined
+      ? configuration.approvalMode
+      : parseWebApprovalMode(desired.approval_mode);
+  let workingDirectories = copyWorkingDirectories(
+    configuration.localWorkingDirectories,
+  );
+  if (
+    desired.working_directories !== null &&
+    desired.working_directories !== undefined
+  ) {
+    workingDirectories = parseRemoteWorkingDirectories(
+      desired.working_directories,
     );
   }
+  const workingDirectory =
+    workingDirectories[0]?.workingDirectory ??
+    configuration.localWorkingDirectory;
   return {
     effective: {
       enabled: desired.enabled,
       includeThreadTitles,
       maxThreads: clampedRemoteInteger(
         desired.max_threads,
-        configuration.localMaxThreads,
+        MAX_THREADS,
         "max_threads",
         warnings,
       ),
       maxConcurrentTurns: clampedRemoteInteger(
         desired.max_concurrent_turns,
-        configuration.localMaxConcurrentTurns,
+        MAX_CONCURRENT_TURNS,
         "max_concurrent_turns",
         warnings,
       ),
       syncHistory,
       historyTurnLimit: clampedRemoteInteger(
-        desired.history_turn_limit ?? Math.min(50, configuration.localMaxHistoryTurns),
-        configuration.localMaxHistoryTurns,
+        desired.history_turn_limit ?? 50,
+        MAX_HISTORY_TURNS,
         "history_turn_limit",
         warnings,
       ),
+      permissionMode,
+      approvalMode,
+      workingDirectory,
+      workingDirectories,
     },
     warnings,
   };
@@ -593,6 +1008,13 @@ function isPersistentClientError(error: unknown): boolean {
     status < 500 &&
     status !== 408 &&
     status !== 429;
+}
+
+function isSessionNotAuthorizedError(error: unknown): boolean {
+  return (
+    errorStatus(error) === 403 &&
+    (error as { code?: string } | null)?.code === "SESSION_NOT_AUTHORIZED"
+  );
 }
 
 class WorkerRetirementDeferredError extends Error {}
@@ -663,6 +1085,13 @@ function remoteDesiredFromEffective(
     max_concurrent_turns: effective.maxConcurrentTurns,
     sync_history: effective.syncHistory,
     history_turn_limit: effective.historyTurnLimit,
+    permission_mode: effective.permissionMode,
+    approval_mode: effective.approvalMode,
+    // Effective reports always carry the concrete non-empty list, even when
+    // the Board desired value was null and the local startup list won.
+    working_directories: remoteWorkingDirectories(
+      effective.workingDirectories,
+    ),
   };
 }
 
@@ -700,7 +1129,20 @@ function parseRemoteConfigurationResponse(
           desired.history_turn_limit === undefined
             ? 50
             : (desired.history_turn_limit as number),
+        working_directories:
+          desired.working_directories === undefined
+            ? null
+            : (desired.working_directories as RemoteWorkingDirectory[] | null),
+        permission_mode:
+          desired.permission_mode === undefined
+            ? null
+            : (desired.permission_mode as PermissionMode | null),
+        approval_mode:
+          desired.approval_mode === undefined
+            ? null
+            : (desired.approval_mode as ApprovalMode | null),
       },
+      desired_bridge_version: stringValue(configuration.desired_bridge_version),
       applied: configuration.applied,
       updated_at: stringValue(configuration.updated_at) ?? "",
     },
@@ -719,13 +1161,6 @@ function notificationTurnId(params: Record<string, unknown>): string | null {
 
 function threadCwd(thread: ThreadRecord): string | null {
   return stringValue(thread.cwd);
-}
-
-export function isExactWorkingDirectory(
-  candidate: string,
-  configured: string,
-): boolean {
-  return path.relative(path.resolve(configured), path.resolve(candidate)) === "";
 }
 
 function shortThreadTitle(thread: ThreadRecord): string {
@@ -763,22 +1198,33 @@ function inventoryThread(
   thread: ThreadRecord,
   configuration: BridgeConfiguration,
 ): InventoryThread {
+  const workingDirectory = threadCwd(thread);
+  const directory = managedDirectoryForWorkingDirectory(
+    workingDirectory,
+    configuration.workingDirectories,
+  );
   return {
     external_conversation_ref: thread.id,
     name: sessionName(thread, configuration),
     platform: "codex",
     model: stringValue(thread.model) ?? configuration.model,
-    working_directory: threadCwd(thread),
+    working_directory: workingDirectory,
+    directory_key: directory?.key ?? null,
     capabilities: configuration.capabilities,
     archived: false,
   };
 }
 
 class BoardClient {
+  private readonly deviceIdentity: DeviceIdentity;
+
   constructor(
     private readonly configuration: BridgeConfiguration,
     private readonly isStopping: () => boolean,
-  ) {}
+    deviceIdentity?: DeviceIdentity,
+  ) {
+    this.deviceIdentity = deviceIdentity ?? loadDeviceIdentity();
+  }
 
   async request<T>(
     pathname: string,
@@ -862,12 +1308,46 @@ class BoardClient {
     throw lastError;
   }
 
+  async downloadTaskImage(
+    artifact: TaskImageArtifact,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const location = await this.request<{ url: string }>(
+      `/api/ai/artifacts/${artifact.id}/download`,
+      { sessionId, signal, maxAttempts: 3 },
+    );
+    const response = await fetch(location.url, { signal });
+    if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength !== artifact.size || bytes.byteLength > 10 * 1024 * 1024) {
+      throw new Error(`图片大小校验失败：${artifact.name}`);
+    }
+    return `data:${artifact.mime_type};base64,${bytes.toString("base64")}`;
+  }
+
   async syncSessions(
     threads: ThreadRecord[],
+    modelCatalog: readonly InventoryModel[] | undefined,
+    quota: SyncedQuota | undefined,
     signal?: AbortSignal,
   ): Promise<Map<string, Session>> {
     const body = {
       bridge_version: BRIDGE_VERSION,
+      platform: BRIDGE_PLATFORM,
+      device_id: this.deviceIdentity.deviceId,
+      device_label: this.deviceIdentity.deviceLabel,
+      ...(quota === undefined ? {} : { quota }),
+      ...(modelCatalog === undefined
+        ? {}
+        : { model_catalog: modelCatalog }),
+      directories: this.configuration.workingDirectories.map(
+        (directory): InventoryDirectory => ({
+          directory_key: directory.key,
+          name: directory.name,
+          working_directory: directory.workingDirectory,
+        }),
+      ),
       threads: threads.map((thread) =>
         inventoryThread(thread, this.configuration),
       ),
@@ -904,6 +1384,117 @@ class BoardClient {
       body: status,
     });
     return parseRemoteConfigurationResponse(result);
+  }
+
+  async claimThreadCommand(
+    runtimeInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<ThreadCommand | null> {
+    const result = await this.request<ThreadCommandResponse>(
+      "/api/ai/thread-commands/claim",
+      {
+        method: "POST",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          platform: BRIDGE_PLATFORM,
+          lease_seconds: 60,
+        },
+      },
+    );
+    return result.command;
+  }
+
+  async listCreatedThreadIds(signal?: AbortSignal): Promise<string[]> {
+    const result = await this.request<CreatedThreadIdsResponse>(
+      `/api/ai/thread-commands/created?platform=${encodeURIComponent(
+        BRIDGE_PLATFORM,
+      )}`,
+      {
+        method: "GET",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+      },
+    );
+    return Array.isArray(result.thread_ids)
+      ? result.thread_ids.filter(
+          (threadId): threadId is string =>
+            typeof threadId === "string" && threadId.length > 0,
+        )
+      : [];
+  }
+
+  async completeThreadCommand(
+    runtimeInstanceId: string,
+    commandId: string,
+    result:
+      | { succeeded: true; externalThreadId: string | null }
+      | { succeeded: false; error: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request<ThreadCommandResponse>(
+      `/api/ai/thread-commands/${commandId}/complete`,
+      {
+        method: "POST",
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          succeeded: result.succeeded,
+          external_thread_id:
+            result.succeeded ? result.externalThreadId : null,
+          error: result.succeeded ? null : result.error,
+        },
+      },
+    );
+  }
+
+  async claimFileCommand(
+    runtimeInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<FileCommand | null> {
+    const result = await this.request<FileCommandResponse>(
+      "/api/ai/file-commands/claim",
+      {
+        method: "POST",
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          lease_seconds: 60,
+        },
+      },
+    );
+    return result.command;
+  }
+
+  async completeFileCommand(
+    runtimeInstanceId: string,
+    commandId: string,
+    result:
+      | {
+          succeeded: true;
+          result: DeviceFileListResult | DeviceFilePreviewResult;
+        }
+      | { succeeded: false; error: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request<FileCommandResponse>(
+      `/api/ai/file-commands/${commandId}/complete`,
+      {
+        method: "POST",
+        signal,
+        body: {
+          runtime_instance_id: runtimeInstanceId,
+          succeeded: result.succeeded,
+          result: result.succeeded ? result.result : null,
+          error: result.succeeded ? null : result.error,
+        },
+      },
+    );
   }
 
   async importHistory(
@@ -1042,12 +1633,18 @@ export function completedItemActivity(
       const summary = Array.isArray(item.summary)
         ? item.summary.filter((part): part is string => typeof part === "string").join("\n\n")
         : "";
+      const visibleSummary =
+        summary.trim() ||
+        (bufferedText && bufferedText.trim().length > 0 ? bufferedText : null);
+      // A reasoning item is only useful to the Board when Codex exposed a
+      // readable summary. Never manufacture a placeholder (or fall back to
+      // raw `item.content`) because that both clutters history and could blur
+      // the disclosure boundary.
+      if (!visibleSummary) return null;
       return {
         kind: "reasoning",
         content: redactHarnessText(
-          summary.trim() ||
-            (bufferedText && bufferedText.length > 0 ? bufferedText : null) ||
-            "（无可展示的思考摘要）",
+          visibleSummary,
           100_000,
         ),
         data: protocolData("completed", turnId, id, {
@@ -1246,6 +1843,11 @@ class SessionWorker {
   private readonly backgroundBoardOperations = new Set<Promise<void>>();
   private readonly retirementWaiters = new Set<() => void>();
   private awaitingTurnStart = false;
+  private pauseRequested = false;
+  private turnAbortController: AbortController | null = null;
+  private turnAbortCleanup: (() => void) | null = null;
+  private steerPumpAbort: AbortController | null = null;
+  private steerPumpDone: Promise<void> | null = null;
   private mutatingRequestCount = 0;
   private heartbeatInFlightPromise: Promise<void> | null = null;
   private usageSequence = 0;
@@ -1254,13 +1856,24 @@ class SessionWorker {
 
   constructor(
     readonly thread: ThreadRecord,
-    readonly session: Session,
+    private session: Session,
     private readonly configuration: BridgeConfiguration,
     private readonly board: BoardClient,
     private readonly appServer: CodexAppServerClient,
     private readonly limiter: TurnLimiter,
     private readonly onFatal: (error: Error) => void,
   ) {}
+
+  updateSession(session: Session): void {
+    if (session.id !== this.session.id) {
+      throw new Error(`Thread ${this.thread.id} received a different Session id`);
+    }
+    this.session = session;
+  }
+
+  get boardSessionId(): string {
+    return this.session.id;
+  }
 
   start(): Promise<void> {
     if (!this.runPromise) this.runPromise = this.run();
@@ -1376,8 +1989,9 @@ class SessionWorker {
     const requestTurnId = notificationTurnId(params);
     const correlatedActiveTurn = Boolean(
       this.activeClaim &&
-        this.activeTurnId &&
-        requestTurnId === this.activeTurnId,
+        requestTurnId &&
+        (requestTurnId === this.activeTurnId ||
+          (this.awaitingTurnStart && this.activeTurnId === null)),
     );
     if (this.activeClaim) {
       this.trackBackgroundBoardOperation(
@@ -1386,12 +2000,17 @@ class SessionWorker {
           {
           kind: "status",
           content:
-            this.configuration.approvalMode === "decline"
-              ? "Codex 请求本地审批；Bridge 已按安全默认值拒绝"
+            request.method === "item/tool/requestUserInput"
+              ? "Codex 正在等待 Web Console 的结构化回答"
+              : this.configuration.approvalMode === "decline"
+              ? "Codex 请求本地审批；Bridge 已按设备策略拒绝"
               : "Codex 请求本地审批；Bridge 已按设备策略处理",
           data: {
             protocol: APP_SERVER_PROTOCOL,
-            phase: "completed",
+            phase:
+              request.method === "item/tool/requestUserInput"
+                ? "waiting_user_input"
+                : "completed",
             request_method: request.method,
             request_id: String(request.id),
             approval_mode: this.configuration.approvalMode,
@@ -1429,7 +2048,11 @@ class SessionWorker {
             : { denied: { rejection: "Web Bridge approval is not enabled" } },
         };
       case "item/tool/requestUserInput":
-        return { answers: {} };
+        return this.handleStructuredUserInput(
+          request,
+          params,
+          correlatedActiveTurn,
+        );
       case "mcpServer/elicitation/request":
         return { action: "decline", content: null, _meta: null };
       case "item/permissions/requestApproval": {
@@ -1447,6 +2070,99 @@ class SessionWorker {
       default:
         throw new Error(`Unsupported App Server request: ${request.method}`);
     }
+  }
+
+  private async handleStructuredUserInput(
+    request: AppServerIncomingRequest,
+    params: Record<string, unknown>,
+    correlatedActiveTurn: boolean,
+  ): Promise<{ answers: Record<string, { answers: string[] }> }> {
+    if (!correlatedActiveTurn || !this.activeClaim) {
+      throw new Error(
+        "Codex 结构化问题未关联到当前活动 turn，Bridge 无法安全转交",
+      );
+    }
+    const prompt = parseStructuredUserInputRequest(params);
+    const task = this.activeClaim;
+    const requestId = randomUUID();
+    const externalRequestId = String(request.id);
+    // 每 turn 一个中断信号：stop() 仍通过 stopController 联动中止轮询；Web
+    // 暂停时 requestPause 只中止本 turn。中止使本 handler 抛出，App Server
+    // 客户端随即把错误响应写回，挂起的 server request 不会无人应答。
+    const signal = this.turnAbortController?.signal ?? this.stopController.signal;
+
+    await this.board.request("/api/ai/tasks/user-input-requests", {
+      method: "POST",
+      sessionId: this.session.id,
+      idempotencyKey: idempotencyKey(`user-input-register/${externalRequestId}`),
+      signal,
+      body: {
+        task_id: task.id,
+        claim_token: task.claim_token,
+        request_id: requestId,
+        external_request_id: externalRequestId,
+        turn_id: prompt.turnId,
+        item_id: prompt.itemId,
+        is_blocking: true,
+        questions: prompt.questions,
+      },
+    });
+
+    process.stdout.write(
+      `等待 Web 回答 [${shortThreadTitle(this.thread)}]：${prompt.questions
+        .map((question) => question.header)
+        .join(" / ")}\n`,
+    );
+    while (!signal.aborted) {
+      const response = await this.board.request<UserInputPollResponse>(
+        `/api/ai/tasks/user-input-requests/${requestId}/poll`,
+        {
+          method: "POST",
+          sessionId: this.session.id,
+          signal,
+          body: {
+            task_id: task.id,
+            claim_token: task.claim_token,
+            request_id: requestId,
+          },
+        },
+      );
+      if (response.request.status === "answered") {
+        const answers = parseStructuredUserInputAnswers(
+          response.request.answers,
+          prompt.questions,
+        );
+        this.trackBackgroundBoardOperation(
+          this.reportActivity(
+            `request:${externalRequestId}:answered`,
+            {
+              kind: "status",
+              content: "Web Console 已提交结构化回答；原 turn 继续执行",
+              data: {
+                protocol: APP_SERVER_PROTOCOL,
+                phase: "answered",
+                request_method: request.method,
+                request_id: externalRequestId,
+                question_count: prompt.questions.length,
+                turn_continues: true,
+              },
+            },
+            { maxAttempts: 1 },
+          ),
+          `结构化回答审计 ${externalRequestId}`,
+        );
+        return { answers };
+      }
+      if (response.request.status !== "pending") {
+        throw new Error(
+          `Web Console 结构化回答已${
+            response.request.status === "cancelled" ? "取消" : "失效"
+          }`,
+        );
+      }
+      await delay(USER_INPUT_POLL_INTERVAL_MS, signal);
+    }
+    throw signal.reason ?? new Error("Codex Bridge 已停止");
   }
 
   async stop(reason = "Codex Bridge 已停止"): Promise<void> {
@@ -1470,6 +2186,7 @@ class SessionWorker {
       waiter.reject(new Error(reason));
     }
     this.turnWaiters.clear();
+    this.steerPumpAbort?.abort();
     for (const buffer of this.buffers.values()) {
       if (buffer.timer) clearTimeout(buffer.timer);
     }
@@ -1482,6 +2199,52 @@ class SessionWorker {
         .catch(() => undefined);
     }
     await (this.runPromise ?? Promise.resolve());
+  }
+
+  /**
+   * Web 暂停：任务已在 Board 侧置为 paused 且 claim 已清除，这里只做本地
+   * 尽力中断；complete/fail/release 都不可再调用（会因 claim 失效返回 409）。
+   * turn 已结束或 worker 空闲时为幂等 no-op（兼容命令重放）。
+   * taskId 非空且与当前 active claim 不符时，命令已过期（worker 空闲或已在
+   * 执行该 session 的下一个任务），直接 no-op，绝不能误中断新 turn；
+   * taskId 为空（旧 Board）时保持无条件尽力中断的 legacy 行为。
+   */
+  async requestPause(
+    taskId: string | null,
+    reason = "用户从 Web Console 暂停了任务",
+  ): Promise<void> {
+    if (this.stopping) return;
+    if (taskId !== null && this.activeClaim?.id !== taskId) return;
+    if (!this.activeClaim && !this.activeTurnId && !this.awaitingTurnStart) {
+      return;
+    }
+    this.pauseRequested = true;
+    const controller = this.turnAbortController;
+    if (controller && !controller.signal.aborted) {
+      controller.abort(new Error(reason));
+    }
+    if (this.activeTurnId) {
+      await this.appServer
+        .turnInterrupt(
+          { threadId: this.thread.id, turnId: this.activeTurnId },
+          { timeoutMs: 5_000 },
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  private createTurnAbortController(): AbortController {
+    const controller = new AbortController();
+    const parent = this.stopController.signal;
+    const onParentAbort = () => controller.abort(parent.reason);
+    if (parent.aborted) {
+      controller.abort(parent.reason);
+    } else {
+      parent.addEventListener("abort", onParentAbort, { once: true });
+    }
+    this.turnAbortCleanup = () =>
+      parent.removeEventListener("abort", onParentAbort);
+    return controller;
   }
 
   private async run(): Promise<void> {
@@ -1622,6 +2385,12 @@ class SessionWorker {
       } catch (error) {
         if (this.stopping) {
           await this.releaseActiveTask("Codex Bridge 正在停止");
+        } else if (this.pauseRequested) {
+          // Web 暂停：Board 已把任务置为 paused 并清除 claim，这里只做本地
+          // 清理；complete/fail/release 都会因 claim 失效而 409，一律不上报。
+          process.stdout.write(
+            `任务已暂停 [${shortThreadTitle(this.thread)}]：${response.task.title}\n`,
+          );
         } else {
           const reason = redactHarnessText(errorMessage(error), 10_000);
           await this.board
@@ -1649,6 +2418,11 @@ class SessionWorker {
         this.preStartNotifications.length = 0;
         this.awaitingTurnStart = false;
         this.buffers.clear();
+        this.pauseRequested = false;
+        this.turnAbortCleanup?.();
+        this.turnAbortCleanup = null;
+        this.turnAbortController = null;
+        this.steerPumpAbort?.abort();
       }
     } finally {
       releasePermit?.();
@@ -1674,19 +2448,17 @@ class SessionWorker {
     const workspaceRoot = path.resolve(
       threadCwd(this.thread) ?? this.configuration.workingDirectory,
     );
+    const model = stringValue(task.model);
+    const reasoningEffort = stringValue(task.reasoning_effort);
     await this.trackMutatingRequest(
       this.appServer.threadResume(
         {
-        threadId: this.thread.id,
-        excludeTurns: true,
-        ...(this.configuration.permissionMode === "safe"
-          ? {
-              cwd: workspaceRoot,
-              approvalPolicy: "on-request",
-              approvalsReviewer: "user",
-              sandbox: "workspace-write",
-            }
-          : {}),
+          threadId: this.thread.id,
+          excludeTurns: true,
+          ...threadPermissionOverrides(
+            this.configuration.permissionMode,
+            workspaceRoot,
+          ),
         },
         { timeoutMs: 0 },
       ),
@@ -1698,6 +2470,53 @@ class SessionWorker {
         ? `\n\n验收条件：\n${task.acceptance_criteria}`
         : "",
     ].join("");
+    const taskDetails = await this.board
+      .request<TaskDetailsResponse>(`/api/ai/tasks/${task.id}`, {
+        sessionId: this.session.id,
+        signal: this.stopController.signal,
+        maxAttempts: 3,
+      })
+      .catch((error: unknown) => {
+        if ((error as { status?: number }).status === 404) return { artifacts: [] };
+        throw error;
+      });
+    const imageArtifacts = (taskDetails.artifacts ?? []).filter((artifact) =>
+      ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(
+        artifact.mime_type,
+      ),
+    );
+    const imageInputs = await Promise.all(
+      imageArtifacts.map(async (artifact) => ({
+        type: "image",
+        url: await this.board.downloadTaskImage(
+          artifact,
+          this.session.id,
+          this.stopController.signal,
+        ),
+      })),
+    );
+    const goalMode = task.goal_mode === true;
+    if (goalMode && text.length > 4_000) {
+      throw new Error("Goal 目标不能超过 4000 个字符");
+    }
+    if (goalMode) {
+      await this.trackMutatingRequest(
+        this.appServer.threadGoalSet(
+          { threadId: this.thread.id, objective: text },
+          { timeoutMs: 0 },
+        ),
+      );
+    } else if (task.goal_mode === false) {
+      await this.trackMutatingRequest(
+        this.appServer.threadGoalClear(
+          { threadId: this.thread.id },
+          { timeoutMs: 0 },
+        ),
+      );
+    }
+    if (this.stopping) throw new Error("Codex Bridge 正在停止");
+    this.turnAbortCleanup?.();
+    this.turnAbortController = this.createTurnAbortController();
     this.awaitingTurnStart = true;
     this.preStartNotifications.length = 0;
     let started: Awaited<ReturnType<CodexAppServerClient["turnStart"]>>;
@@ -1705,23 +2524,18 @@ class SessionWorker {
       started = await this.trackMutatingRequest(
         this.appServer.turnStart(
           {
-          threadId: this.thread.id,
-          clientUserMessageId: task.id,
-          input: [{ type: "text", text, text_elements: [] }],
-          ...(this.configuration.permissionMode === "safe"
-            ? {
-                cwd: workspaceRoot,
-                approvalPolicy: "on-request",
-                approvalsReviewer: "user",
-                sandboxPolicy: {
-                  type: "workspaceWrite",
-                  writableRoots: [workspaceRoot],
-                  networkAccess: false,
-                  excludeTmpdirEnvVar: true,
-                  excludeSlashTmp: true,
-                },
-              }
-            : {}),
+            threadId: this.thread.id,
+            clientUserMessageId: task.id,
+            input: [{ type: "text", text, text_elements: [] }, ...imageInputs],
+            ...(model ? { model } : {}),
+            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+            // The Board persists AI replies only, so do not ask Codex to produce
+            // a reasoning summary that would be discarded.
+            summary: "none",
+            ...turnPermissionOverrides(
+              this.configuration.permissionMode,
+              workspaceRoot,
+            ),
           },
           { timeoutMs: 0 },
         ),
@@ -1751,7 +2565,24 @@ class SessionWorker {
         .catch(() => undefined);
       throw this.stopController.signal.reason ?? new Error("Codex Bridge 正在停止");
     }
-    const turn = await this.waitForTurn(turnId, this.stopController.signal);
+    if (this.pauseRequested) {
+      // 暂停命令在 turn/start 在途期间到达：立即中断刚启动的 turn，随后
+      // runOneIteration 的 catch 按 pauseRequested 走本地清理（不上报 fail）。
+      await this.appServer
+        .turnInterrupt(
+          { threadId: this.thread.id, turnId },
+          { timeoutMs: 5_000 },
+        )
+        .catch(() => undefined);
+      throw new Error("任务已被用户暂停");
+    }
+    this.startSteerPump();
+    let turn: TurnResult;
+    try {
+      turn = await this.waitForTurn(turnId, this.stopController.signal);
+    } finally {
+      await this.stopSteerPump();
+    }
     await this.eventChain;
     await this.flushAllBuffers();
     await this.activityChain;
@@ -1782,6 +2613,166 @@ class SessionWorker {
         artifacts: [],
       },
     });
+  }
+
+  /**
+   * 主 turn 运行期间的 steer 领取泵：持续领取 steer = true 的辅助任务并用
+   * App Server `turn/steer` 追加进当前 turn。turn 结束、进程停止或旧 Board
+   * 不支持该端点时自动退出；未能送达的消息退回普通队列，按顺序执行。
+   */
+  private startSteerPump(): void {
+    if (this.steerPumpDone) return;
+    const controller = new AbortController();
+    const onParentAbort = () =>
+      controller.abort(this.stopController.signal.reason);
+    if (this.stopController.signal.aborted) {
+      controller.abort(this.stopController.signal.reason);
+    } else {
+      this.stopController.signal.addEventListener("abort", onParentAbort, {
+        once: true,
+      });
+    }
+    this.steerPumpAbort = controller;
+    const done = this.runSteerPump(controller.signal).finally(() => {
+      this.stopController.signal.removeEventListener("abort", onParentAbort);
+      if (this.steerPumpAbort === controller) this.steerPumpAbort = null;
+      if (this.steerPumpDone === done) this.steerPumpDone = null;
+    });
+    this.steerPumpDone = done;
+  }
+
+  private async stopSteerPump(): Promise<void> {
+    this.steerPumpAbort?.abort();
+    const done = this.steerPumpDone;
+    if (done) await done.catch(() => undefined);
+    if (this.steerPumpAbort) this.steerPumpAbort = null;
+    if (this.steerPumpDone === done) this.steerPumpDone = null;
+  }
+
+  private async runSteerPump(signal: AbortSignal): Promise<void> {
+    while (!this.stopping && !signal.aborted) {
+      if (!this.activeTurnId || !this.activeClaim) {
+        await this.wakeLatch.wait(
+          Math.max(1_000, this.configuration.pollIntervalMs),
+          signal,
+        );
+        continue;
+      }
+      try {
+        const response = await this.board.request<ClaimResponse>(
+          "/api/ai/tasks/claim-steer",
+          {
+            method: "POST",
+            sessionId: this.session.id,
+            idempotencyKey: idempotencyKey("claim-steer"),
+            signal,
+            body: { lease_seconds: this.configuration.leaseSeconds },
+          },
+        );
+        const steerTask = response.task;
+        if (!steerTask) {
+          await this.wakeLatch.wait(
+            this.configuration.pollIntervalMs,
+            signal,
+          );
+          continue;
+        }
+        await this.deliverSteerTask(steerTask, signal);
+      } catch (error) {
+        if (signal.aborted || this.stopping) return;
+        const status = errorStatus(error);
+        if (status === 404 || status === 405) return;
+        await this.wakeLatch.wait(
+          this.configuration.pollIntervalMs,
+          signal,
+        );
+      }
+    }
+  }
+
+  private async deliverSteerTask(
+    task: ClaimedTask,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const turnId = this.activeTurnId;
+    if (this.stopping || signal.aborted || !turnId) {
+      // turn 已结束或 Bridge 停止：退回普通队列，之后按顺序任务执行。
+      await this.releaseSteerTask(
+        task,
+        !turnId ? "Turn 已结束，回退为普通排队任务" : "Codex Bridge 已停止",
+      );
+      return;
+    }
+    const text = [
+      task.description?.trim() || task.title,
+      task.acceptance_criteria
+        ? `\n\n验收条件：\n${task.acceptance_criteria}`
+        : "",
+    ].join("");
+    try {
+      await this.trackMutatingRequest(
+        this.appServer.turnSteer(
+          {
+            threadId: this.thread.id,
+            expectedTurnId: turnId,
+            input: [{ type: "text", text, text_elements: [] }],
+          },
+          { timeoutMs: 0 },
+        ),
+      );
+    } catch (error) {
+      // turn 可能恰好完成，或 App Server 拒绝了本次 steer：退回普通队列。
+      await this.releaseSteerTask(
+        task,
+        `Steer 未送达：${errorMessage(error)}`,
+      );
+      process.stderr.write(
+        `Steer 未送达 [${this.thread.id}]：${errorMessage(error)}\n`,
+      );
+      return;
+    }
+    await this.board
+      .request("/api/ai/tasks/complete", {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey(`steer-complete/${task.id}`),
+        maxAttempts: 3,
+        signal: this.stopController.signal,
+        body: {
+          task_id: task.id,
+          claim_token: task.claim_token,
+          result_summary: "已实时调整正在运行的 Turn",
+          result_json: null,
+          message: null,
+          artifacts: [],
+        },
+      })
+      .catch((error) => {
+        process.stderr.write(
+          `Steer 任务完成回执失败 [${this.thread.id}]：${errorMessage(error)}\n`,
+        );
+      });
+  }
+
+  private async releaseSteerTask(
+    task: ClaimedTask,
+    reason: string,
+  ): Promise<void> {
+    await this.board
+      .request("/api/ai/tasks/release", {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey("steer-release"),
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal: this.stopController.signal,
+        body: {
+          task_id: task.id,
+          claim_token: task.claim_token,
+          reason,
+        },
+      })
+      .catch(() => undefined);
   }
 
   private waitForTurn(
@@ -2078,6 +3069,7 @@ class SessionWorker {
   ): Promise<void> {
     const task = this.activeClaim;
     if (!task) return;
+    if (activity.kind !== "assistant_message") return;
     await this.board.request("/api/ai/sessions/activity", {
       method: "POST",
       sessionId: this.session.id,
@@ -2096,14 +3088,18 @@ class SessionWorker {
     });
   }
 
-  private heartbeatSession(): Promise<unknown> {
-    return this.board.request("/api/ai/sessions/presence", {
-      method: "POST",
-      sessionId: this.session.id,
-      idempotencyKey: idempotencyKey("session-heartbeat"),
-      signal: this.stopController.signal,
-      body: {},
-    });
+  private async heartbeatSession(): Promise<void> {
+    const response = await this.board.request<{ session?: Session }>(
+      "/api/ai/sessions/presence",
+      {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey("session-heartbeat"),
+        signal: this.stopController.signal,
+        body: {},
+      },
+    );
+    if (response.session) this.updateSession(response.session);
   }
 
   private heartbeatClaim(task: ClaimedTask): Promise<unknown> {
@@ -2182,6 +3178,7 @@ class DeviceBridge {
   private readonly limiter: TurnLimiter;
   private readonly workers = new Map<string, SessionWorker>();
   private readonly workerRuns = new Map<string, Promise<void>>();
+  private managedThreadIds = new Set<string>();
   private readonly historySynchronizer: HistorySynchronizer;
   private historySyncPromise: Promise<void> | null = null;
   private historyConfigurationReady = false;
@@ -2190,6 +3187,7 @@ class DeviceBridge {
   private stopPromise: Promise<void> | null = null;
   private appliedConfigurationVersion: number | null = null;
   private configurationError: string | null = null;
+  private updateError: string | null = null;
   private effectiveConfigurationKnown = true;
   private readonly runtimeInstanceId = randomUUID();
   private reportSequence = 0;
@@ -2198,6 +3196,9 @@ class DeviceBridge {
   private leaseSafetyDeadlineMs: number | null = null;
   private latestSuccessfulReportSequence = 0;
   private legacyConfigurationCompatibility = false;
+  private inventoryReady = false;
+  private modelCatalog: InventoryModel[] | undefined;
+  private quota: SyncedQuota | undefined;
 
   constructor(
     private readonly configuration: BridgeConfiguration,
@@ -2246,12 +3247,17 @@ class DeviceBridge {
       process.stderr.write(
         "高风险警告：CODEX_BRIDGE_PERMISSION_MODE=inherit 会沿用 thread 的审批与沙箱设置，可能继承 danger-full-access 或额外可写目录\n",
       );
+    } else if (this.configuration.permissionMode === "danger-full-access") {
+      process.stderr.write(
+        "高风险警告：CODEX_BRIDGE_PERMISSION_MODE=danger-full-access 不使用 Codex 沙箱，thread 可访问本机用户有权访问的文件与网络\n",
+      );
     }
     if (!this.configuration.threadIdFilter && this.configuration.threadScope === "all") {
       process.stderr.write(
         "高风险警告：CODEX_THREAD_SCOPE=all 会管理当前系统用户的跨项目顶层 Codex threads\n",
       );
     }
+    await this.discoverModelCatalog();
     await this.establishRemoteConfigurationLease();
     if (this.stopping) {
       await this.stop();
@@ -2271,7 +3277,11 @@ class DeviceBridge {
     let nextInventorySyncAt = 0;
     do {
       let reconciledConfiguration = false;
-      if (this.configuration.webConfigurationEnabled) {
+      // Web 配置恒开启；只有当 Board 缺少配置端点（旧版兼容降级）时才跳过。
+      if (
+        this.configuration.webConfigurationEnabled &&
+        !this.legacyConfigurationCompatibility
+      ) {
         try {
           reconciledConfiguration = await this.reconcileRemoteConfiguration();
         } catch (error) {
@@ -2313,13 +3323,52 @@ class DeviceBridge {
         }
       }
       if (this.stopping) break;
+      if (this.inventoryReady) {
+        try {
+          const inventoryChanged = await this.processThreadCommands();
+          if (inventoryChanged && !this.stopping) {
+            await this.syncWorkers();
+            nextInventorySyncAt = Date.now() + this.configuration.syncIntervalMs;
+          }
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `处理 Web Thread 管理指令失败：${errorMessage(error)}\n`,
+          );
+        }
+      }
+      if (this.inventoryReady) {
+        try {
+          await this.processFileCommands();
+        } catch (error) {
+          if (this.stopping) break;
+          if (error instanceof WorkerRetirementFailureError) {
+            this.markFatal(error);
+            break;
+          }
+          if (isPersistentClientError(error)) {
+            this.markFatal(actionableBoardError(error));
+            break;
+          }
+          process.stderr.write(
+            `处理 Web 文件浏览指令失败：${errorMessage(error)}\n`,
+          );
+        }
+      }
+      if (this.stopping) break;
       const untilInventorySync = Math.max(1_000, nextInventorySyncAt - Date.now());
-      const sleepMilliseconds = this.configuration.webConfigurationEnabled
-        ? Math.min(
-            this.configuration.configurationPollIntervalMs,
-            untilInventorySync,
-          )
-        : untilInventorySync;
+      const sleepMilliseconds = Math.min(
+        this.configuration.configurationPollIntervalMs,
+        untilInventorySync,
+      );
       try {
         await delay(sleepMilliseconds, this.stopController.signal);
       } catch {
@@ -2402,7 +3451,7 @@ class DeviceBridge {
       } catch (error) {
         if (this.stopping) return;
         const status = errorStatus(error);
-        if (status === 404 && !this.configuration.webConfigurationEnabled) {
+        if (status === 404) {
           // Board 0.2 compatibility: inventory can run without config support.
           this.legacyConfigurationCompatibility = true;
           return;
@@ -2472,7 +3521,6 @@ class DeviceBridge {
         const status = errorStatus(error);
         if (
           status === 404 &&
-          !this.configuration.webConfigurationEnabled &&
           this.legacyConfigurationCompatibility &&
           !this.runtimeLeaseClaimed
         ) {
@@ -2499,6 +3547,7 @@ class DeviceBridge {
     this.reportSequence += 1;
     return {
       runtime_instance_id: this.runtimeInstanceId,
+      platform: BRIDGE_PLATFORM,
       report_sequence: this.reportSequence,
       lease_seconds: this.configuration.configurationLeaseSeconds,
       release_runtime: releaseRuntime,
@@ -2509,10 +3558,15 @@ class DeviceBridge {
           )
         : null,
       constraints: bridgeConfigurationConstraints(this.configuration),
-      error: this.configurationError
-        ? redactHarnessText(this.configurationError, 2_000)
-        : null,
+      error: this.statusError(),
     };
+  }
+
+  private statusError(): string | null {
+    const combined = [this.configurationError, this.updateError]
+      .filter(Boolean)
+      .join("；");
+    return combined ? redactHarnessText(combined, 2_000) : null;
   }
 
   private async exchangeRemoteConfiguration(
@@ -2546,6 +3600,17 @@ class DeviceBridge {
         requestStartedAt +
         this.configuration.configurationLeaseSeconds * 1_000 -
         this.configurationLeaseSafetyMarginMs();
+    }
+    if (!releaseRuntime && !this.stopping) {
+      // A successful exchange may carry the Board's desired Bridge version.
+      // A failed update never throws; the error is reported in the next
+      // exchange's error field, and a successful one exits the process so
+      // systemd restarts it on the new version.
+      const updateError = await maybeApplyDesiredBridgeUpdate({
+        desiredVersion: response.configuration.desired_bridge_version,
+        currentVersion: BRIDGE_VERSION,
+      });
+      if (updateError) this.updateError = updateError;
     }
     return response;
   }
@@ -2582,12 +3647,26 @@ class DeviceBridge {
         return reconciled;
       }
 
-      const resolved = resolveRemoteConfiguration(
-        this.configuration,
-        remote.desired,
-      );
       const previousEffective = effectiveBridgeConfiguration(this.configuration);
       const previousEffectiveKnown = this.effectiveConfigurationKnown;
+      let resolved: ReturnType<typeof resolveRemoteConfiguration>;
+      try {
+        resolved = resolveRemoteConfiguration(
+          this.configuration,
+          remote.desired,
+        );
+      } catch (error) {
+        // Validation failures happen before any effective state is mutated.
+        // Keep reporting the last concrete state/version, but surface the
+        // rejected version to the Board so Web does not wait indefinitely.
+        this.configurationError =
+          `应用 version=${remote.version} 失败：${errorMessage(error)}`;
+        process.stderr.write(`${this.configurationError}\n`);
+        await this
+          .exchangeRemoteConfiguration()
+          .catch(() => undefined);
+        throw error;
+      }
       this.historyConfigurationReady = false;
       this.historySynchronizer.configurationChanged();
       this.configuration.enabled = resolved.effective.enabled;
@@ -2598,6 +3677,13 @@ class DeviceBridge {
         resolved.effective.maxConcurrentTurns;
       this.configuration.syncHistory = resolved.effective.syncHistory;
       this.configuration.historyTurnLimit = resolved.effective.historyTurnLimit;
+      this.configuration.permissionMode = resolved.effective.permissionMode;
+      this.configuration.approvalMode = resolved.effective.approvalMode;
+      this.configuration.workingDirectory =
+        resolved.effective.workingDirectory;
+      this.configuration.workingDirectories = copyWorkingDirectories(
+        resolved.effective.workingDirectories,
+      );
       this.limiter.resize(resolved.effective.maxConcurrentTurns);
       this.configurationError = resolved.warnings.length
         ? resolved.warnings.join("；")
@@ -2622,11 +3708,34 @@ class DeviceBridge {
             previousEffective.maxConcurrentTurns;
           this.configuration.syncHistory = previousEffective.syncHistory;
           this.configuration.historyTurnLimit = previousEffective.historyTurnLimit;
+          this.configuration.permissionMode =
+            previousEffective.permissionMode;
+          this.configuration.approvalMode =
+            previousEffective.approvalMode;
+          this.configuration.workingDirectory =
+            previousEffective.workingDirectory;
+          this.configuration.workingDirectories = copyWorkingDirectories(
+            previousEffective.workingDirectories,
+          );
           this.limiter.resize(previousEffective.maxConcurrentTurns);
           this.effectiveConfigurationKnown = previousEffectiveKnown;
           this.historyConfigurationReady =
             previousEffectiveKnown && this.appliedConfigurationVersion !== null;
         } else {
+          // Directory scope is safe to restore even if worker retirement or
+          // inventory publication made partial progress. The version remains
+          // unapplied and the next reconcile retries from the previous
+          // effective allowlist instead of leaking a failed remote directory
+          // change into thread creation or later inventory scans.
+          this.configuration.permissionMode =
+            previousEffective.permissionMode;
+          this.configuration.approvalMode =
+            previousEffective.approvalMode;
+          this.configuration.workingDirectory =
+            previousEffective.workingDirectory;
+          this.configuration.workingDirectories = copyWorkingDirectories(
+            previousEffective.workingDirectories,
+          );
           // A later failure may happen after workers were stopped. Do not claim
           // a precise effective state until a full reconciliation succeeds.
           this.effectiveConfigurationKnown = false;
@@ -2649,7 +3758,7 @@ class DeviceBridge {
       process.stdout.write(
         `已应用 Web Bridge 配置 version=${remote.version}：${
           this.configuration.enabled ? "已启用" : "已停用"
-        }，最多 ${this.configuration.maxThreads} 个 thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
+        }，${this.configuration.workingDirectories.length} 个工作目录，最多 ${this.configuration.maxThreads} 个 thread / ${this.configuration.maxConcurrentTurns} 个并行 turn\n`,
       );
 
       response = await this.exchangeRemoteConfiguration();
@@ -2657,6 +3766,41 @@ class DeviceBridge {
       this.historySynchronizer.configurationChanged();
     }
     return reconciled;
+  }
+
+  private async refreshAccountQuota(): Promise<void> {
+    try {
+      const quota = normalizeCodexQuota(
+        await this.appServer.accountRateLimitsRead({ timeoutMs: 10_000 }),
+      );
+      if (!this.stopping) this.quota = quota;
+    } catch (error) {
+      const message = errorMessage(error);
+      if (
+        error instanceof AppServerRpcError &&
+        (error.code === -32601 ||
+          message.toLowerCase().includes("authentication required"))
+      ) {
+        this.quota = {
+          provider: "codex",
+          status: "unavailable",
+          message:
+            error.code === -32601
+              ? "当前 Codex 版本不支持 account/rateLimits/read"
+              : "当前登录方式不提供账户套餐额度",
+          account: null,
+          plan: null,
+          fetched_at: new Date().toISOString(),
+          buckets: [],
+          credits: null,
+        };
+        return;
+      }
+      process.stderr.write(
+        `读取 Codex 账户额度失败：${message}\n`,
+      );
+      this.quota = quotaError(new Date(), message);
+    }
   }
 
   private async syncWorkers(): Promise<void> {
@@ -2690,23 +3834,45 @@ class DeviceBridge {
     if (this.stopping) return;
     const sessions = await this.board.syncSessions(
       threads,
+      this.modelCatalog,
+      this.quota,
       this.stopController.signal,
     );
     if (this.stopping) return;
+    void this.refreshAccountQuota();
+    this.managedThreadIds = visibleThreadIds;
     this.historySynchronizer.updateTargets(
       threads.flatMap((thread) => {
         const session = sessions.get(thread.id);
-        return session && isInteractiveHistoryThread(thread)
-          ? [{ thread, sessionId: session.id }]
+        return session &&
+          !session.deletion_requested_at &&
+          isInteractiveHistoryThread(thread)
+          ? [{
+              thread,
+              sessionId: session.id,
+            }]
           : [];
       }),
     );
 
     for (const thread of threads) {
-      if (this.workers.has(thread.id)) continue;
       const session = sessions.get(thread.id);
       if (!session) {
         process.stderr.write(`看板未返回 thread ${thread.id} 对应的 Session\n`);
+        continue;
+      }
+      const existingWorker = this.workers.get(thread.id);
+      if (session.deletion_requested_at) {
+        existingWorker?.updateSession(session);
+        if (!existingWorker) {
+          process.stdout.write(
+            `Thread ${thread.id} 正在等待 Web 删除指令，暂不启动 worker\n`,
+          );
+        }
+        continue;
+      }
+      if (existingWorker) {
+        existingWorker.updateSession(session);
         continue;
       }
       const worker = new SessionWorker(
@@ -2725,7 +3891,11 @@ class DeviceBridge {
             `Thread worker ${thread.id} 已退出：${errorMessage(error)}\n`,
           );
           this.workers.delete(thread.id);
-          if (isPersistentClientError(error)) {
+          if (isSessionNotAuthorizedError(error)) {
+            process.stderr.write(
+              `Thread ${thread.id} 已被看板停用；保留 Bridge 运行以完成待处理管理指令\n`,
+            );
+          } else if (isPersistentClientError(error)) {
             this.markFatal(actionableBoardError(error));
           }
         }
@@ -2739,6 +3909,300 @@ class DeviceBridge {
 
     process.stdout.write(
       `Codex Bridge 已同步 ${threads.length} 个 thread，最多并行 ${this.configuration.maxConcurrentTurns} 个 turn\n`,
+    );
+    this.inventoryReady = true;
+  }
+
+  private async discoverModelCatalog(): Promise<void> {
+    const models: InventoryModel[] = [];
+    const seenModels = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    let defaultClaimed = false;
+
+    try {
+      do {
+        const response = await this.appServer.modelList(
+          {
+            cursor,
+            limit: MODEL_CATALOG_PAGE_SIZE,
+            includeHidden: false,
+          },
+          { signal: this.stopController.signal, timeoutMs: 5_000 },
+        );
+        if (!Array.isArray(response.data)) {
+          throw new Error("model/list 未返回模型数组");
+        }
+        for (const candidate of response.data) {
+          const normalized = inventoryModel(candidate, !defaultClaimed);
+          if (!normalized || seenModels.has(normalized.model)) continue;
+          if (normalized.is_default) defaultClaimed = true;
+          seenModels.add(normalized.model);
+          models.push(normalized);
+          if (models.length >= MAX_MODEL_CATALOG_ENTRIES) break;
+        }
+        if (models.length >= MAX_MODEL_CATALOG_ENTRIES) break;
+
+        const nextCursor = stringValue(response.nextCursor);
+        if (!nextCursor) break;
+        if (seenCursors.has(nextCursor)) {
+          throw new Error("model/list 返回了重复分页游标");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      } while (!this.stopping);
+
+      this.modelCatalog = models;
+      process.stdout.write(
+        `已从 Codex App Server 读取 ${models.length} 个可用模型\n`,
+      );
+    } catch (error) {
+      if (this.stopping) return;
+      process.stderr.write(
+        `读取 Codex 模型目录失败，Web 将使用已有目录或兼容列表：${errorMessage(error)}\n`,
+      );
+    }
+  }
+
+  private async processThreadCommands(): Promise<boolean> {
+    let inventoryChanged = false;
+    for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
+      const command = await this.board.claimThreadCommand(
+        this.runtimeInstanceId,
+        this.stopController.signal,
+      );
+      if (!command) break;
+
+      try {
+        const externalThreadId = await this.executeThreadCommand(command);
+        await this.board.completeThreadCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: true, externalThreadId },
+          this.stopController.signal,
+        );
+        inventoryChanged = true;
+        process.stdout.write(
+          `Web Thread 指令已完成：${command.action} (${externalThreadId ?? command.id})\n`,
+        );
+      } catch (error) {
+        if (this.stopping) throw error;
+        const message = redactHarnessText(errorMessage(error), 2_000);
+        await this.board.completeThreadCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: false, error: message },
+          this.stopController.signal,
+        );
+        process.stderr.write(
+          `Web Thread 指令 ${command.action} 失败：${message}\n`,
+        );
+      }
+    }
+    return inventoryChanged;
+  }
+
+  private findWorkerByBoardSessionId(
+    sessionId: string | null,
+  ): SessionWorker | null {
+    if (!sessionId) return null;
+    for (const worker of this.workers.values()) {
+      if (worker.boardSessionId === sessionId) return worker;
+    }
+    return null;
+  }
+
+  private async executeThreadCommand(
+    command: ThreadCommand,
+  ): Promise<string | null> {
+    if (command.action === "create") {
+      if (!this.configuration.enabled) {
+        throw new Error("Bridge 已暂停，无法新建 Thread");
+      }
+      if (this.configuration.threadIdFilter) {
+        throw new Error("固定 Thread 模式不支持从 Web 新建 Thread");
+      }
+      if (this.managedThreadIds.size >= this.configuration.maxThreads) {
+        throw new Error("已达到 Bridge 的 Thread 数量上限");
+      }
+      const name = stringValue(command.name);
+      if (!name) throw new Error("新建 Thread 指令缺少名称");
+      const cwd = workingDirectoryForThreadCreate(
+        command.directory_key,
+        this.configuration.workingDirectories,
+        this.configuration.workingDirectory,
+      );
+      const model = stringValue(command.model);
+      const reasoningEffort = stringValue(command.reasoning_effort);
+      const response = await this.appServer.threadStart({
+        cwd,
+        ...(model ? { model } : {}),
+        ...(reasoningEffort
+          ? { config: { model_reasoning_effort: reasoningEffort } }
+          : {}),
+        ...threadPermissionOverrides(this.configuration.permissionMode, cwd),
+      });
+      const threadId = stringValue(response.thread?.id);
+      if (!threadId) throw new Error("Codex App Server 未返回新 Thread ID");
+      try {
+        await this.appServer.threadSetName({ threadId, name });
+      } catch (error) {
+        // Thread creation already committed locally. Completing the command is
+        // safer than retrying thread/start and producing a duplicate; the Board
+        // keeps the requested display name even on older App Server versions.
+        process.stderr.write(
+          `新 Thread 已创建，但本机名称同步失败：${errorMessage(error)}\n`,
+        );
+      }
+      this.managedThreadIds.add(threadId);
+      return threadId;
+    }
+
+    if (command.action === "pause") {
+      // 暂停载荷的 external_thread_id 可能为空：退化为按 Board session id
+      // 匹配 worker。worker 不存在或无活跃 turn 都是成功的幂等 no-op（任务
+      // 可能已自行完成，或命令是重放）；Board 侧任务已置 paused，本地尽力
+      // 中断即可。
+      const threadId = stringValue(command.external_thread_id);
+      const worker = threadId
+        ? this.workers.get(threadId)
+        : this.findWorkerByBoardSessionId(stringValue(command.session_id));
+      if (!worker) return threadId;
+      await worker.requestPause(stringValue(command.task_id));
+      return threadId ?? worker.thread.id;
+    }
+
+    const threadId = stringValue(command.external_thread_id);
+    const worker = threadId ? this.workers.get(threadId) : null;
+    if (!threadId) throw new Error("Thread 指令缺少目标 ID");
+    const managed = this.managedThreadIds.has(threadId);
+
+    if (command.action === "rename") {
+      if (!managed) {
+        throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
+      }
+      const name = stringValue(command.name);
+      if (!name) throw new Error("Thread 改名指令缺少名称");
+      const model = stringValue(command.model);
+      const reasoningEffort = stringValue(command.reasoning_effort);
+      if (model || reasoningEffort) {
+        const workspaceRoot = path.resolve(
+          threadCwd(worker?.thread ?? { id: threadId }) ??
+            this.configuration.workingDirectory,
+        );
+        const resumed = await this.appServer.threadResume({
+          threadId,
+          excludeTurns: true,
+          ...(model ? { model } : {}),
+          ...(reasoningEffort
+            ? { config: { model_reasoning_effort: reasoningEffort } }
+            : {}),
+          ...threadPermissionOverrides(
+            this.configuration.permissionMode,
+            workspaceRoot,
+          ),
+        });
+        const effectiveModel = stringValue(resumed.model);
+        const effectiveReasoningEffort = stringValue(
+          resumed.reasoningEffort,
+        );
+        if (model && effectiveModel !== model) {
+          throw new Error(
+            `Codex 未应用请求的模型 ${model}（实际：${effectiveModel ?? "未返回"}）`,
+          );
+        }
+        if (
+          reasoningEffort &&
+          effectiveReasoningEffort !== reasoningEffort
+        ) {
+          throw new Error(
+            `Codex 未应用请求的思考强度 ${reasoningEffort}（实际：${effectiveReasoningEffort ?? "未返回"}）`,
+          );
+        }
+      }
+      await this.appServer.threadSetName({ threadId, name });
+      return threadId;
+    }
+
+    if (this.configuration.threadIdFilter) {
+      throw new Error("固定 Thread 模式不支持从 Web 删除 Thread");
+    }
+    // A delete may be reclaimed after the previous Bridge deleted the local
+    // Thread but crashed before acknowledging the command. Absence from the
+    // freshly synced managed inventory makes that replay a successful no-op.
+    if (!managed && (command.attempt_count ?? 1) > 1) return threadId;
+    if (!managed) {
+      throw new Error("目标 Thread 不在当前 Bridge 的受管清单中");
+    }
+    if (worker?.retirementBlocked) {
+      throw new WorkerRetirementDeferredError(
+        "Thread 正在启动或执行 turn，暂时不能删除",
+      );
+    }
+    if (worker) {
+      await stopWorkersForRetirement(
+        [{ threadId, worker }],
+        "用户从 Web Console 删除了 Codex Thread",
+      );
+      this.workers.delete(threadId);
+    }
+    try {
+      await this.appServer.threadDelete({ threadId });
+    } catch (error) {
+      if (!(error instanceof AppServerRpcError) || error.code !== -32601) {
+        throw error;
+      }
+      // Older compatible Codex builds expose archive but not hard delete.
+      await this.appServer.threadArchive({ threadId });
+    }
+    this.managedThreadIds.delete(threadId);
+    return threadId;
+  }
+
+  private async processFileCommands(): Promise<void> {
+    for (let processed = 0; processed < 10 && !this.stopping; processed += 1) {
+      const command = await this.board.claimFileCommand(
+        this.runtimeInstanceId,
+        this.stopController.signal,
+      );
+      if (!command) break;
+
+      try {
+        const result = await this.executeFileCommand(command);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: true, result },
+          this.stopController.signal,
+        );
+      } catch (error) {
+        if (this.stopping) throw error;
+        const message = redactHarnessText(errorMessage(error), 2_000);
+        await this.board.completeFileCommand(
+          this.runtimeInstanceId,
+          command.id,
+          { succeeded: false, error: message },
+          this.stopController.signal,
+        );
+        process.stderr.write(
+          `Web 文件指令 ${command.action} 失败：${message}\n`,
+        );
+      }
+    }
+  }
+
+  private async executeFileCommand(
+    command: FileCommand,
+  ): Promise<DeviceFileListResult | DeviceFilePreviewResult> {
+    if (command.action === "list") {
+      return listDeviceDirectory(
+        this.configuration.workingDirectories,
+        command.path,
+      );
+    }
+    return readDeviceFilePreview(
+      this.configuration.workingDirectories,
+      command.path,
     );
   }
 
@@ -2761,25 +4225,7 @@ class DeviceBridge {
       scanned += page.data.length;
       for (const candidate of page.data) {
         const thread = candidate as ThreadRecord;
-        if (
-          this.configuration.threadIdFilter &&
-          thread.id !== this.configuration.threadIdFilter
-        ) {
-          continue;
-        }
-        if (stringValue(thread.parentThreadId)) continue;
-        if (
-          !this.configuration.threadIdFilter &&
-          this.configuration.threadScope === "cwd"
-        ) {
-          const cwd = threadCwd(thread);
-          if (
-            !cwd ||
-            !isExactWorkingDirectory(cwd, this.configuration.workingDirectory)
-          ) {
-            continue;
-          }
-        }
+        if (!this.shouldManageThread(thread)) continue;
         threads.push(thread);
         if (threads.length >= this.configuration.maxThreads) break;
       }
@@ -2797,7 +4243,66 @@ class DeviceBridge {
         `找不到 CODEX_THREAD_ID=${this.configuration.threadIdFilter}；请确认该 thread 属于当前系统用户`,
       );
     }
-    return threads;
+
+    // App Server deliberately hides a Thread with no Turns from thread/list.
+    // Successful Web creates are persisted locally and remain readable by id,
+    // so merge those exact records into the authoritative inventory until the
+    // first Turn makes them naturally discoverable.
+    const discoveredIds = new Set(threads.map((thread) => thread.id));
+    const createdThreadIds = await this.board.listCreatedThreadIds(
+      this.stopController.signal,
+    );
+    const recovered = await Promise.all(
+      createdThreadIds
+        .filter((threadId) => !discoveredIds.has(threadId))
+        .map(async (threadId): Promise<ThreadRecord | null> => {
+          try {
+            const response = await this.appServer.threadRead({
+              threadId,
+              includeTurns: false,
+            });
+            const thread = response.thread as ThreadRecord;
+            return this.shouldManageThread(thread) ? thread : null;
+          } catch {
+            // A locally deleted/archived create can outlive its audit command.
+            return null;
+          }
+        }),
+    );
+    const combined = [
+      ...threads,
+      ...recovered.filter((thread): thread is ThreadRecord => thread !== null),
+    ];
+    combined.sort((left, right) => {
+      const leftRecency = left.updatedAt ?? left.createdAt ?? 0;
+      const rightRecency = right.updatedAt ?? right.createdAt ?? 0;
+      return rightRecency - leftRecency;
+    });
+    return combined.slice(0, this.configuration.maxThreads);
+  }
+
+  private shouldManageThread(thread: ThreadRecord): boolean {
+    if (
+      this.configuration.threadIdFilter &&
+      thread.id !== this.configuration.threadIdFilter
+    ) {
+      return false;
+    }
+    if (stringValue(thread.parentThreadId)) return false;
+    if (
+      !this.configuration.threadIdFilter &&
+      this.configuration.threadScope === "cwd"
+    ) {
+      const cwd = threadCwd(thread);
+      return Boolean(
+        cwd &&
+          managedDirectoryForWorkingDirectory(
+            cwd,
+            this.configuration.workingDirectories,
+          ),
+      );
+    }
+    return true;
   }
 
   private async handleServerRequest(
@@ -2828,11 +4333,15 @@ async function main(): Promise<void> {
   const appServer = await CodexAppServerClient.connect({
     binary: configuration.codexBinary,
     args: ["app-server", "--stdio"],
-    cwd: configuration.workingDirectory,
+    // The App Server process is launched before any remote desired version is
+    // fetched. Keep its process cwd tied to the immutable local startup value;
+    // thread/start and every safe turn still receive the effective cwd
+    // explicitly.
+    cwd: configuration.localWorkingDirectory,
     unsetEnv: ["AI_TASK_BOARD_CONNECTION_TOKEN"],
     clientInfo: {
       name: "ai_task_board_bridge",
-      title: "AI Task Board Codex Bridge",
+      title: "AI Task Board Bridge",
       version: BRIDGE_VERSION,
     },
     capabilities: { experimentalApi: true, requestAttestation: false },

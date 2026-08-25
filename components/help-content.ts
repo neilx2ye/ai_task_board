@@ -8,12 +8,22 @@ export type HelpSection = {
   label: string;
 };
 
+/**
+ * 帮助页安装命令固定的 Bridge npm 包名，使用 latest 标签跟随最新发布，
+ * 发布新版后无需再修改。
+ */
+export const BRIDGE_INSTALL_PACKAGE = "ai-task-board-bridge@latest";
+
 export const HELP_SECTIONS: ReadonlyArray<HelpSection> = [
-  { id: "getting-started", label: "快速上手" },
+  { id: "getting-started", label: "新设备配置" },
+  { id: "unified-bridge", label: "统一设备 Bridge" },
   { id: "codex-bridge", label: "Codex Bridge" },
+  { id: "kimi-bridge", label: "Kimi Bridge" },
+  { id: "antigravity-bridge", label: "Antigravity Bridge" },
+  { id: "claude-code-bridge", label: "Claude Code Bridge" },
+  { id: "bridge-updates", label: "Bridge 升级与回滚" },
   { id: "task-status", label: "任务状态" },
   { id: "ai-integration", label: "AI 接入" },
-  { id: "mcp-integration", label: "MCP 接入" },
   { id: "attachments", label: "附件" },
   { id: "faq", label: "常见问题" },
 ];
@@ -36,8 +46,14 @@ export const HELP_ACTIONS: ReadonlyArray<HelpAction> = [
     description: "创建连接并获取一次性令牌",
   },
   {
-    href: "/board",
-    label: "查看会话任务流",
-    description: "跟踪预留、执行、问答与完成状态",
+    href: "/planning",
+    label: "打开任务规划",
+    description:
+      "查看跨 Bridge 的项目规划笔记，以及每个 Thread 独立的思考笔记与 Turn 规划链",
+  },
+  {
+    href: "/files",
+    label: "浏览设备文件",
+    description: "按已上报的工作目录预览设备上的项目文件",
   },
 ];

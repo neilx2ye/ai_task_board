@@ -58,6 +58,14 @@ Workspace Owner 可通过 `GET` / `PATCH /api/user/connections/:connectionId/bri
 `history_turn_limit`；版本落后时返回
 `409 VERSION_CONFLICT`，客户端应刷新后让用户重新确认。
 
+Web 触发的 Bridge 自更新（1.5.0+）使用两个额外的用户态端点：
+`GET /api/user/bridge-release` 返回 npm 上 `ai-task-board-bridge` 的最新发布版本
+（服务端缓存 5 分钟，查询失败时 `latest_version` 为 `null`）；
+`POST /api/user/connections/:connectionId/bridge-update` 携带
+`Idempotency-Key` 与 `{ "target_version": "x.y.z" }` 设置期望版本
+（`null` 取消）。目标版本必须是严格大于当前上报版本的合法 semver 且真实存在于
+npm，否则返回 `400 INVALID_REQUEST`；Bridge 需设备 opt-in 才会执行更新。
+
 Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成一个
 `runtime_instance_id`，并为每次报告单调增加 `report_sequence`；
 `lease_seconds` 建立运行实例租约，防止同一个 Connection 的两个 Bridge 同时
@@ -69,13 +77,14 @@ Bridge 使用 Connection Token 调用 `POST /api/ai/config`。每个进程生成
 `409 BRIDGE_INSTANCE_CONFLICT`。优雅退出时，同一实例可发送
 `release_runtime: true` 立即释放租约，而不清除网页最后看到的应用状态。
 
-Web 只控制运行时启停、thread 标题上传、历史同步以及 thread/并行 turn 数量。工作目录、
-thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex 可执行文件和本机最大值
-始终由设备环境决定；服务端也会拒绝突破本机 `constraints` 的 effective 报告。
-历史同步还受 `constraints.allow_history_sync` 和 `max_history_turns` 限制；设备必须先以
-`CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true` 明确授权。同步内容会进入当前 Workspace，所有成员
-都可查看，因此 Web 上的期望开关不能替代设备本机授权。服务端接受的
-`history_turn_limit` 为 `1..500`，实际值还会被设备上报的本机上限收紧。
+Web 是唯一配置入口，控制运行时启停、thread 标题上传、历史同步、工作目录以及
+thread/并行 turn 数量；thread 范围或固定 thread、权限与审批模式、URL/令牌、Codex
+可执行文件仍由设备环境决定。thread 数（`1..500`）与并行 turn 数（`1..32`）由 Web
+直接设置整台设备的值，不再与本机 `*_MAX_THREADS` / `*_MAX_CONCURRENT_TURNS` 做二次
+比较。服务端接受的 `history_turn_limit` 为 `1..500`，设备按网页值直接应用；新连接
+的标题上传与历史同步默认开启。同步内容会进入当前 Workspace，所有成员都可查看。
+服务端仍会拒绝突破设备 `constraints` 的 effective 报告，这些字段现在只是旧 Bridge
+的兼容上报。
 关闭 `sync_history` 或降低 turn 上限只会停止或收窄后续导入，不会删除已经上传到
 Workspace 的历史记录。
 
@@ -198,7 +207,7 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/report-progress" \
 
 ### 回传 Harness 会话活动
 
-Harness adapter 可以把 AI 回复、提供方暴露的思考摘要和工具执行过程追加到 Session 时间线：
+Harness adapter 可以把 AI 回复追加到 Session 时间线：
 
 ```bash
 curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/activity" \
@@ -209,20 +218,20 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/activity" \
   --data "{
     \"task_id\": \"$ATB_TASK_ID\",
     \"claim_token\": \"$ATB_CLAIM_TOKEN\",
-    \"kind\": \"reasoning\",
-    \"content\": \"先确认失败测试，再缩小到相关模块。\",
-    \"data\": {\"disclosure\": \"provider_summary\"},
+    \"kind\": \"assistant_message\",
+    \"content\": \"已完成检查并修复相关模块。\",
+    \"data\": {},
     \"external_ref\": \"codex:<thread>:<task>:item:<provider-item-id>\"
   }"
 ```
 
-支持的 `kind` 为 `assistant_message`、`reasoning`、`command`、`file_change`、`mcp_tool`、`web_search`、`plan`、`error`、`usage` 和 `status`。`assistant_message` 与 `reasoning` 必须有非空 `content`；`content` 最长 100,000 字符，`data` 必须是 JSON object 且编码后不超过 256 KiB。`external_ref` 必填，最长 500 字符。
+会话记录固定只保存 `assistant_message`。为了兼容旧 Adapter，输入校验仍接受 `reasoning`、`command`、`file_change`、`mcp_tool`、`web_search`、`plan`、`error`、`usage` 和 `status`，但服务端会以 `suppressed: true` 成功忽略这些类型且不访问数据库。`assistant_message.content` 必须非空且最长 100,000 字符；`data` 必须是 JSON object 且编码后不超过 256 KiB。`external_ref` 必填，最长 500 字符。
 
-调用者必须仍持有该 Task 的有效领取令牌。成功写入活动会把 Task 置为 `running`、刷新 Session，并为 `assistant_message` 同步创建一条任务消息。`external_ref` 在 Session 内唯一，应来自稳定的 provider thread/turn/item 标识；同一 item 重试时保持它和业务内容不变，否则返回 `IDEMPOTENCY_CONFLICT`。这里的 `reasoning` 只允许提供方明确输出的可展示摘要，不得上传隐藏的原始 chain-of-thought。
+调用者必须仍持有该 Task 的有效领取令牌。成功写入 AI 回复会把 Task 置为 `running`、刷新 Session，并同步创建一条任务消息。`external_ref` 在 Session 内唯一，应来自稳定的 provider thread/turn/item 标识；同一 item 重试时保持它和业务内容不变，否则返回 `IDEMPOTENCY_CONFLICT`。
 
 ### 导入本机 Codex Thread 历史（Bridge 0.4+）
 
-获得本机授权的 Bridge 使用 `POST /api/ai/sessions/history` 导入规范化的历史页。请求仍需
+Bridge 使用 `POST /api/ai/sessions/history` 导入规范化的历史页。请求仍需
 Connection Token 和 `X-AI-Session-ID`，但不依赖 Board Task 或 `claim_token`：
 
 ```bash
@@ -257,8 +266,7 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/sessions/history" \
   }'
 ```
 
-`kind` 仅允许 `user_message`、`assistant_message` 和 `reasoning`；后者仍只能是提供方可展示
-摘要。每页最多 100 项，单项 `content` 最长 50,000 字符，单项 `data` 最多 4 KiB，整个
+为兼容旧 Bridge，请求 schema 仍允许 `user_message`、`assistant_message` 和 `reasoning`；服务端在写库前固定只保留 `user_message` 与 `assistant_message`。每页最多 100 项，单项 `content` 最长 50,000 字符，单项 `data` 最多 4 KiB，整个
 `items` JSON 最多 512 KiB（HTTP body 最多 640 KiB）。`source_order` 是 `0` 到
 `Number.MAX_SAFE_INTEGER` 的整数，用来稳定排列同一时间的 item。`items: []` 合法，供没有
 可导入内容的 Thread 单独上报状态。
@@ -345,6 +353,16 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/request-user-input" \
 
 任务进入 `waiting_user` 并结束当前租约。用户在任务详情页回复后，任务恢复为 `ready`；它仍只属于原会话，该会话必须重新接收并取得新的 `claim_token`。
 
+### Codex Bridge 结构化问题（保留原 turn）
+
+Bridge 0.6 对 App Server 的 blocking `item/tool/requestUserInput` 使用专用流程，不调用上面的旧文字提问接口：
+
+1. `POST /api/ai/tasks/user-input-requests` 持久化问题、把任务标记为 `awaiting_user_input=true`，但任务仍保持 `running`、原 `claim_token` 和租约。
+2. Web Console 在任务详情或 Thread 对话面板显示单选/文本/敏感输入控件，通过 `POST /api/user/tasks/:taskId/input-requests/:requestId/answer` 提交。
+3. Bridge 通过 `POST /api/ai/tasks/user-input-requests/:requestId/poll` 等待答案，并把协议要求的 `answers` 返回给仍处于等待中的同一个 App Server 请求。
+
+答案值不写入公开任务消息；敏感回答不会出现在 Web 查询或 Realtime 载荷中。任务结束、取消、释放或 claim 更换时，服务端会清除保存的答案。Bridge 等待期间仍须续租 claim。
+
 ## 6. 完成、失败或释放
 
 推荐在完成时原子领取下一项任务：
@@ -424,6 +442,12 @@ curl --fail-with-body -sS "$ATB_URL/api/ai/tasks/release" \
   }"
 ```
 
+### 用户暂停与恢复
+
+Workspace 成员可在 Web Console 暂停 `ready`/`claimed`/`running` 的叶子任务（`POST /api/user/tasks/:taskId/pause`，幂等键必填，可选 `reason`）。任务立即进入 `paused`：保留 `assigned_session_id`、清理领取与租约，此后任何 claim 接口都不会再分发它，直到用户恢复（`POST /api/user/tasks/:taskId/resume`）按依赖检查回到 `ready`/`blocked`。聚合父任务与 `waiting_user` 任务不能暂停。
+
+对 AI 客户端的契约：暂停 `claimed`/`running` 任务时服务端即刻失效其 `claim_token`，并向 owning Bridge 下发尽力的中断命令（一个命令轮询周期内生效）。因此你在暂停后的 `complete`/`fail`/心跳/进度上报会因领取失效返回 `INVALID_CLAIM_TOKEN`（403），此时应把该任务当作已被接管，停止重试并丢弃本地 turn 状态，不要做补偿写入。
+
 ## 7. 同步已经在外部执行的任务
 
 `external_task_ref` 在连接/Workspace 对应的外部来源内用于去重。重复上报更新同一张卡片，不会生成重复 Task。
@@ -475,6 +499,8 @@ curl --fail-with-body -sS \
 - `GET /api/user/sessions/:sessionId` 返回该 Session、相关任务、任务消息、任务事件和 `session_activities`，供会话对话框组合时间线。默认返回最新 100 条结构化活动；用响应中的 opaque `pagination.activities.oldest_cursor` 作为 `before_activity_cursor` 继续加载更早记录，`limit` 范围为 `1..200`。旧 `before_activity_id` 只在滚动升级窗口内兼容，新客户端不得依赖。
 - `POST /api/user/sessions/:sessionId/turns` 接收 `{ "content": "..." }` 和 `Idempotency-Key`。目标 Session 必须仍在线；服务端原子创建定向分配给它的 `ready` Task、用户消息和 `user_message` 活动，并返回 HTTP `201`。
 
+会话顶部不再提供过程详情开关；同步策略固定为只保留 AI 回复。结构化问题使用独立请求流，仍会正常显示和回答。
+
 新 Task 的临时名称从消息的第一个非空句生成，最长 80 个 Unicode code point；当前不会额外调用模型命名。Codex Bridge 通常由 SSE 近实时唤醒并领取它，通知不可用时由自适应轮询兜底。若该 thread 的上一轮仍在执行，新 Task 只会排队；0.3 仍没有可靠的运行中 steer、网页 interrupt 或网页审批。
 
 `pagination.legacy` 会分别标记旧任务、消息或事件是否达到兼容读取上限。旧表本身不是完整的 Session 事件流；出现截断标记时，网页会明确提示只展示最近的兼容记录，而 Bridge 接入后的结构化活动仍可持续向前分页。
@@ -484,7 +510,7 @@ curl --fail-with-body -sS \
 `occurred_at/source_order/id` 排序，不能再按插入时间或把 bigint 转成 JavaScript number。
 顶层 `history_sync` 在尚无记录时为 `null`；否则包含状态、turn 上限、已扫描/总 turn 数、
 当前历史行数、续传游标、错误和起止/更新时间。该接口按 Workspace 成员权限读取，所以
-导入的用户消息、AI 回复和思考摘要对当前 Workspace 的所有成员可见。
+新导入的 AI 回复对当前 Workspace 的所有成员可见。
 
 ## 稳定错误码
 

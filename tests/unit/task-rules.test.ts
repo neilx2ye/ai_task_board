@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   aggregateParentStatus,
-  calculateLeafProgress,
   compareClaimCandidates,
   hasRequiredCapabilities,
+  isTaskRunningStatus,
   isTaskStatusTransitionAllowed,
   matchesCapabilities,
+  taskDisplayStatus,
 } from "@/lib/domain/task-rules";
 import type { TaskStatus } from "@/lib/types/database";
 
@@ -17,10 +18,57 @@ const statuses: TaskStatus[] = [
   "running",
   "waiting_user",
   "blocked",
+  "paused",
   "completed",
   "failed",
   "cancelled",
 ];
+
+describe("task display status", () => {
+  it("does not present an unassigned legacy leaf as reserved", () => {
+    expect(
+      taskDisplayStatus({ status: "ready", assigned_session_id: null }),
+    ).toBe("inbox");
+  });
+
+  it("keeps assigned leaves and aggregate parents in the reserved flow", () => {
+    expect(
+      taskDisplayStatus({
+        status: "ready",
+        assigned_session_id: "session-1",
+      }),
+    ).toBe("ready");
+    expect(
+      taskDisplayStatus(
+        { status: "ready", assigned_session_id: null },
+        true,
+      ),
+    ).toBe("ready");
+  });
+
+  it("does not infer completion for any terminal or active status", () => {
+    expect(
+      taskDisplayStatus({ status: "running", assigned_session_id: null }),
+    ).toBe("running");
+    expect(
+      taskDisplayStatus({ status: "completed", assigned_session_id: null }),
+    ).toBe("completed");
+  });
+});
+
+describe("task running status", () => {
+  it("treats claimed and running as actively handled by a session", () => {
+    expect(isTaskRunningStatus("claimed")).toBe(true);
+    expect(isTaskRunningStatus("running")).toBe(true);
+  });
+
+  it("excludes queued, waiting, and terminal states", () => {
+    for (const status of statuses) {
+      if (status === "claimed" || status === "running") continue;
+      expect(isTaskRunningStatus(status)).toBe(false);
+    }
+  });
+});
 
 describe("parent status aggregation", () => {
   it.each([
@@ -33,65 +81,19 @@ describe("parent status aggregation", () => {
     [["ready", "failed", "blocked"], "failed"],
     [["ready", "blocked", "inbox"], "ready"],
     [["blocked", "inbox", "cancelled"], "blocked"],
+    [["paused"], "paused"],
+    [["completed", "paused", "cancelled"], "paused"],
+    [["blocked", "paused"], "blocked"],
+    [["ready", "paused"], "ready"],
+    [["failed", "paused"], "failed"],
+    [["running", "paused"], "running"],
+    [["waiting_user", "paused"], "waiting_user"],
   ] as Array<[TaskStatus[], TaskStatus]>)(
     "aggregates %j as %s using database precedence",
     (children, expected) => {
       expect(aggregateParentStatus(children)).toBe(expected);
     },
   );
-});
-
-describe("multi-level leaf progress", () => {
-  it("counts only non-cancelled leaves at arbitrary depth", () => {
-    const tasks = [
-      { id: "root", parent_task_id: null, status: "running" },
-      { id: "leaf-a", parent_task_id: "root", status: "completed" },
-      { id: "branch-b", parent_task_id: "root", status: "ready" },
-      { id: "leaf-b1", parent_task_id: "branch-b", status: "completed" },
-      { id: "branch-b2", parent_task_id: "branch-b", status: "blocked" },
-      { id: "leaf-b2a", parent_task_id: "branch-b2", status: "ready" },
-      { id: "cancelled-leaf", parent_task_id: "root", status: "cancelled" },
-    ] as const;
-
-    expect(calculateLeafProgress(tasks, "root")).toEqual({
-      completed_leaves: 2,
-      total_leaves: 3,
-    });
-  });
-
-  it.each([
-    ["ready", { completed_leaves: 0, total_leaves: 1 }],
-    ["completed", { completed_leaves: 1, total_leaves: 1 }],
-  ] as const)("treats a %s root leaf as one unit", (status, expected) => {
-    expect(
-      calculateLeafProgress([{ id: "root", parent_task_id: null, status }], "root"),
-    ).toEqual(expected);
-  });
-
-  it("does not turn an aggregation parent back into a leaf when all children cancel", () => {
-    expect(
-      calculateLeafProgress(
-        [
-          { id: "root", parent_task_id: null, status: "blocked" },
-          { id: "cancelled", parent_task_id: "root", status: "cancelled" },
-        ],
-        "root",
-      ),
-    ).toEqual({ completed_leaves: 0, total_leaves: 0 });
-  });
-
-  it("returns zero progress for an absent or cancelled root", () => {
-    const tasks = [{ id: "root", parent_task_id: null, status: "cancelled" }] as const;
-
-    expect(calculateLeafProgress(tasks, "missing")).toEqual({
-      completed_leaves: 0,
-      total_leaves: 0,
-    });
-    expect(calculateLeafProgress(tasks, "root")).toEqual({
-      completed_leaves: 0,
-      total_leaves: 0,
-    });
-  });
 });
 
 describe("capability matching", () => {
@@ -156,13 +158,14 @@ describe("claim candidate ordering", () => {
 describe("task state transitions", () => {
   const allowedLeafTransitions: Record<TaskStatus, TaskStatus[]> = {
     inbox: ["ready", "blocked", "cancelled"],
-    ready: ["claimed", "cancelled"],
+    ready: ["claimed", "paused", "cancelled"],
     claimed: [
       "claimed",
       "running",
       "ready",
       "waiting_user",
       "blocked",
+      "paused",
       "completed",
       "failed",
       "cancelled",
@@ -173,12 +176,14 @@ describe("task state transitions", () => {
       "ready",
       "waiting_user",
       "blocked",
+      "paused",
       "completed",
       "failed",
       "cancelled",
     ],
     waiting_user: ["ready", "blocked", "cancelled"],
     blocked: ["ready", "cancelled"],
+    paused: ["ready", "blocked", "cancelled"],
     completed: ["ready", "blocked", "cancelled"],
     failed: ["ready", "blocked", "cancelled"],
     cancelled: [],
@@ -202,6 +207,7 @@ describe("task state transitions", () => {
       "running",
       "waiting_user",
       "failed",
+      "paused",
       "completed",
     ];
 

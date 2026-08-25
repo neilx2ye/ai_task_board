@@ -15,22 +15,38 @@ import {
   CheckCircle2Icon,
   ChevronRightIcon,
   CircleDotIcon,
+  FolderIcon,
   HistoryIcon,
   ListChecksIcon,
   LoaderCircleIcon,
+  LockKeyholeIcon,
+  PaperclipIcon,
   SendIcon,
+  TargetIcon,
   TerminalIcon,
   UserIcon,
   WrenchIcon,
+  XIcon,
+  ZapIcon,
 } from "lucide-react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { ErrorState, LoadingBlock } from "@/components/states";
+import { connectionRuntimeColorMeta } from "@/components/connection-meta";
 import {
   ACTOR_TYPE_LABEL,
   eventTypeLabel,
   SESSION_STATUS_META,
+  sessionStatusMeta,
 } from "@/components/task-meta";
 import { reduceAppServerActivityStream } from "@/components/session-activity-stream";
+import { StructuredUserInputDialog } from "@/components/structured-user-input-form";
+import {
+  activityDetailsData,
+  summarizeTokenUsage,
+  type TokenUsageSummary,
+} from "@/components/session-activity-present";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,25 +56,48 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDateTime } from "@/components/utils";
 import {
   bridgeSupportsHistorySync,
-  supportsBridgeSettings,
+  supportsHistorySyncStatus,
 } from "@/hooks/use-bridge-config";
 import {
   compareSessionActivities,
   sessionActivityOccurredAt,
   useCreateSessionTurn,
+  useMarkSessionCompletionsViewed,
   useSessionConversation,
   mergeSessionConversationPages,
 } from "@/hooks/use-sessions";
+import { useUnsentPrompt } from "@/hooks/use-unsent-prompt";
+import { isSessionAlive } from "@/lib/domain/session-presence";
+import { directoryNameFromPath } from "@/lib/domain/session-directory-groups";
 import {
-  effectiveSessionStatus,
-  isSessionAlive,
-} from "@/lib/domain/session-presence";
+  DEFAULT_CODEX_REASONING_EFFORT,
+  REASONING_EFFORT_LABELS,
+  agentModelOptions,
+  codexModelOption,
+  compatibleReasoningEffort,
+  defaultCodexModel,
+  reasoningEffortLabel,
+} from "@/lib/codex-models";
+import {
+  agentDisplayName,
+  isAntigravityPlatform,
+  isClaudeCodePlatform,
+  isKimiPlatform,
+} from "@/lib/agent-platforms";
 import type {
   ActorType,
+  ArtifactRow,
   Json,
   SessionActivityKind,
   SessionHistorySync,
@@ -87,6 +126,8 @@ type TimelineEntry =
       createdAt: string;
       event: TaskEventRow;
     };
+
+const INHERIT_AGENT_SETTING = "__agent_default__";
 
 const TOOL_ACTIVITY_KINDS = new Set<SessionActivityKind>([
   "command",
@@ -149,13 +190,13 @@ const HISTORY_SYNC_COPY: Record<
   unauthorized: {
     label: "历史同步未授权",
     description:
-      "Bridge 尚未上报历史同步能力或本机授权。请升级至 0.4.0+，并在设备本机设置 CODEX_BRIDGE_ALLOW_HISTORY_SYNC=true 后再开启。",
+      "Bridge 尚未上报历史同步能力。请升级至 0.4.0+，再到连接的 Bridge 设置开启历史同步。",
     className: "border-slate-200 bg-slate-50 text-slate-700",
   },
   "not-started": {
     label: "历史尚未同步",
     description:
-      "此 Thread 未开启历史同步，或设备尚未开始。请到连接的 Bridge 设置确认期望值与本机授权。",
+      "此 Thread 未开启历史同步，或设备尚未开始。请到连接的 Bridge 设置确认期望值。",
     className: "border-slate-200 bg-slate-50 text-slate-700",
   },
   syncing: {
@@ -176,7 +217,7 @@ const HISTORY_SYNC_COPY: Record<
   },
   failed: {
     label: "历史同步失败",
-    description: "Bridge 无法完成本次历史读取，请检查本机授权和设备日志。",
+    description: "Bridge 无法完成本次历史读取，请检查设备日志。",
     className: "border-red-200 bg-red-50 text-red-800",
   },
 };
@@ -288,18 +329,78 @@ function TimelineMeta({
   );
 }
 
+const MESSAGE_MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => {
+    const opensNewTab = Boolean(href && !href.startsWith("#"));
+    return (
+      <a
+        href={href}
+        target={opensNewTab ? "_blank" : undefined}
+        rel={opensNewTab ? "noreferrer" : undefined}
+      >
+        {children}
+      </a>
+    );
+  },
+  // Do not make an AI-authored Markdown image trigger a third-party request.
+  img: ({ alt }) => (
+    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+      {alt ? `图片：${alt}` : "图片"}
+    </span>
+  ),
+};
+
+export function AssistantMessageContent({ content }: { content: string }) {
+  return (
+    <div
+      data-message-format="markdown"
+      className={cn(
+        "min-w-0 max-w-full overflow-x-auto text-sm leading-relaxed break-words",
+        "[&>:first-child]:mt-0 [&>:last-child]:mb-0",
+        "[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
+        "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
+        "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:font-semibold",
+        "[&_p]:my-2 [&_p]:whitespace-pre-wrap",
+        "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5",
+        "[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5",
+        "[&_li_p]:my-0",
+        "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-indigo-300 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
+        "[&_a]:font-medium [&_a]:text-indigo-700 [&_a]:underline [&_a]:underline-offset-2",
+        "[&_code]:rounded [&_code]:bg-black/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em]",
+        "[&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-slate-950 [&_pre]:p-3 [&_pre]:text-slate-50",
+        "[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-xs [&_pre_code]:leading-relaxed",
+        "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
+        "[&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
+        "[&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top",
+        "[&_hr]:my-4 [&_hr]:border-border",
+        "[&_input]:mr-2",
+      )}
+    >
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={MESSAGE_MARKDOWN_COMPONENTS}
+        skipHtml
+      >
+        {content}
+      </Markdown>
+    </div>
+  );
+}
+
 function MessageBubble({
   actorType,
   content,
   task,
   createdAt,
   historySource = false,
+  images = [],
 }: {
   actorType: ActorType;
   content: string;
   task: string | null;
   createdAt: string;
   historySource?: boolean;
+  images?: ArtifactRow[];
 }) {
   const fromUser = actorType === "user";
 
@@ -334,12 +435,46 @@ function MessageBubble({
           createdAt={createdAt}
           historySource={historySource}
         />
-        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-          {content}
-        </p>
+        {images.length ? (
+          <div className="grid max-w-xl grid-cols-2 gap-2 sm:grid-cols-3">
+            {images.map((image) => (
+              <a
+                key={image.id}
+                href={`/api/user/artifacts/${image.id}/content`}
+                target="_blank"
+                rel="noreferrer"
+                className="overflow-hidden rounded-md border border-border bg-background"
+                title={image.name}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/user/artifacts/${image.id}/content`}
+                  alt={image.name}
+                  className="aspect-square w-full object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        ) : null}
+        {fromUser ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+            {content}
+          </p>
+        ) : (
+          <AssistantMessageContent content={content} />
+        )}
       </div>
     </div>
   );
+}
+
+function PendingImagePreview({ file }: { file: File }) {
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => {
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt="" className="size-12 rounded object-cover" />;
 }
 
 function ToolActivity({
@@ -403,7 +538,9 @@ function ReasoningSummary({
   activity: SessionActivityItem;
   task: string | null;
 }) {
-  const data = formattedData(activity.data);
+  // data 里通常只有 app-server 协议信封字段，剥离后为空则不展示详情区。
+  const data = activityDetailsData(activity.data);
+  const formatted = data === null ? null : JSON.stringify(data, null, 2);
 
   return (
     <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5">
@@ -421,11 +558,82 @@ function ReasoningSummary({
             {activity.content}
           </p>
         ) : null}
-        {data ? (
+        {formatted ? (
           <details className="mt-2 text-xs text-amber-950">
             <summary className="cursor-pointer font-medium">查看结构化摘要</summary>
             <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-amber-100/70 p-2 whitespace-pre-wrap">
-              {data}
+              {formatted}
+            </pre>
+          </details>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const TOKEN_USAGE_ROWS: ReadonlyArray<{
+  key: keyof Omit<TokenUsageSummary, "contextWindow">;
+  label: string;
+}> = [
+  { key: "input", label: "输入" },
+  { key: "cachedInput", label: "缓存命中" },
+  { key: "output", label: "输出" },
+  { key: "reasoningOutput", label: "其中思考输出" },
+  { key: "total", label: "总计" },
+];
+
+function UsageActivity({
+  activity,
+  task,
+}: {
+  activity: SessionActivityItem;
+  task: string | null;
+}) {
+  const summary = summarizeTokenUsage(activity.data);
+  const raw = formattedData(activity.data);
+
+  return (
+    <div className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+      <ZapIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{ACTIVITY_LABEL.usage}</p>
+        <TimelineMeta
+          actorType={activity.actor_type}
+          task={task}
+          createdAt={sessionActivityOccurredAt(activity)}
+          historySource={isCodexHistoryActivity(activity)}
+        />
+        {summary ? (
+          <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {TOKEN_USAGE_ROWS.filter(({ key }) => summary[key] !== null).map(
+              ({ key, label }) => (
+                <div key={key} className="flex items-baseline gap-1">
+                  <dt>{label}</dt>
+                  <dd className="font-medium text-foreground tabular-nums">
+                    {(summary[key] as number).toLocaleString()}
+                  </dd>
+                </div>
+              ),
+            )}
+            {summary.contextWindow !== null ? (
+              <div className="flex items-baseline gap-1">
+                <dt>上下文窗口</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {summary.contextWindow.toLocaleString()}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            用量字段无法识别，请展开原始数据查看。
+          </p>
+        )}
+        {raw ? (
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer font-medium">查看原始数据</summary>
+            <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-background/80 p-2 whitespace-pre-wrap">
+              {raw}
             </pre>
           </details>
         ) : null}
@@ -493,9 +701,11 @@ function GeneralActivity({
 function ActivityItem({
   activity,
   taskById,
+  artifactsByTaskId,
 }: {
   activity: SessionActivityItem;
   taskById: Map<string, TaskRow>;
+  artifactsByTaskId: Map<string, ArtifactRow[]>;
 }) {
   const task = taskLabel(activity.task_id, taskById);
 
@@ -510,11 +720,15 @@ function ActivityItem({
         task={task}
         createdAt={sessionActivityOccurredAt(activity)}
         historySource={isCodexHistoryActivity(activity)}
+        images={activity.task_id ? artifactsByTaskId.get(activity.task_id) ?? [] : []}
       />
     );
   }
   if (activity.kind === "reasoning") {
     return <ReasoningSummary activity={activity} task={task} />;
+  }
+  if (activity.kind === "usage") {
+    return <UsageActivity activity={activity} task={task} />;
   }
   if (TOOL_ACTIVITY_KINDS.has(activity.kind)) {
     return <ToolActivity activity={activity} task={task} />;
@@ -609,20 +823,127 @@ function buildTimeline(
   });
 }
 
+export function conversationMessageActivities(
+  activities: readonly SessionActivityItem[],
+): SessionActivityItem[] {
+  return reduceAppServerActivityStream(activities).filter(
+    (activity) =>
+      activity.kind === "user_message" ||
+      activity.kind === "assistant_message",
+  );
+}
+
+function sessionContentDescription(session: SessionListItem): string {
+  const location = session.working_directory
+    ? `${session.connection.name} › ${session.working_directory}`
+    : session.connection.name;
+  return `${location} · 展示用户消息与 AI 回复`;
+}
+
+/**
+ * 窗口头部的设备 / 项目徽标：设备徽标与侧边栏设备圆点、
+ * 窗口顶部标识条同色系，多窗口并排时能一眼对上号。
+ */
+function SessionLocationBadges({
+  session,
+  className,
+}: {
+  session: SessionListItem;
+  className?: string;
+}) {
+  const color = connectionRuntimeColorMeta(
+    session.connection.id,
+    session.connection.platform,
+    session.platform,
+  );
+  const projectName = session.working_directory
+    ? directoryNameFromPath(session.working_directory)
+    : null;
+
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      <Badge
+        variant="outline"
+        className={cn("max-w-full gap-1.5", color.badgeClass)}
+        title={`设备：${session.connection.name}`}
+      >
+        <span
+          aria-hidden
+          className={cn("size-2 shrink-0 rounded-full", color.dotClass)}
+        />
+        <span className="truncate">{session.connection.name}</span>
+      </Badge>
+      {projectName ? (
+        <Badge
+          variant="outline"
+          className="max-w-full gap-1 text-muted-foreground"
+          title={session.working_directory ?? undefined}
+        >
+          <FolderIcon aria-hidden />
+          <span className="truncate">{projectName}</span>
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 function SessionConversationContent({
   session,
   active,
   presentation,
+  onClose,
 }: {
   session: SessionListItem | null;
   active: boolean;
   presentation: "dialog" | "panel";
+  onClose?: () => void;
 }) {
   const sessionId = session?.id ?? null;
   const conversationQuery = useSessionConversation(sessionId);
   const createTurn = useCreateSessionTurn(sessionId ?? "");
-  const [composer, setComposer] = useState("");
+  const { draft: composer, setDraft: setComposer } = useUnsentPrompt(sessionId);
+  const [images, setImages] = useState<File[]>([]);
+  const modelOptions = useMemo(
+    () =>
+      agentModelOptions(
+        session?.connection.model_catalog,
+        session?.platform,
+      ),
+    [session?.connection.model_catalog, session?.platform],
+  );
+  const recordedModel = session?.configured_model ?? session?.model;
+  const initialModel =
+    recordedModel ??
+    (!isKimiPlatform(session?.platform) &&
+      !isAntigravityPlatform(session?.platform) &&
+      !isClaudeCodePlatform(session?.platform) &&
+      modelOptions.length
+      ? defaultCodexModel(modelOptions)
+      : INHERIT_AGENT_SETTING);
+  const initialModelOption = codexModelOption(initialModel, modelOptions);
+  const [model, setModel] = useState(initialModel);
+  const [reasoningEffort, setReasoningEffort] = useState<string>(() => {
+    if (
+      initialModel === INHERIT_AGENT_SETTING &&
+      !session?.configured_reasoning_effort
+    ) {
+      return INHERIT_AGENT_SETTING;
+    }
+    return compatibleReasoningEffort(
+      initialModel,
+      session?.configured_reasoning_effort ??
+        initialModelOption?.defaultEffort ??
+        DEFAULT_CODEX_REASONING_EFFORT,
+      modelOptions,
+    );
+  });
+  const [goalMode, setGoalMode] = useState<"inherit" | "on" | "off">("inherit");
+  const [steerMode, setSteerMode] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [dismissedInputRequestId, setDismissedInputRequestId] =
+    useState<string | null>(null);
+  const turnSettingsTouchedRef = useRef(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const prependSnapshotRef = useRef<{
@@ -636,12 +957,27 @@ function SessionConversationContent({
     [conversationQuery.data?.pages],
   );
   const currentSession = details?.session ?? session;
+  const latestTurnSettings = useMemo(
+    () =>
+      [...(details?.tasks ?? [])]
+        .reverse()
+        .find((task) => task.model || task.reasoning_effort) ?? null,
+    [details?.tasks],
+  );
   const taskById = useMemo(
     () => new Map((details?.tasks ?? []).map((task) => [task.id, task])),
     [details?.tasks],
   );
+  const artifactsByTaskId = useMemo(() => {
+    const grouped = new Map<string, ArtifactRow[]>();
+    for (const artifact of details?.artifacts ?? []) {
+      if (!artifact.mime_type.startsWith("image/")) continue;
+      grouped.set(artifact.task_id, [...(grouped.get(artifact.task_id) ?? []), artifact]);
+    }
+    return grouped;
+  }, [details?.artifacts]);
   const activities = useMemo(
-    () => reduceAppServerActivityStream(details?.activities ?? []),
+    () => conversationMessageActivities(details?.activities ?? []),
     [details?.activities],
   );
   const timeline = useMemo(
@@ -653,9 +989,23 @@ function SessionConversationContent({
       ),
     [activities, details?.events, details?.messages],
   );
+  const pendingStructuredRequest = useMemo(
+    () =>
+      [...(details?.input_requests ?? [])]
+        .reverse()
+        .find(
+          (request) =>
+            request.status === "pending" &&
+            taskById.get(request.task_id)?.awaiting_user_input === true,
+        ) ?? null,
+    [details?.input_requests, taskById],
+  );
+  const choicePopupOpen =
+    pendingStructuredRequest !== null &&
+    pendingStructuredRequest.id !== dismissedInputRequestId;
   const latestTimelineKey = timeline.at(-1)?.key ?? null;
   const latestActivityId = details?.activities.at(-1)?.id ?? null;
-  const timelineRevision = `${latestTimelineKey ?? "empty"}:${latestActivityId ?? "none"}`;
+  const timelineRevision = `${latestTimelineKey ?? "empty"}:${latestActivityId ?? "none"}:${pendingStructuredRequest?.id ?? "no-input"}`;
   const pageCount = conversationQuery.data?.pages.length ?? 0;
   const legacyTruncated = details
     ? Object.entries(details.pagination.legacy)
@@ -667,6 +1017,22 @@ function SessionConversationContent({
     stickToBottomRef.current = true;
     prependSnapshotRef.current = null;
   }, [active, sessionId]);
+
+  useEffect(() => {
+    if (turnSettingsTouchedRef.current || !latestTurnSettings) return;
+    const nextModel = latestTurnSettings.model ?? model;
+    const nextModelOption = codexModelOption(nextModel, modelOptions);
+    setModel(nextModel);
+    setReasoningEffort(
+      compatibleReasoningEffort(
+        nextModel,
+        latestTurnSettings.reasoning_effort ??
+          nextModelOption?.defaultEffort ??
+          reasoningEffort,
+        modelOptions,
+      ),
+    );
+  }, [latestTurnSettings, model, modelOptions, reasoningEffort]);
 
   useLayoutEffect(() => {
     const snapshot = prependSnapshotRef.current;
@@ -706,12 +1072,31 @@ function SessionConversationContent({
   const onSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = composer.trim();
-    if (!content || !sessionId) return;
+    if ((!content && !images.length) || !sessionId) return;
+    if (steerMode && images.length) {
+      setSendError(
+        "Steer（实时调整）模式暂不支持附带图片；请关闭 Steer 或移除图片后重试",
+      );
+      return;
+    }
 
     setSendError(null);
     try {
-      await createTurn.mutateAsync({ content });
+      await createTurn.mutateAsync({
+        content: content || "请查看附带的图片。",
+        images,
+        model: model === INHERIT_AGENT_SETTING ? null : model,
+        reasoning_effort:
+          reasoningEffort === INHERIT_AGENT_SETTING
+            ? null
+            : reasoningEffort,
+        goal_mode: goalMode === "inherit" ? null : goalMode === "on",
+        steer: steerMode,
+      });
       setComposer("");
+      setImages([]);
+      setGoalMode("inherit");
+      if (imageInputRef.current) imageInputRef.current.value = "";
     } catch (error) {
       setSendError(
         error instanceof Error ? error.message : "发送失败，请稍后重试",
@@ -719,11 +1104,37 @@ function SessionConversationContent({
     }
   };
 
-  const sessionStatus = currentSession
-    ? effectiveSessionStatus(currentSession)
-    : "offline";
-  const statusMeta = SESSION_STATUS_META[sessionStatus];
-  const canSend = currentSession ? isSessionAlive(currentSession) : false;
+  const sessionAlive = currentSession ? isSessionAlive(currentSession) : false;
+  // 徽标与侧边栏共用同一套规则：未查看完成时显示「待查看」，交互清零后显示「已完成」。
+  const statusMeta = currentSession
+    ? sessionStatusMeta(currentSession)
+    : SESSION_STATUS_META.offline;
+  const canSend = sessionAlive && !pendingStructuredRequest;
+  const selectedModel = codexModelOption(model, modelOptions);
+  const availableEfforts =
+    selectedModel?.efforts ??
+    (session?.platform?.toLowerCase().includes("codex")
+      ? Object.keys(REASONING_EFFORT_LABELS)
+      : []);
+  const customModel =
+    selectedModel || model === INHERIT_AGENT_SETTING ? null : model;
+  const customReasoningEffort =
+    reasoningEffort === INHERIT_AGENT_SETTING ||
+    availableEfforts.includes(reasoningEffort)
+    ? null
+    : reasoningEffort;
+
+  const onModelChange = (value: string) => {
+    turnSettingsTouchedRef.current = true;
+    setModel(value);
+    if (value === INHERIT_AGENT_SETTING) {
+      setReasoningEffort(INHERIT_AGENT_SETTING);
+      return;
+    }
+    setReasoningEffort((current) =>
+      compatibleReasoningEffort(value, current, modelOptions),
+    );
+  };
 
   return (
     <>
@@ -732,26 +1143,59 @@ function SessionConversationContent({
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle>{currentSession?.name ?? "会话详情"}</DialogTitle>
             <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+            {currentSession ? (
+              <SessionLocationBadges session={currentSession} />
+            ) : null}
           </div>
           <DialogDescription>
             {currentSession
-              ? `${currentSession.connection.name} · 对话、思考摘要与工具过程`
+              ? sessionContentDescription(currentSession)
               : "加载会话历史"}
           </DialogDescription>
         </DialogHeader>
       ) : (
-        <header className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="min-w-0 truncate text-base font-semibold">
-              {currentSession?.name ?? "选择一个 Thread"}
-            </h2>
-            <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+        <header className="shrink-0 border-b border-border">
+          {currentSession ? (
+            <div
+              aria-hidden
+              className={cn(
+                "h-1 w-full",
+                connectionRuntimeColorMeta(
+                  currentSession.connection.id,
+                  currentSession.connection.platform,
+                  currentSession.platform,
+                ).barClass,
+              )}
+            />
+          ) : null}
+          <div className="px-4 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
+                {currentSession?.name ?? "选择一个 Thread"}
+              </h2>
+              <Badge className={statusMeta.badgeClass}>{statusMeta.label}</Badge>
+              {onClose ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onClose}
+                  aria-label={`关闭 Thread「${currentSession?.name ?? ""}」面板`}
+                  title="关闭面板（取消选中并清除已同步历史）"
+                  className="-mr-2 size-7 shrink-0"
+                >
+                  <XIcon className="size-4" />
+                </Button>
+              ) : null}
+            </div>
+            {currentSession ? (
+              <SessionLocationBadges session={currentSession} className="mt-2" />
+            ) : (
+              <p className="mt-1 text-sm text-muted-foreground">
+                从左侧选择一个 Thread 查看上下文
+              </p>
+            )}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {currentSession
-              ? `${currentSession.connection.name} · 对话、思考摘要与工具过程`
-              : "从左侧选择一个 Thread 查看上下文"}
-          </p>
         </header>
       )}
 
@@ -769,7 +1213,10 @@ function SessionConversationContent({
       >
         {details &&
         currentSession &&
-        supportsBridgeSettings(currentSession.connection) ? (
+        supportsHistorySyncStatus({
+          bridge_version: currentSession.connection.bridge_version,
+          platform: currentSession.platform,
+        }) ? (
           <div className="mx-auto mb-4 w-full max-w-4xl">
             <HistorySyncStatus
               historySync={details?.history_sync ?? null}
@@ -785,12 +1232,12 @@ function SessionConversationContent({
           />
         ) : conversationQuery.isLoading ? (
           <LoadingBlock label="加载会话历史…" />
-        ) : timeline.length === 0 ? (
+        ) : timeline.length === 0 && !pendingStructuredRequest ? (
           <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
             <BotIcon className="size-7 text-muted-foreground" />
             <p className="text-sm font-medium">还没有同步的会话记录</p>
             <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-              Bridge 回传的实时过程，以及启用后导入的 Codex 历史消息、回复和思考摘要会显示在这里。你也可以直接发送下一项任务。
+              历史同步会展示用户消息与 AI 回复；结构化问题仍通过独立流程显示。你也可以直接发送下一项任务。
             </p>
           </div>
         ) : (
@@ -828,6 +1275,7 @@ function SessionConversationContent({
                     <ActivityItem
                       activity={entry.activity}
                       taskById={taskById}
+                      artifactsByTaskId={artifactsByTaskId}
                     />
                   ) : entry.source === "message" ? (
                     <MessageBubble
@@ -842,6 +1290,27 @@ function SessionConversationContent({
                 </li>
               ))}
             </ol>
+            {pendingStructuredRequest ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <LockKeyholeIcon className="size-4 shrink-0 text-amber-700" />
+                  <p className="min-w-0 truncate text-sm font-medium text-amber-950">
+                    AI 正在等待你的选择
+                    {taskById.get(pendingStructuredRequest.task_id)?.title
+                      ? `：${taskById.get(pendingStructuredRequest.task_id)!.title}`
+                      : ""}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDismissedInputRequestId(null)}
+                >
+                  打开选择框
+                </Button>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -852,9 +1321,13 @@ function SessionConversationContent({
           className="shrink-0 border-t border-border bg-card px-3 py-3 sm:px-6 sm:py-4"
         >
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-2">
-            {!canSend ? (
+            {!sessionAlive ? (
               <p className="text-xs text-amber-700">
                 会话当前离线。恢复心跳后才能发送下一项任务。
+              </p>
+            ) : pendingStructuredRequest ? (
+              <p className="text-xs text-amber-700">
+                当前 turn 正在等待你的选择，提交后会原地继续。
               </p>
             ) : null}
             {sendError ? (
@@ -862,7 +1335,53 @@ function SessionConversationContent({
                 {sendError}
               </p>
             ) : null}
-            <div className="flex items-end gap-2">
+            {images.length ? (
+              <div className="flex flex-wrap gap-2" aria-label="待发送图片">
+                {images.map((image, index) => (
+                  <div
+                    key={`${image.name}-${image.lastModified}-${index}`}
+                    className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+                  >
+                    <PendingImagePreview file={image} />
+                    <span className="max-w-40 truncate">{image.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`移除图片 ${image.name}`}
+                      onClick={() =>
+                        setImages((current) =>
+                          current.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      <XIcon className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring/50">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  const combined = [...images, ...selected].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    event.target.value = "";
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                  event.target.value = "";
+                }}
+              />
               <Textarea
                 aria-label="发送下一任务"
                 value={composer}
@@ -879,24 +1398,197 @@ function SessionConversationContent({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
+                onPaste={(event) => {
+                  const pasted = Array.from(event.clipboardData.files).filter((file) =>
+                    file.type.startsWith("image/"),
+                  );
+                  if (!pasted.length) return;
+                  event.preventDefault();
+                  const combined = [...images, ...pasted].slice(0, 4);
+                  if (
+                    combined.some((file) => file.size > 10 * 1024 * 1024) ||
+                    combined.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024
+                  ) {
+                    setSendError("单张图片不能超过 10 MiB，合计不能超过 20 MiB");
+                    return;
+                  }
+                  setImages(combined);
+                  setSendError(null);
+                }}
                 placeholder="输入下一项任务；Enter 发送，Shift + Enter 换行…"
-                className="min-h-20 flex-1 resize-none"
+                className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
               />
-              <Button
-                type="submit"
-                size="icon"
-                aria-label="发送下一任务"
-                disabled={!canSend || createTurn.isPending || !composer.trim()}
-                className="size-10 shrink-0"
-              >
-                <SendIcon />
-              </Button>
+              <div className="flex min-w-0 items-center gap-1.5 px-2 pb-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="添加图片"
+                  title="添加图片"
+                  disabled={!canSend || createTurn.isPending || images.length >= 4}
+                  onClick={() => imageInputRef.current?.click()}
+                  className="size-7 shrink-0 text-muted-foreground"
+                >
+                  <PaperclipIcon />
+                </Button>
+                <Select value={model} onValueChange={onModelChange}>
+                  <SelectTrigger
+                    aria-label="下一 Turn 的模型"
+                    title="选择下一 Turn 的模型"
+                    className="h-7 w-auto min-w-0 max-w-44 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={INHERIT_AGENT_SETTING}>
+                      使用 {agentDisplayName(session?.platform)} 默认
+                    </SelectItem>
+                    {customModel ? (
+                      <SelectItem value={customModel}>{customModel}</SelectItem>
+                    ) : null}
+                    {modelOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={reasoningEffort}
+                  onValueChange={(value) => {
+                    turnSettingsTouchedRef.current = true;
+                    setReasoningEffort(value);
+                  }}
+                >
+                  <SelectTrigger
+                    aria-label="下一 Turn 的思考强度"
+                    title="选择下一 Turn 的思考强度"
+                    className="h-7 w-auto min-w-0 max-w-40 border-0 bg-muted/70 px-2 py-1 text-xs shadow-none"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={INHERIT_AGENT_SETTING}>
+                      使用模型默认
+                    </SelectItem>
+                    {customReasoningEffort ? (
+                      <SelectItem value={customReasoningEffort}>
+                        {customReasoningEffort}
+                      </SelectItem>
+                    ) : null}
+                    {availableEfforts.map((effort) => (
+                      <SelectItem key={effort} value={effort}>
+                        {reasoningEffortLabel(
+                          effort,
+                          selectedModel?.effortDescriptions[effort],
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!isAntigravityPlatform(session?.platform) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label="下一 Turn 的 Goal 模式"
+                    aria-pressed={goalMode !== "inherit"}
+                    title={
+                      goalMode === "on"
+                        ? "Goal 开启：以本条 Prompt 为目标；点击切换为关闭"
+                        : goalMode === "off"
+                          ? "Goal 关闭：发送前清除当前目标；点击恢复不变"
+                          : "Goal 不变：点击开启 Goal 模式"
+                    }
+                    onClick={() =>
+                      setGoalMode((current) =>
+                        current === "inherit"
+                          ? "on"
+                          : current === "on"
+                            ? "off"
+                            : "inherit",
+                      )
+                    }
+                    className={cn(
+                      "h-7 shrink-0 gap-1 px-2 text-xs",
+                      goalMode === "on"
+                        ? "bg-primary/15 text-primary hover:bg-primary/20"
+                        : goalMode === "off"
+                          ? "bg-destructive/10 text-destructive hover:bg-destructive/15"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    <TargetIcon className="size-3.5" />
+                    {goalMode === "on"
+                      ? "Goal 开启"
+                      : goalMode === "off"
+                        ? "Goal 关闭"
+                        : "Goal 不变"}
+                  </Button>
+                )}
+                {session?.platform?.toLowerCase().includes("codex") ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label="Steer 实时调整模式"
+                    aria-pressed={steerMode}
+                    title={
+                      steerMode
+                        ? "Steer 开启：Thread 忙碌时，消息会实时调整正在运行的 Turn"
+                        : "Steer 关闭：消息按顺序排队，当前 Turn 完成后执行"
+                    }
+                    disabled={!canSend || createTurn.isPending}
+                    onClick={() => setSteerMode((current) => !current)}
+                    className={cn(
+                      "h-7 shrink-0 gap-1 px-2 text-xs",
+                      steerMode
+                        ? "bg-primary/15 text-primary hover:bg-primary/20"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    <ZapIcon
+                      className={cn(
+                        "size-3.5",
+                        steerMode && "fill-current",
+                      )}
+                    />
+                    Steer 实时调整
+                  </Button>
+                ) : null}
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label="发送下一任务"
+                  disabled={
+                    !canSend ||
+                    createTurn.isPending ||
+                    (!composer.trim() && !images.length)
+                  }
+                  className="ml-auto size-7 shrink-0"
+                >
+                  <SendIcon />
+                </Button>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              发送后会自动生成任务名称，并作为下一项任务预留给此会话。
-            </p>
           </div>
         </form>
+      ) : null}
+      {pendingStructuredRequest ? (
+        <StructuredUserInputDialog
+          request={pendingStructuredRequest}
+          open={choicePopupOpen}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setDismissedInputRequestId(pendingStructuredRequest.id);
+            }
+          }}
+          sourceTaskTitle={
+            taskById.get(pendingStructuredRequest.task_id)?.title ?? null
+          }
+          onAnswered={() => {
+            setDismissedInputRequestId(pendingStructuredRequest.id);
+            void conversationQuery.refetch({ cancelRefetch: false });
+          }}
+        />
       ) : null}
     </>
   );
@@ -905,13 +1597,24 @@ function SessionConversationContent({
 export function SessionConversationPanel({
   session,
   className,
+  onClose,
 }: {
   session: SessionListItem | null;
   className?: string;
+  onClose?: () => void;
 }) {
+  const markCompletionsViewed = useMarkSessionCompletionsViewed();
+  // 面板打开期间任务完成会重新计入「待查看」；用户与面板发生交互即视为已查看。
+  const markViewedOnInteraction = () => {
+    if (session && (session.unviewed_completed_count ?? 0) > 0) {
+      markCompletionsViewed.mutate(session.id);
+    }
+  };
   return (
     <section
       aria-label={session ? `${session.name} 的对话` : "Thread 对话"}
+      onPointerDown={markViewedOnInteraction}
+      onKeyDown={markViewedOnInteraction}
       className={cn(
         "flex h-full min-h-[36rem] flex-col overflow-hidden bg-card lg:min-h-0",
         className,
@@ -922,6 +1625,7 @@ export function SessionConversationPanel({
         session={session}
         active
         presentation="panel"
+        onClose={onClose}
       />
     </section>
   );

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -11,22 +11,7 @@ const authMocks = vi.hoisted(() => ({
   authorizeAISession: vi.fn(),
 }));
 
-const realtimeMocks = vi.hoisted(() => {
-  const state: {
-    change?: (payload: { new: Record<string, unknown> }) => void;
-    config?: Record<string, unknown>;
-    status?: (status: string) => void;
-  } = {};
-  const channel = {
-    on: vi.fn(),
-    subscribe: vi.fn(),
-  };
-  const admin = {
-    channel: vi.fn(),
-    removeChannel: vi.fn(),
-  };
-  return { admin, channel, state };
-});
+const queryMocks = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock("@/lib/auth/ai-auth", () => ({
   authenticateAIRequest: authMocks.authenticateAIRequest,
@@ -35,8 +20,8 @@ vi.mock("@/lib/auth/ai-auth", () => ({
     request.headers.get("x-ai-session-id")?.trim() ?? "",
 }));
 
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => realtimeMocks.admin,
+vi.mock("@/lib/db", () => ({
+  query: queryMocks.query,
 }));
 
 import { GET } from "@/app/api/ai/sessions/wake/route";
@@ -51,10 +36,8 @@ async function readChunk(
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   vi.clearAllMocks();
-  realtimeMocks.state.change = undefined;
-  realtimeMocks.state.config = undefined;
-  realtimeMocks.state.status = undefined;
 
   authMocks.authenticateAIRequest.mockResolvedValue({
     connectionId,
@@ -67,23 +50,22 @@ beforeEach(() => {
     tokenHash: "connection-token-hash",
     workspaceId,
   });
-  realtimeMocks.admin.channel.mockReturnValue(realtimeMocks.channel);
-  realtimeMocks.admin.removeChannel.mockResolvedValue("ok");
-  realtimeMocks.channel.on.mockImplementation(
-    (_type, config, callback) => {
-      realtimeMocks.state.config = config;
-      realtimeMocks.state.change = callback;
-      return realtimeMocks.channel;
-    },
-  );
-  realtimeMocks.channel.subscribe.mockImplementation((callback) => {
-    realtimeMocks.state.status = callback;
-    return realtimeMocks.channel;
-  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("AI Session wake SSE route", () => {
-  it("filters one authorized session and emits data-free wake hints", async () => {
+  it("polls the assigned task queue and emits data-free wake hints", async () => {
+    const pollDeferred: { resolve?: (rows: unknown[]) => void } = {};
+    queryMocks.query.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pollDeferred.resolve = (rows) => resolve({ rows });
+        }),
+    );
+
     const abortController = new AbortController();
     const request = new Request("http://localhost/api/ai/sessions/wake", {
       headers: {
@@ -99,56 +81,38 @@ describe("AI Session wake SSE route", () => {
       "no-cache, no-store, no-transform",
     );
     expect(response.headers.get("content-encoding")).toBe("identity");
-    expect(response.headers.get("content-type")).toContain(
-      "text/event-stream",
-    );
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(response.headers.get("x-accel-buffering")).toBe("no");
     expect(authMocks.authenticateAIRequest).toHaveBeenCalledWith(request);
     expect(authMocks.authorizeAISession).toHaveBeenCalledWith(
       expect.objectContaining({ connectionId, workspaceId }),
       sessionId,
     );
-    expect(realtimeMocks.state.config).toEqual({
-      event: "*",
-      schema: "public",
-      table: "tasks",
-      filter: `assigned_session_id=eq.${sessionId}`,
-    });
 
     const reader = response.body!.getReader();
     expect(await readChunk(reader)).toBe("retry: 2000\n\n");
-
-    realtimeMocks.state.status?.("SUBSCRIBED");
     expect(await readChunk(reader)).toBe("event: ready\ndata: {}\n\n");
 
-    realtimeMocks.state.change?.({
-      new: {
-        status: "running",
-        title: "must not be streamed",
-        claim_token: "must-not-leak",
-      },
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(queryMocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("assigned_session_id = $1::uuid"),
+      [sessionId],
+    );
+    pollDeferred.resolve?.([]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    pollDeferred.resolve?.([{ "?column?": 1 }]);
+    const wakeFrame = await vi.waitFor(async () => {
+      const frame = await readChunk(reader);
+      return frame;
     });
-    realtimeMocks.state.change?.({
-      new: {
-        status: "ready",
-        title: "must not be streamed",
-        description: "must-not-leak",
-      },
-    });
-    const wakeFrame = await readChunk(reader);
     expect(wakeFrame).toBe("event: wake\ndata: {}\n\n");
-    expect(wakeFrame).not.toContain("title");
-    expect(wakeFrame).not.toContain("claim");
 
     abortController.abort();
-    await vi.waitFor(() => {
-      expect(realtimeMocks.admin.removeChannel).toHaveBeenCalledWith(
-        realtimeMocks.channel,
-      );
-    });
   });
 
-  it("rejects an invalid token before creating a Realtime channel", async () => {
+  it("rejects an invalid token before starting the poll", async () => {
     authMocks.authenticateAIRequest.mockRejectedValueOnce(
       new AppError("AUTHENTICATION_REQUIRED", "invalid token"),
     );
@@ -160,13 +124,12 @@ describe("AI Session wake SSE route", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(realtimeMocks.admin.channel).not.toHaveBeenCalled();
+    expect(queryMocks.query).not.toHaveBeenCalled();
   });
 
-  it("cleans up a channel when Realtime setup throws synchronously", async () => {
-    realtimeMocks.channel.subscribe.mockImplementationOnce(() => {
-      throw new Error("socket setup failed");
-    });
+  it("emits a degraded frame and closes when the poll fails", async () => {
+    queryMocks.query.mockRejectedValueOnce(new Error("database unavailable"));
+
     const response = await GET(
       new Request("http://localhost/api/ai/sessions/wake", {
         headers: {
@@ -178,10 +141,9 @@ describe("AI Session wake SSE route", () => {
     const reader = response.body!.getReader();
 
     expect(await readChunk(reader)).toBe("retry: 2000\n\n");
+    expect(await readChunk(reader)).toBe("event: ready\ndata: {}\n\n");
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(await readChunk(reader)).toBe("event: degraded\ndata: {}\n\n");
     await expect(reader.read()).resolves.toMatchObject({ done: true });
-    expect(realtimeMocks.admin.removeChannel).toHaveBeenCalledWith(
-      realtimeMocks.channel,
-    );
   });
 });

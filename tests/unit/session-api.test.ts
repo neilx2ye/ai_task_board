@@ -18,7 +18,11 @@ const aiContext = {
 
 const domainMocks = vi.hoisted(() => ({
   createSessionTurn: vi.fn(),
+  listBridgeDirectories: vi.fn(),
   getSessionConversation: vi.fn(),
+  renameThread: vi.fn(),
+  deleteThread: vi.fn(),
+  markSessionCompletionsViewed: vi.fn(),
   reportSessionActivity: vi.fn(),
   syncSessions: vi.fn(),
 }));
@@ -26,11 +30,18 @@ const routeMocks = vi.hoisted(() => ({
   authenticateAIRequest: vi.fn(),
   authorizeAISession: vi.fn(),
   userContextForRequest: vi.fn(),
+  ownerContextForRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/domain/users", () => ({
   createSessionTurn: domainMocks.createSessionTurn,
   getSessionConversation: domainMocks.getSessionConversation,
+  renameThread: domainMocks.renameThread,
+  deleteThread: domainMocks.deleteThread,
+  markSessionCompletionsViewed: domainMocks.markSessionCompletionsViewed,
+}));
+vi.mock("@/lib/domain/bridge-directories", () => ({
+  listBridgeDirectories: domainMocks.listBridgeDirectories,
 }));
 vi.mock("@/lib/domain/tasks", () => ({
   reportSessionActivity: domainMocks.reportSessionActivity,
@@ -40,6 +51,7 @@ vi.mock("@/lib/domain/sessions", () => ({
 }));
 vi.mock("@/lib/http/user-route", () => ({
   userContextForRequest: routeMocks.userContextForRequest,
+  ownerContextForRequest: routeMocks.ownerContextForRequest,
 }));
 vi.mock("@/lib/auth/ai-auth", () => ({
   authenticateAIRequest: routeMocks.authenticateAIRequest,
@@ -50,7 +62,13 @@ vi.mock("@/lib/auth/ai-auth", () => ({
 
 import { POST as reportActivity } from "@/app/api/ai/sessions/activity/route";
 import { POST as syncSessions } from "@/app/api/ai/sessions/sync/route";
-import { GET as getConversation } from "@/app/api/user/sessions/[sessionId]/route";
+import { GET as listBridgeDirectories } from "@/app/api/user/bridge-directories/route";
+import {
+  DELETE as deleteThread,
+  GET as getConversation,
+  PATCH as renameThread,
+} from "@/app/api/user/sessions/[sessionId]/route";
+import { POST as markCompletionsViewed } from "@/app/api/user/sessions/[sessionId]/viewed/route";
 import { POST as createTurn } from "@/app/api/user/sessions/[sessionId]/turns/route";
 import { AppError } from "@/lib/domain/errors";
 import {
@@ -77,6 +95,10 @@ async function responseJson(response: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   routeMocks.userContextForRequest.mockResolvedValue(userContext);
+  routeMocks.ownerContextForRequest.mockResolvedValue({
+    ...userContext,
+    role: "owner",
+  });
   routeMocks.authenticateAIRequest.mockResolvedValue({
     connectionId,
     tokenHash: aiContext.tokenHash,
@@ -104,6 +126,13 @@ beforeEach(() => {
     session: { id: sessionId },
     tasks: [],
   });
+  domainMocks.listBridgeDirectories.mockResolvedValue({ directories: [] });
+  domainMocks.renameThread.mockResolvedValue({ command: { id: "rename" } });
+  domainMocks.deleteThread.mockResolvedValue({ command: { id: "delete" } });
+  domainMocks.markSessionCompletionsViewed.mockResolvedValue({
+    session_id: sessionId,
+    unviewed_completed_count: 0,
+  });
   domainMocks.createSessionTurn.mockResolvedValue({ task: { id: taskId } });
   domainMocks.reportSessionActivity.mockResolvedValue({
     activity: { id: 1, kind: "reasoning" },
@@ -114,7 +143,161 @@ beforeEach(() => {
   });
 });
 
+describe("session completion viewed REST API", () => {
+  it("marks completed tasks as viewed for the authenticated workspace", async () => {
+    const request = new Request(
+      `http://localhost/api/user/sessions/${sessionId}/viewed`,
+      { method: "POST" },
+    );
+    const response = await markCompletionsViewed(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(routeMocks.userContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.markSessionCompletionsViewed).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+    );
+  });
+
+  it("rejects an invalid session path before touching the domain", async () => {
+    const response = await markCompletionsViewed(
+      new Request("http://localhost/api/user/sessions/not-a-uuid/viewed", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ sessionId: "not-a-uuid" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(routeMocks.userContextForRequest).not.toHaveBeenCalled();
+    expect(domainMocks.markSessionCompletionsViewed).not.toHaveBeenCalled();
+  });
+});
+
 describe("Bridge thread inventory REST API", () => {
+  it("lists Bridge directories for an authenticated Workspace member", async () => {
+    const request = new Request(
+      "http://localhost/api/user/bridge-directories",
+    );
+    const response = await listBridgeDirectories(request);
+
+    expect(response.status).toBe(200);
+    expect(routeMocks.userContextForRequest).toHaveBeenCalledWith(request);
+    expect(domainMocks.listBridgeDirectories).toHaveBeenCalledWith(userContext);
+  });
+
+  it("validates directory inventory and Thread directory membership", async () => {
+    const request = jsonRequest(
+      "/api/ai/sessions/sync",
+      {
+        bridge_version: " 0.7.0 ",
+        model_catalog: [
+          {
+            id: " custom-fast ",
+            model: " provider/custom-fast ",
+            display_name: " Custom Fast ",
+            default_reasoning_effort: " balanced ",
+            supported_reasoning_efforts: [
+              { reasoning_effort: " balanced ", description: null },
+            ],
+            input_modalities: [" text "],
+            is_default: true,
+          },
+        ],
+        directories: [
+          {
+            directory_key: " main ",
+            name: " Main repository ",
+            working_directory: " /srv/main ",
+          },
+        ],
+        threads: [
+          {
+            external_conversation_ref: " thread-local-1 ",
+            name: " Main thread ",
+            working_directory: " /srv/main ",
+            directory_key: " main ",
+          },
+        ],
+      },
+      {
+        Authorization: "Bearer atb_test",
+        "Idempotency-Key": "bridge/inventory/directories-1",
+      },
+    );
+
+    const response = await syncSessions(request);
+
+    expect(response.status).toBe(200);
+    expect(domainMocks.syncSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId, workspaceId }),
+      expect.objectContaining({
+        bridge_version: "0.7.0",
+        model_catalog: [
+          {
+            id: "custom-fast",
+            model: "provider/custom-fast",
+            display_name: "Custom Fast",
+            description: null,
+            default_reasoning_effort: "balanced",
+            supported_reasoning_efforts: [
+              { reasoning_effort: "balanced", description: null },
+            ],
+            input_modalities: ["text"],
+            is_default: true,
+          },
+        ],
+        directories: [
+          {
+            directory_key: "main",
+            name: "Main repository",
+            working_directory: "/srv/main",
+          },
+        ],
+        threads: [
+          expect.objectContaining({
+            directory_key: "main",
+            external_conversation_ref: "thread-local-1",
+          }),
+        ],
+      }),
+      "bridge/inventory/directories-1",
+    );
+  });
+
+  it("rejects a Thread whose directory key is not in the reported allowlist", async () => {
+    const response = await syncSessions(
+      jsonRequest(
+        "/api/ai/sessions/sync",
+        {
+          bridge_version: "0.7.0",
+          directories: [
+            {
+              directory_key: "main",
+              name: "Main",
+              working_directory: "/srv/main",
+            },
+          ],
+          threads: [
+            {
+              external_conversation_ref: "thread-local-1",
+              name: "Main thread",
+              directory_key: "other",
+            },
+          ],
+        },
+        {
+          Authorization: "Bearer atb_test",
+          "Idempotency-Key": "bridge/inventory/directories-invalid",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.syncSessions).not.toHaveBeenCalled();
+  });
+
   it("authenticates at connection scope and syncs a normalized full snapshot", async () => {
     const request = jsonRequest(
       "/api/ai/sessions/sync",
@@ -222,6 +405,53 @@ describe("session conversation REST API", () => {
     );
   });
 
+  it("queues a trimmed Thread rename for a Workspace owner", async () => {
+    const request = jsonRequest(
+      `/api/user/sessions/${sessionId}`,
+      {
+        name: "  Release work  ",
+        model: " gpt-5.6-terra ",
+        reasoning_effort: " high ",
+      },
+      { "Idempotency-Key": "web/thread/rename-1" },
+    );
+    const response = await renameThread(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(domainMocks.renameThread).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "owner" }),
+      sessionId,
+      {
+        name: "Release work",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
+      },
+      "web/thread/rename-1",
+    );
+  });
+
+  it("queues a Thread deletion without consuming a request body", async () => {
+    const request = new Request(
+      `http://localhost/api/user/sessions/${sessionId}`,
+      {
+        method: "DELETE",
+        headers: { "Idempotency-Key": "web/thread/delete-1" },
+      },
+    );
+    const response = await deleteThread(request, {
+      params: Promise.resolve({ sessionId }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(domainMocks.deleteThread).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "owner" }),
+      sessionId,
+      "web/thread/delete-1",
+    );
+  });
+
   it("passes an exact bigint string cursor without numeric coercion", async () => {
     const cursor = "9007199254740993123";
     const request = new Request(
@@ -271,7 +501,11 @@ describe("session conversation REST API", () => {
   it("creates the next turn with trimmed content and a required idempotency key", async () => {
     const request = jsonRequest(
       `/api/user/sessions/${sessionId}`,
-      { content: "  请继续修复派发链路  " },
+      {
+        content: "  请继续修复派发链路  ",
+        model: " gpt-5.6-terra ",
+        reasoning_effort: " high ",
+      },
       { "Idempotency-Key": "  web/session/turn-1  " },
     );
     const response = await createTurn(request, {
@@ -282,9 +516,168 @@ describe("session conversation REST API", () => {
     expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
       userContext,
       sessionId,
-      { content: "请继续修复派发链路" },
+      {
+        content: "请继续修复派发链路",
+        model: "gpt-5.6-terra",
+        reasoning_effort: "high",
+      },
       "web/session/turn-1",
     );
+  });
+
+  it("forwards an enabled Goal mode on the next JSON turn", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "修复所有失败的测试", goal_mode: true },
+        { "Idempotency-Key": "web/session/turn-goal-on" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      { content: "修复所有失败的测试", goal_mode: true },
+      "web/session/turn-goal-on",
+    );
+  });
+
+  it("parses a disabled Goal mode from a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "普通任务");
+    form.set("goal_mode", "false");
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-goal-off" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "普通任务",
+        model: null,
+        reasoning_effort: null,
+        goal_mode: false,
+      },
+      "turn-goal-off",
+    );
+  });
+
+  it("rejects a Goal objective longer than 4000 characters", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "长".repeat(4_001), goal_mode: true },
+        { "Idempotency-Key": "turn-goal-too-long" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.createSessionTurn).not.toHaveBeenCalled();
+  });
+
+  it("forwards Steer mode on the next JSON turn", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "把输出改成表格", steer: true },
+        { "Idempotency-Key": "web/session/turn-steer-on" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      { content: "把输出改成表格", steer: true },
+      "web/session/turn-steer-on",
+    );
+  });
+
+  it("parses Steer mode from a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "先处理失败测试");
+    form.set("steer", "true");
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-steer-multipart" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "先处理失败测试",
+        model: null,
+        reasoning_effort: null,
+        steer: true,
+      },
+      "turn-steer-multipart",
+    );
+  });
+
+  it("accepts image files in a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "分析截图");
+    form.set("model", "gpt-5.6-luna");
+    form.set("reasoning_effort", "medium");
+    const image = new File([new Uint8Array([137, 80, 78, 71])], "screen.png", {
+      type: "image/png",
+    });
+    form.append("images", image);
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-with-image" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "分析截图",
+        model: "gpt-5.6-luna",
+        reasoning_effort: "medium",
+        images: [expect.objectContaining({ name: "screen.png", type: "image/png", size: 4 })],
+      },
+      "turn-with-image",
+    );
+  });
+
+  it("rejects unsupported session turn image types", async () => {
+    const form = new FormData();
+    form.set("content", "分析附件");
+    form.append("images", new File(["svg"], "unsafe.svg", { type: "image/svg+xml" }));
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-with-svg" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(domainMocks.createSessionTurn).not.toHaveBeenCalled();
   });
 
   it("does not dispatch a turn without an idempotency key", async () => {

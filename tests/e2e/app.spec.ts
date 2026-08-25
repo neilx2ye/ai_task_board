@@ -91,11 +91,15 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("密码").fill(e2ePassword!);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/sessions$/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "AI 会话" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "会话与上下文" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 }
 
-async function createTaskFromBoard(
+async function createTaskForSession(
   page: Page,
+  sessionId: string,
   title: string,
   options: {
     description?: string;
@@ -103,27 +107,23 @@ async function createTaskFromBoard(
     requiredCapabilities?: string[];
   } = {},
 ): Promise<string> {
-  await page.goto("/board");
-  await page.getByRole("button", { name: /预留任务/ }).first().click();
-  const dialog = page.getByRole("dialog", { name: "新建任务" });
-  await dialog.getByLabel("标题").fill(title);
-  await dialog
-    .getByLabel("说明")
-    .fill(options.description ?? "Playwright hosted-project attachment test");
-  if (options.acceptanceCriteria) {
-    await dialog.getByLabel("验收条件").fill(options.acceptanceCriteria);
-  }
-  if (options.requiredCapabilities?.length) {
-    await dialog.getByLabel("所需能力").fill(options.requiredCapabilities.join(", "));
-  }
-  const createResponsePromise = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/user/tasks",
-  );
-  await dialog.getByRole("button", { name: "预留任务" }).click();
-  const createdTask = await responseData(await createResponsePromise, "create task");
-  await expect(page.getByText(title, { exact: true })).toBeVisible({ timeout: 15_000 });
+  const response = await page.request.post("/api/user/tasks", {
+    headers: {
+      "Idempotency-Key": `e2e/create-task/${Date.now()}/${Math.random()
+        .toString(16)
+        .slice(2)}`,
+    },
+    data: {
+      title,
+      description:
+        options.description ?? "Playwright hosted-project attachment test",
+      acceptance_criteria: options.acceptanceCriteria ?? null,
+      priority: 50,
+      required_capabilities: options.requiredCapabilities ?? [],
+      assigned_session_id: sessionId,
+    },
+  });
+  const createdTask = await responseData(response, "create task");
   return stringValue(createdTask, "id");
 }
 
@@ -168,64 +168,17 @@ async function createLiveSession(page: Page, label: string): Promise<{
 test("shows an actionable startup screen", async ({ page }) => {
   await page.goto("/login");
 
-  const loginHeading = page.getByRole("heading", { name: "AI Task Board" });
-  const notConfiguredHeading = page.getByRole("heading", {
-    name: "尚未配置 Supabase",
-  });
-  await expect(loginHeading.or(notConfiguredHeading)).toBeVisible();
-
-  if (await loginHeading.isVisible()) {
-    await expect(page.getByRole("heading", { name: "AI Task Board" })).toBeVisible();
-    await expect(page.getByLabel("邮箱")).toBeVisible();
-    await expect(page.getByLabel("密码")).toBeVisible();
-    await expect(page.getByRole("button", { name: "登录", exact: true })).toBeEnabled();
-  } else {
-    await expect(page.getByRole("heading", { name: "尚未配置 Supabase" })).toBeVisible();
-    await expect(page.getByText("NEXT_PUBLIC_SUPABASE_URL", { exact: true })).toBeVisible();
-    await expect(
-      page.getByText("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", { exact: true }),
-    ).toBeVisible();
-  }
-});
-
-test("creates a task, survives refresh, and appears in a second browser via Realtime", async ({
-  browser,
-}) => {
-  test.skip(
-    !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
-  );
-
-  const firstContext = await browser.newContext();
-  const secondContext = await browser.newContext();
-  const firstPage = await firstContext.newPage();
-  const secondPage = await secondContext.newPage();
-
-  try {
-    await Promise.all([signIn(firstPage), signIn(secondPage)]);
-    await createLiveSession(firstPage, `realtime-${Date.now()}`);
-    await secondPage.goto("/board");
-    const title = `E2E realtime ${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-    await createTaskFromBoard(firstPage, title, {
-      description: "Playwright hosted-project smoke test",
-      acceptanceCriteria: "Visible after refresh and in another browser",
-    });
-
-    await expect(firstPage.getByText(title, { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(secondPage.getByText(title, { exact: true })).toBeVisible({ timeout: 20_000 });
-
-    await firstPage.reload();
-    await expect(firstPage.getByText(title, { exact: true })).toBeVisible({ timeout: 15_000 });
-  } finally {
-    await Promise.all([firstContext.close(), secondContext.close()]);
-  }
+  const loginTitle = page.getByText("AI Task Board", { exact: true });
+  await expect(loginTitle).toBeVisible();
+  await expect(page.getByLabel("邮箱")).toBeVisible();
+  await expect(page.getByLabel("密码")).toBeVisible();
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeEnabled();
 });
 
 test("shows a connection token once and revokes the connection", async ({ page }) => {
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   await signIn(page);
@@ -289,14 +242,14 @@ test("shows a connection token once and revokes the connection", async ({ page }
 test("uploads a private attachment and requests an authorized download URL", async ({ page }) => {
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   await signIn(page);
-  await createLiveSession(page, `attachment-${Date.now()}`);
+  const { sessionId } = await createLiveSession(page, `attachment-${Date.now()}`);
   const taskTitle = `E2E attachment ${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  await createTaskFromBoard(page, taskTitle);
-  await page.getByText(taskTitle, { exact: true }).click();
+  const taskId = await createTaskForSession(page, sessionId, taskTitle);
+  await page.goto(`/tasks/${taskId}`);
   await expect(page.getByRole("heading", { name: taskTitle })).toBeVisible();
 
   const fileName = `e2e-${Date.now()}.txt`;
@@ -337,7 +290,9 @@ test("uploads a private attachment and requests an authorized download URL", asy
     data?: { url?: string; expires_in?: number };
   };
   expect(downloadBody.data?.expires_in).toBe(60);
-  expect(downloadBody.data?.url).toContain("/storage/v1/object/sign/task-artifacts/");
+  expect(downloadBody.data?.url).toContain(
+    "/api/storage/object?bucket=task-artifacts",
+  );
   await expect
     .poll(() =>
       page.evaluate(
@@ -353,7 +308,7 @@ test("runs a five-step AI workflow through decomposition, cross-browser reply, a
   test.setTimeout(120_000);
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   const controlContext = await browser.newContext();
@@ -392,7 +347,7 @@ test("runs a five-step AI workflow through decomposition, cross-browser reply, a
       "id",
     );
 
-    const rootTaskId = await createTaskFromBoard(controlPage, rootTitle, {
+    const rootTaskId = await createTaskForSession(controlPage, sessionId, rootTitle, {
       description: "Playwright end-to-end dependency and user-question workflow",
       acceptanceCriteria: "All five dependent leaves complete after a user reply",
       requiredCapabilities: [requiredCapability],
@@ -612,23 +567,10 @@ test("runs a five-step AI workflow through decomposition, cross-browser reply, a
       external_url: artifactUrl,
     });
 
-    // The board computes recursive leaf progress from the full flat task list.
-    await controlPage.goto("/board");
-    const rootCard = controlPage
-      .getByText(rootTitle, { exact: true })
-      .locator("xpath=ancestor::*[@data-slot='card'][1]");
-    await expect(rootCard).toBeVisible({ timeout: 15_000 });
-    await expect(rootCard.getByText("已完成", { exact: true })).toBeVisible();
-    const leafProgress = rootCard.getByRole("progressbar", {
-      name: "叶子任务完成进度",
-    });
-    await expect(leafProgress).toHaveAttribute("aria-valuenow", "5");
-    await expect(leafProgress).toHaveAttribute("aria-valuemax", "5");
-    await expect(rootCard.getByText("5 / 5", { exact: true })).toBeVisible();
-
-    // The root detail view also renders descendant messages, events and files.
+    // The root detail view renders child progress, descendant messages, events and files.
     await controlPage.goto(`/tasks/${rootTaskId}`);
     await expect(controlPage.getByRole("heading", { name: rootTitle })).toBeVisible();
+    await expect(controlPage.getByText("子任务完成 5 / 5", { exact: true })).toBeVisible();
     await expect(controlPage.getByText(question, { exact: true })).toBeVisible();
     await expect(controlPage.getByText(answer, { exact: true })).toBeVisible();
     await expect(controlPage.getByText(artifactName, { exact: true })).toBeVisible();

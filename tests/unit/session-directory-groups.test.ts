@@ -1,0 +1,635 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  excludeHiddenProjects,
+  filterConnectionGroupsByProject,
+  groupBridgesByProject,
+  groupSessionsByConnection,
+  listSessionProjects,
+} from "@/lib/domain/session-directory-groups";
+import type { AgentModelCatalogEntry } from "@/lib/codex-models";
+import type { AIBridgeDirectoryRow } from "@/lib/types/database";
+import type {
+  SessionConnectionSummary,
+  SessionListItem,
+} from "@/lib/types/domain";
+
+const connection: SessionConnectionSummary = {
+  id: "connection-1",
+  name: "Laptop",
+  platform: "Codex",
+  last_seen_at: null,
+  bridge_version: "0.7.0",
+  revoked_at: null,
+};
+
+function session(
+  id: string,
+  workingDirectory: string | null,
+  directoryKey: string | null,
+  sessionConnection: SessionConnectionSummary = connection,
+  platform = "codex",
+): SessionListItem {
+  return {
+    id,
+    connection_id: sessionConnection.id,
+    connection: sessionConnection,
+    working_directory: workingDirectory,
+    bridge_directory_key: directoryKey,
+    platform,
+    inventory_active: true,
+  } as SessionListItem;
+}
+
+function directory(
+  key: string,
+  name: string,
+  workingDirectory: string,
+  connectionId = connection.id,
+  platform = "codex",
+): AIBridgeDirectoryRow {
+  return {
+    connection_id: connectionId,
+    platform,
+    directory_key: key,
+    name,
+    working_directory: workingDirectory,
+    inventory_active: true,
+  } as AIBridgeDirectoryRow;
+}
+
+describe("Session working-directory hierarchy", () => {
+  it("keeps configured empty directories and assigns Sessions by stable key", () => {
+    const [group] = groupSessionsByConnection(
+      [session("thread-a", "/workspace/main", "main")],
+      [connection],
+      [
+        directory("main", "Main app", "/workspace/main"),
+        directory("docs", "Docs", "/workspace/docs"),
+      ],
+    );
+
+    expect(group.directories).toEqual([
+      expect.objectContaining({
+        directoryKey: "docs",
+        name: "Docs",
+        sessions: [],
+      }),
+      expect.objectContaining({
+        directoryKey: "main",
+        name: "Main app",
+        sessions: [expect.objectContaining({ id: "thread-a" })],
+      }),
+    ]);
+  });
+
+  it("groups legacy and all-scope Sessions by their reported cwd", () => {
+    const [group] = groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/legacy", null),
+        session("thread-b", "/workspace/legacy", null),
+        session("thread-c", null, null),
+      ],
+      [connection],
+    );
+
+    expect(group.directories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "legacy",
+          configured: false,
+          sessions: [
+            expect.objectContaining({ id: "thread-a" }),
+            expect.objectContaining({ id: "thread-b" }),
+          ],
+        }),
+        expect.objectContaining({ name: "未归类" }),
+      ]),
+    );
+  });
+
+  it("omits removed directories and inactive Sessions", () => {
+    const inactiveSession = session("thread-stale", "/workspace/main", "main");
+    inactiveSession.inventory_active = false;
+    const removedDirectory = directory("docs", "Docs", "/workspace/docs");
+    removedDirectory.inventory_active = false;
+
+    const [group] = groupSessionsByConnection(
+      [
+        session("thread-current", "/workspace/main", "main"),
+        inactiveSession,
+        // The directory inventory is authoritative even if a stale Session
+        // snapshot still says it is active.
+        session("thread-removed", "/workspace/docs", "docs"),
+      ],
+      [connection],
+      [directory("main", "Main app", "/workspace/main"), removedDirectory],
+    );
+
+    expect(group.directories).toEqual([
+      expect.objectContaining({
+        directoryKey: "main",
+        sessions: [expect.objectContaining({ id: "thread-current" })],
+      }),
+    ]);
+    expect(group.sessions.map((item) => item.id)).toEqual(["thread-current"]);
+  });
+
+  it("isolates matching directory keys between connections", () => {
+    const secondConnection: SessionConnectionSummary = {
+      ...connection,
+      id: "connection-2",
+      name: "Desktop",
+    };
+
+    const groups = groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/laptop", "main"),
+        session(
+          "thread-b",
+          "/workspace/desktop",
+          "main",
+          secondConnection,
+        ),
+      ],
+      [connection, secondConnection],
+      [
+        directory("main", "Laptop app", "/workspace/laptop"),
+        directory(
+          "main",
+          "Desktop app",
+          "/workspace/desktop",
+          secondConnection.id,
+        ),
+      ],
+    );
+
+    expect(groups).toEqual([
+      expect.objectContaining({
+        connection,
+        directories: [
+          expect.objectContaining({
+            name: "Laptop app",
+            sessions: [expect.objectContaining({ id: "thread-a" })],
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        connection: secondConnection,
+        directories: [
+          expect.objectContaining({
+            name: "Desktop app",
+            sessions: [expect.objectContaining({ id: "thread-b" })],
+          }),
+        ],
+      }),
+    ]);
+  });
+});
+
+describe("Session project tabs", () => {
+  const secondConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "connection-2",
+    name: "Desktop",
+  };
+
+  function twoConnectionGroups() {
+    return groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/alpha", "alpha"),
+        session("thread-b", "/workspace/alpha", "alpha", secondConnection),
+        session("thread-c", "/workspace/beta", null, secondConnection),
+        session("thread-d", null, null, secondConnection),
+      ],
+      [connection, secondConnection],
+      [
+        directory("alpha", "Alpha app", "/workspace/alpha"),
+        directory("alpha", "Alpha app", "/workspace/alpha", secondConnection.id),
+      ],
+    );
+  }
+
+  it("merges the same working directory across connections into one project", () => {
+    const projects = listSessionProjects(twoConnectionGroups());
+
+    expect(projects).toEqual([
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        name: "Alpha app",
+        workingDirectory: "/workspace/alpha",
+        sessionCount: 2,
+      }),
+      expect.objectContaining({
+        id: "path:/workspace/beta",
+        name: "beta",
+        sessionCount: 1,
+      }),
+      expect.objectContaining({
+        id: "unassigned",
+        name: "未归类",
+        workingDirectory: null,
+        sessionCount: 1,
+      }),
+    ]);
+  });
+
+  it("aggregates running and unviewed-completed task counts per project", () => {
+    const groups = twoConnectionGroups();
+    const alphaThreads = groups.flatMap((group) =>
+      group.directories
+        .filter((item) => item.workingDirectory === "/workspace/alpha")
+        .flatMap((item) => item.sessions),
+    );
+    for (const thread of alphaThreads) {
+      Object.assign(thread, {
+        running_task_count: 2,
+        unviewed_completed_count: 3,
+      });
+    }
+
+    const projects = listSessionProjects(groups);
+
+    expect(projects).toEqual([
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        sessionCount: 2,
+        runningTaskCount: 4,
+        unviewedCompletedCount: 6,
+      }),
+      expect.objectContaining({
+        id: "path:/workspace/beta",
+        sessionCount: 1,
+        runningTaskCount: 0,
+        unviewedCompletedCount: 0,
+      }),
+      expect.objectContaining({
+        id: "unassigned",
+        sessionCount: 1,
+        runningTaskCount: 0,
+        unviewedCompletedCount: 0,
+      }),
+    ]);
+  });
+
+  it("returns every group unchanged when no project is selected", () => {
+    const groups = twoConnectionGroups();
+
+    expect(filterConnectionGroupsByProject(groups, null)).toEqual(groups);
+  });
+
+  it("keeps only the selected project's directories per connection", () => {
+    const filtered = filterConnectionGroupsByProject(
+      twoConnectionGroups(),
+      "path:/workspace/alpha",
+    );
+
+    expect(filtered).toHaveLength(2);
+    for (const group of filtered) {
+      expect(group.directories).toEqual([
+        expect.objectContaining({ workingDirectory: "/workspace/alpha" }),
+      ]);
+      expect(
+        group.sessions.map((item) => item.working_directory),
+      ).toEqual(["/workspace/alpha"]);
+    }
+  });
+
+  it("drops connections that do not serve the selected project", () => {
+    const filtered = filterConnectionGroupsByProject(
+      twoConnectionGroups(),
+      "path:/workspace/beta",
+    );
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.connection.id).toBe(secondConnection.id);
+    expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
+  });
+
+  it("excludes hidden projects and drops fully hidden connections", () => {
+    const groups = twoConnectionGroups();
+
+    expect(excludeHiddenProjects(groups, new Set())).toHaveLength(2);
+
+    const filtered = excludeHiddenProjects(
+      groups,
+      new Set(["path:/workspace/alpha", "unassigned"]),
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.connection.id).toBe(secondConnection.id);
+    expect(filtered[0]?.directories.map((item) => item.name)).toEqual(["beta"]);
+    expect(filtered[0]?.sessions.map((item) => item.id)).toEqual(["thread-c"]);
+  });
+});
+
+describe("Project-first bridge grouping", () => {
+  const secondConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "connection-2",
+    name: "Desktop",
+  };
+
+  function sharedProjectGroups() {
+    return groupSessionsByConnection(
+      [
+        session("thread-a", "/workspace/alpha", "alpha"),
+        session("thread-b", "/workspace/alpha", "alpha", secondConnection),
+        session("thread-c", "/workspace/beta", null, secondConnection),
+      ],
+      [connection, secondConnection],
+      [
+        directory("alpha", "Alpha app", "/workspace/alpha"),
+        directory("alpha", "Alpha app", "/workspace/alpha", secondConnection.id),
+      ],
+    );
+  }
+
+  it("nests every Bridge with access to the selected project under it", () => {
+    const projects = groupBridgesByProject(
+      sharedProjectGroups(),
+      "path:/workspace/alpha",
+    );
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toEqual(
+      expect.objectContaining({
+        id: "path:/workspace/alpha",
+        name: "Alpha app",
+        workingDirectory: "/workspace/alpha",
+        sessionCount: 2,
+      }),
+    );
+    expect(
+      projects[0].bridges.map((bridge) => bridge.connection.id),
+    ).toEqual([connection.id, secondConnection.id]);
+    expect(
+      projects[0].bridges.map(
+        (bridge) => bridge.directory.workingDirectory,
+      ),
+    ).toEqual(["/workspace/alpha", "/workspace/alpha"]);
+  });
+
+  it("keeps a configured directory with no Threads as an access Bridge", () => {
+    const groups = groupSessionsByConnection(
+      [],
+      [connection],
+      [directory("docs", "Docs", "/workspace/docs")],
+    );
+
+    const projects = groupBridgesByProject(groups, "path:/workspace/docs");
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]?.bridges).toHaveLength(1);
+    expect(projects[0]?.bridges[0]).toEqual(
+      expect.objectContaining({
+        connection,
+        directory: expect.objectContaining({
+          directoryKey: "docs",
+          sessions: [],
+        }),
+      }),
+    );
+  });
+
+  it("returns every project with its Bridges when no project is selected", () => {
+    const projects = groupBridgesByProject(sharedProjectGroups(), null);
+
+    expect(projects.map((project) => project.id)).toEqual([
+      "path:/workspace/alpha",
+      "path:/workspace/beta",
+    ]);
+    expect(projects[0]?.bridges).toHaveLength(2);
+    expect(projects[1]?.bridges).toHaveLength(1);
+  });
+});
+
+describe("Unified device Bridge runtime splitting", () => {
+  const unifiedConnection: SessionConnectionSummary = {
+    ...connection,
+    id: "unified-1",
+    name: "MacBook",
+    platform: "All",
+  };
+
+  it("splits one unified connection into per-runtime groups", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session(
+          "codex-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "codex",
+        ),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "kimi",
+        ),
+      ],
+      [unifiedConnection],
+      [
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "codex",
+        ),
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "kimi",
+        ),
+      ],
+    );
+
+    expect(groups.map((group) => group.id)).toEqual([
+      "unified-1:codex",
+      "unified-1:kimi",
+    ]);
+    expect(groups.map((group) => group.platform)).toEqual([
+      "codex",
+      "kimi",
+    ]);
+    // 连接身份保持共享：真实 connection id 与平台原样保留，供 API 调用。
+    expect(groups.map((group) => group.connection.id)).toEqual([
+      "unified-1",
+      "unified-1",
+    ]);
+    expect(groups.map((group) => group.connection.platform)).toEqual([
+      "All",
+      "All",
+    ]);
+    expect(groups[0]?.sessions.map((item) => item.id)).toEqual([
+      "codex-thread",
+    ]);
+    expect(groups[1]?.sessions.map((item) => item.id)).toEqual([
+      "kimi-thread",
+    ]);
+    // 同名目录按运行时分开，不会互相收编对方的 Thread。
+    expect(groups[0]?.directories[0]?.sessions.map((item) => item.id)).toEqual([
+      "codex-thread",
+    ]);
+    expect(groups[1]?.directories[0]?.sessions.map((item) => item.id)).toEqual([
+      "kimi-thread",
+    ]);
+  });
+
+  it("keeps each runtime's model catalog on its own group", () => {
+    const codexCatalog = [
+      { model: "gpt-5" },
+    ] as unknown as AgentModelCatalogEntry[];
+    const kimiCatalog = [
+      { model: "kimi" },
+    ] as unknown as AgentModelCatalogEntry[];
+
+    const groups = groupSessionsByConnection(
+      [
+        session("codex-thread", "/workspace/app", "app", {
+          ...unifiedConnection,
+          model_catalog: codexCatalog,
+        }),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          {
+            ...unifiedConnection,
+            model_catalog: kimiCatalog,
+          },
+          "kimi",
+        ),
+      ],
+      [{ ...unifiedConnection, model_catalog: codexCatalog }],
+      [],
+    );
+
+    expect(groups[0]?.connection.model_catalog).toEqual(codexCatalog);
+    expect(groups[1]?.connection.model_catalog).toEqual(kimiCatalog);
+  });
+
+  it("projects each runtime's reported Bridge version onto its group", () => {
+    const withVersions: SessionConnectionSummary = {
+      ...unifiedConnection,
+      bridge_version: "1.7.1-claude.1",
+      bridge_versions: [
+        { platform: "codex", bridge_version: "1.7.1" },
+        { platform: "kimi", bridge_version: "1.7.1-kimi.1" },
+      ],
+    };
+
+    const groups = groupSessionsByConnection(
+      [
+        session("codex-thread", "/workspace/app", "app", withVersions, "codex"),
+        session("kimi-thread", "/workspace/app", "app", withVersions, "kimi"),
+      ],
+      [withVersions],
+      [],
+    );
+
+    expect(groups.map((group) => group.connection.bridge_version)).toEqual([
+      "1.7.1",
+      "1.7.1-kimi.1",
+    ]);
+  });
+
+  it("does not borrow another runtime's version when its own is missing", () => {
+    const withVersions: SessionConnectionSummary = {
+      ...unifiedConnection,
+      bridge_version: "1.7.1-claude.1",
+      bridge_versions: [{ platform: "codex", bridge_version: "1.7.1" }],
+    };
+
+    const groups = groupSessionsByConnection(
+      [session("kimi-thread", "/workspace/app", "app", withVersions, "kimi")],
+      [withVersions],
+      [],
+    );
+
+    expect(groups[0]?.connection.bridge_version).toBeNull();
+  });
+
+  it("keeps unknown runtime kinds after the built-in order", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session("t-claude", null, null, unifiedConnection, "claude"),
+        session("t-gemini", null, null, unifiedConnection, "gemini"),
+        session("t-kimi", null, null, unifiedConnection, "kimi"),
+      ],
+      [unifiedConnection],
+      [],
+    );
+
+    expect(groups.map((group) => group.platform)).toEqual([
+      "kimi",
+      "claude",
+      "gemini",
+    ]);
+  });
+
+  it("keeps an empty unified connection as a single device group", () => {
+    const groups = groupSessionsByConnection([], [unifiedConnection], []);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(
+      expect.objectContaining({
+        id: "unified-1",
+        platform: null,
+      }),
+    );
+  });
+
+  it("exposes group identity on project-first bridges", () => {
+    const groups = groupSessionsByConnection(
+      [
+        session(
+          "codex-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "codex",
+        ),
+        session(
+          "kimi-thread",
+          "/workspace/app",
+          "app",
+          unifiedConnection,
+          "kimi",
+        ),
+      ],
+      [unifiedConnection],
+      [
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "codex",
+        ),
+        directory(
+          "app",
+          "App",
+          "/workspace/app",
+          unifiedConnection.id,
+          "kimi",
+        ),
+      ],
+    );
+
+    const projects = groupBridgesByProject(groups, "path:/workspace/app");
+
+    expect(projects[0]?.bridges.map((bridge) => bridge.groupId)).toEqual([
+      "unified-1:codex",
+      "unified-1:kimi",
+    ]);
+    expect(projects[0]?.bridges.map((bridge) => bridge.platform)).toEqual([
+      "codex",
+      "kimi",
+    ]);
+  });
+});

@@ -3,7 +3,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-import { NotConfigured } from "@/components/not-configured";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,53 +13,50 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isSupabaseConfigured, useSupabase } from "@/hooks/use-supabase";
 
 export default function LoginPage() {
   const router = useRouter();
-  const supabase = useSupabase();
 
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [signupEnabled, setSignupEnabled] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!supabase) return;
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) router.replace("/sessions");
-    });
-    return () => subscription.unsubscribe();
-  }, [supabase, router]);
-
-  if (!isSupabaseConfigured || !supabase) return <NotConfigured />;
+    let cancelled = false;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { signupEnabled?: boolean }) => {
+        if (!cancelled) setSignupEnabled(payload.signupEnabled === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-    setNotice(null);
     setPending(true);
     try {
-      if (mode === "sign-in") {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInError) throw signInError;
-        router.replace("/sessions");
-      } else {
-        const { error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (signUpError) throw signUpError;
-        setNotice("注册成功。如项目开启了邮箱验证，请先查收邮件后再登录。");
-        setMode("sign-in");
+      const response = await fetch(
+        mode === "sign-in" ? "/api/auth/sign-in" : "/api/auth/sign-up",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        },
+      );
+      const payload = (await response.json()) as {
+        error?: { message?: string };
+      };
+      if (!response.ok) {
+        throw new Error(payload.error?.message ?? "操作失败，请稍后重试");
       }
+      router.replace("/sessions");
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败，请稍后重试");
     } finally {
@@ -81,7 +77,7 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="email">邮箱</Label>
               <Input
                 id="email"
@@ -90,10 +86,9 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
               />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="password">密码</Label>
               <Input
                 id="password"
@@ -102,39 +97,35 @@ export default function LoginPage() {
                   mode === "sign-in" ? "current-password" : "new-password"
                 }
                 required
-                minLength={6}
+                minLength={mode === "sign-up" ? 8 : undefined}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="至少 6 位"
               />
             </div>
-
             {error ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p className="text-sm text-destructive" role="alert">
                 {error}
               </p>
             ) : null}
-            {notice ? (
-              <p role="status" className="text-sm text-emerald-700">
-                {notice}
-              </p>
-            ) : null}
-
             <Button type="submit" disabled={pending}>
-              {pending ? "处理中…" : mode === "sign-in" ? "登录" : "注册"}
+              {pending
+                ? "请稍候…"
+                : mode === "sign-in"
+                  ? "登录"
+                  : "注册并登录"}
             </Button>
-            <Button
-              type="button"
-              variant="link"
-              className="self-center"
-              onClick={() => {
-                setMode(mode === "sign-in" ? "sign-up" : "sign-in");
-                setError(null);
-                setNotice(null);
-              }}
-            >
-              {mode === "sign-in" ? "没有账号？注册" : "已有账号？登录"}
-            </Button>
+            {signupEnabled ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setMode(mode === "sign-in" ? "sign-up" : "sign-in");
+                  setError(null);
+                }}
+              >
+                {mode === "sign-in" ? "没有账号？注册" : "已有账号？登录"}
+              </Button>
+            ) : null}
           </form>
         </CardContent>
       </Card>

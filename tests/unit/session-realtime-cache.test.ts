@@ -39,6 +39,7 @@ function page(ids: string[]): SessionConversation {
     history_sync: null,
     tasks: [],
     messages: [],
+    input_requests: [],
     events: [],
     activities: ids.map(activity),
     pagination: {
@@ -146,5 +147,36 @@ describe("session activity Realtime cache", () => {
       connection: enriched.connection,
       current_task: enriched.current_task,
     });
+  });
+
+  it("applies a Web display name and removes a deletion-requested Session", () => {
+    const session = {
+      id: "session-1",
+      name: "Bridge source name",
+      user_name: null,
+      connection: { id: "connection-1" },
+      current_task: null,
+      queued_task_count: 0,
+    } as SessionListItem;
+
+    expect(
+      patchRealtimeSessionList(
+        [session],
+        sessionUpdateFromRealtime({
+          new: { id: "session-1", user_name: "Web name" },
+        })!,
+      )[0].name,
+    ).toBe("Web name");
+    expect(
+      patchRealtimeSessionList(
+        [session],
+        sessionUpdateFromRealtime({
+          new: {
+            id: "session-1",
+            deletion_requested_at: "2026-08-10T00:02:00.000Z",
+          },
+        })!,
+      ),
+    ).toEqual([]);
   });
 });

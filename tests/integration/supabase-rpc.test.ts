@@ -909,4 +909,305 @@ hostedDescribe("Supabase Hosted RPC integration", () => {
       if (removeError) throw removeError;
     }
   });
+
+  it("pauses a claimed leaf, enqueues the interrupt command, and resumes it idempotently", async () => {
+    const suffix = randomUUID();
+    const { data: createdUser, error: createUserError } =
+      await admin.auth.admin.createUser({
+        email: `pause-${suffix}@example.invalid`,
+        password: `Integration-${suffix}-Aa1!`,
+        email_confirm: true,
+      });
+    if (createUserError) throw createUserError;
+    authUserIds.add(createdUser.user.id);
+
+    const { data: membership, error: membershipError } = await admin
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", createdUser.user.id)
+      .single();
+    if (membershipError) throw membershipError;
+    const workspaceId = String(membership.workspace_id);
+    workspaceIds.add(workspaceId);
+    const fixture = await createFixture(1, workspaceId);
+    const sessionId = fixture.sessionIds[0];
+
+    // Give the session an external thread ref so the pause command carries it.
+    const externalRef = `pause-thread-${suffix}`;
+    const { error: refError } = await admin
+      .from("ai_sessions")
+      .update({ external_conversation_ref: externalRef })
+      .eq("id", sessionId);
+    if (refError) throw refError;
+
+    const taskId = await createReadyTask(
+      workspaceId,
+      "Pausable claimed leaf",
+      sessionId,
+    );
+    const claim = await rpc("claim_task", {
+      p_workspace_id: workspaceId,
+      p_connection_id: fixture.connectionId,
+      p_session_id: sessionId,
+      p_task_id: taskId,
+      p_claim_token_hash: digest(`pause-claim:${taskId}`),
+      p_lease_seconds: 900,
+      p_idempotency_key: key("pause-claim"),
+      p_request_hash: digest("pause-claim"),
+    });
+    expect(claim.error).toBeNull();
+
+    const pauseParameters = {
+      p_workspace_id: workspaceId,
+      p_user_id: createdUser.user.id,
+      p_task_id: taskId,
+      p_reason: "Paused by integration test",
+      p_idempotency_key: key("pause-claimed-leaf"),
+      p_request_hash: digest("pause-claimed-leaf"),
+    };
+    const pause = await rpc("pause_task", pauseParameters);
+    expect(pause.error).toBeNull();
+    expect(rpcTask(pause.data)?.status).toBe("paused");
+
+    // The claim is cleared, the session is freed, and the assignment is kept.
+    const { data: pausedRow, error: pausedRowError } = await admin
+      .from("tasks")
+      .select(
+        "status,assigned_session_id,claimed_by_session_id,claim_token_hash,claimed_at,lease_expires_at",
+      )
+      .eq("id", taskId)
+      .single();
+    if (pausedRowError) throw pausedRowError;
+    expect(pausedRow).toMatchObject({
+      status: "paused",
+      assigned_session_id: sessionId,
+      claimed_by_session_id: null,
+      claim_token_hash: null,
+      claimed_at: null,
+      lease_expires_at: null,
+    });
+    const { data: sessionRow, error: sessionRowError } = await admin
+      .from("ai_sessions")
+      .select("current_task_id")
+      .eq("id", sessionId)
+      .single();
+    if (sessionRowError) throw sessionRowError;
+    expect(sessionRow.current_task_id).toBeNull();
+
+    // The best-effort interrupt command is queued for the owning connection,
+    // pinned to the paused task so a stale replay cannot interrupt the next one.
+    const { data: commands, error: commandsError } = await admin
+      .from("ai_thread_commands")
+      .select(
+        "connection_id,session_id,action,name,task_id,external_thread_id,platform,status",
+      )
+      .eq("workspace_id", workspaceId);
+    if (commandsError) throw commandsError;
+    expect(commands).toEqual([
+      expect.objectContaining({
+        connection_id: fixture.connectionId,
+        session_id: sessionId,
+        action: "pause",
+        name: null,
+        task_id: taskId,
+        external_thread_id: externalRef,
+        platform: "test",
+        status: "queued",
+      }),
+    ]);
+
+    const { data: pausedEvents, error: pausedEventsError } = await admin
+      .from("task_events")
+      .select("type,actor_type,actor_id,data")
+      .eq("task_id", taskId)
+      .eq("type", "task_paused");
+    if (pausedEventsError) throw pausedEventsError;
+    expect(pausedEvents).toEqual([
+      expect.objectContaining({
+        actor_type: "user",
+        actor_id: createdUser.user.id,
+        data: { from: "claimed", reason: "Paused by integration test" },
+      }),
+    ]);
+
+    // A paused task is never handed out by the claim poll.
+    const emptyPoll = await rpc("claim_next_task", {
+      p_workspace_id: workspaceId,
+      p_connection_id: fixture.connectionId,
+      p_session_id: sessionId,
+      p_claim_token_hash: digest(`pause-empty-poll:${taskId}`),
+      p_lease_seconds: 900,
+      p_idempotency_key: key("pause-empty-poll"),
+      p_request_hash: digest("pause-empty-poll"),
+    });
+    expect(emptyPoll.error).toBeNull();
+    expect(rpcTask(emptyPoll.data)).toBeNull();
+
+    // Replaying the same idempotency key returns the cached response and
+    // writes neither a second command nor a second event.
+    const replay = await rpc("pause_task", pauseParameters);
+    expect(replay.error).toBeNull();
+    expect(replay.data).toEqual(pause.data);
+    const { count: commandCount, error: commandCountError } = await admin
+      .from("ai_thread_commands")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId);
+    if (commandCountError) throw commandCountError;
+    expect(commandCount).toBe(1);
+    const { count: pausedEventCount, error: pausedEventCountError } = await admin
+      .from("task_events")
+      .select("id", { count: "exact", head: true })
+      .eq("task_id", taskId)
+      .eq("type", "task_paused");
+    if (pausedEventCountError) throw pausedEventCountError;
+    expect(pausedEventCount).toBe(1);
+
+    const resume = await rpc("resume_task", {
+      p_workspace_id: workspaceId,
+      p_user_id: createdUser.user.id,
+      p_task_id: taskId,
+      p_reason: null,
+      p_idempotency_key: key("resume-paused-leaf"),
+      p_request_hash: digest("resume-paused-leaf"),
+    });
+    expect(resume.error).toBeNull();
+    expect(rpcTask(resume.data)?.status).toBe("ready");
+    const { data: resumedEvents, error: resumedEventsError } = await admin
+      .from("task_events")
+      .select("type,actor_type,data")
+      .eq("task_id", taskId)
+      .eq("type", "task_resumed");
+    if (resumedEventsError) throw resumedEventsError;
+    expect(resumedEvents).toEqual([
+      expect.objectContaining({ actor_type: "user", data: { to: "ready" } }),
+    ]);
+
+    // The resumed task goes back to the same session's queue.
+    const reclaim = await rpc("claim_next_task", {
+      p_workspace_id: workspaceId,
+      p_connection_id: fixture.connectionId,
+      p_session_id: sessionId,
+      p_claim_token_hash: digest(`pause-reclaim:${taskId}`),
+      p_lease_seconds: 900,
+      p_idempotency_key: key("pause-reclaim"),
+      p_request_hash: digest("pause-reclaim"),
+    });
+    expect(reclaim.error).toBeNull();
+    expect(rpcTask(reclaim.data)?.id).toBe(taskId);
+  }, 60_000);
+
+  it("rejects invalid pause/resume transitions and rechecks dependencies on resume", async () => {
+    const suffix = randomUUID();
+    const { data: createdUser, error: createUserError } =
+      await admin.auth.admin.createUser({
+        email: `pause-guards-${suffix}@example.invalid`,
+        password: `Integration-${suffix}-Aa1!`,
+        email_confirm: true,
+      });
+    if (createUserError) throw createUserError;
+    authUserIds.add(createdUser.user.id);
+
+    const { data: membership, error: membershipError } = await admin
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", createdUser.user.id)
+      .single();
+    if (membershipError) throw membershipError;
+    const workspaceId = String(membership.workspace_id);
+    workspaceIds.add(workspaceId);
+    const fixture = await createFixture(1, workspaceId);
+    const sessionId = fixture.sessionIds[0];
+
+    const pauseOf = (taskId: string, step: string) =>
+      rpc("pause_task", {
+        p_workspace_id: workspaceId,
+        p_user_id: createdUser.user.id,
+        p_task_id: taskId,
+        p_reason: null,
+        p_idempotency_key: key(step),
+        p_request_hash: digest(step),
+      });
+    const resumeOf = (taskId: string, step: string) =>
+      rpc("resume_task", {
+        p_workspace_id: workspaceId,
+        p_user_id: createdUser.user.id,
+        p_task_id: taskId,
+        p_reason: null,
+        p_idempotency_key: key(step),
+        p_request_hash: digest(step),
+      });
+
+    // waiting_user is handed back to the user; there is no turn to pause.
+    const waitingTaskId = await createReadyTask(
+      workspaceId,
+      "Waiting leaf cannot pause",
+      sessionId,
+    );
+    const { error: waitingUpdateError } = await admin
+      .from("tasks")
+      .update({ status: "waiting_user" })
+      .eq("id", waitingTaskId);
+    if (waitingUpdateError) throw waitingUpdateError;
+    const pauseWaiting = await pauseOf(waitingTaskId, "pause-waiting-leaf");
+    expect(pauseWaiting.error?.message).toContain("INVALID_STATE_TRANSITION");
+
+    // Aggregate parents derive their status from descendants.
+    const parentTaskId = await createReadyTask(
+      workspaceId,
+      "Aggregate parent cannot pause",
+      sessionId,
+    );
+    const childTaskId = randomUUID();
+    const { error: childError } = await admin.from("tasks").insert({
+      id: childTaskId,
+      workspace_id: workspaceId,
+      root_task_id: parentTaskId,
+      parent_task_id: parentTaskId,
+      title: "Aggregate child",
+      status: "ready",
+      priority: 10,
+      assigned_session_id: sessionId,
+      required_capabilities: ["analysis"],
+      created_by_type: "system",
+    });
+    if (childError) throw childError;
+    const pauseParent = await pauseOf(parentTaskId, "pause-aggregate-parent");
+    expect(pauseParent.error?.message).toContain("INVALID_STATE_TRANSITION");
+
+    // Resume only applies to paused tasks.
+    const resumeWaiting = await resumeOf(waitingTaskId, "resume-waiting-leaf");
+    expect(resumeWaiting.error?.message).toContain("INVALID_STATE_TRANSITION");
+
+    // Resume re-checks dependencies: an unfinished prerequisite blocks it.
+    const blockerTaskId = await createReadyTask(
+      workspaceId,
+      "Unfinished prerequisite",
+      sessionId,
+    );
+    const dependentTaskId = await createReadyTask(
+      workspaceId,
+      "Paused with unfinished dependency",
+      sessionId,
+    );
+    const pauseDependent = await pauseOf(dependentTaskId, "pause-dependent-leaf");
+    expect(pauseDependent.error).toBeNull();
+    expect(rpcTask(pauseDependent.data)?.status).toBe("paused");
+    const { error: dependencyError } = await admin
+      .from("task_dependencies")
+      .insert({ task_id: dependentTaskId, depends_on_task_id: blockerTaskId });
+    if (dependencyError) throw dependencyError;
+    const resumeDependent = await resumeOf(dependentTaskId, "resume-blocked-leaf");
+    expect(resumeDependent.error).toBeNull();
+    expect(rpcTask(resumeDependent.data)?.status).toBe("blocked");
+    const { data: resumedRow, error: resumedRowError } = await admin
+      .from("tasks")
+      .select("status,assigned_session_id")
+      .eq("id", dependentTaskId)
+      .single();
+    if (resumedRowError) throw resumedRowError;
+    expect(resumedRow).toMatchObject({
+      status: "blocked",
+      assigned_session_id: sessionId,
+    });
+  }, 60_000);
 });

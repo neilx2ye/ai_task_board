@@ -5,15 +5,20 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
 } from "@tanstack/react-query";
 import { useRef } from "react";
 
 import { apiFetch } from "@/hooks/api-client";
 import { createPendingIdempotencyTracker } from "@/hooks/pending-idempotency";
+import {
+  BRIDGE_DIRECTORIES_QUERY_KEY,
+  sessionQueryKey,
+  SESSIONS_QUERY_KEY,
+  TASKS_QUERY_KEY,
+} from "@/hooks/query-keys";
 import type { SessionConversation, SessionListItem } from "@/lib/types/domain";
-
-const SESSIONS_KEY = ["sessions"] as const;
-const sessionKey = (sessionId: string) => ["sessions", sessionId] as const;
+import type { AIThreadCommandRow } from "@/lib/types/database";
 
 export function sessionConversationRecoveryInterval(
   pageCount: number,
@@ -25,7 +30,7 @@ export function sessionConversationRecoveryInterval(
 
 export function useSessions() {
   return useQuery({
-    queryKey: SESSIONS_KEY,
+    queryKey: SESSIONS_QUERY_KEY,
     queryFn: async () => {
       const data =
         await apiFetch<{ sessions?: SessionListItem[] }>("/api/user/sessions");
@@ -37,9 +42,75 @@ export function useSessions() {
   });
 }
 
+type MarkCompletionsViewedResult = {
+  session_id: string;
+  unviewed_completed_count: number;
+};
+
+/** 打开 Thread 时把“完成未查看”任务标记为已查看，并乐观更新会话清单。 */
+export function useMarkSessionCompletionsViewed() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      apiFetch<MarkCompletionsViewedResult>(
+        `/api/user/sessions/${sessionId}/viewed`,
+        { method: "POST" },
+      ),
+    onMutate: async (sessionId) => {
+      await queryClient.cancelQueries({ queryKey: SESSIONS_QUERY_KEY });
+      const previous = queryClient.getQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+      );
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.map((session) =>
+            session.id === sessionId
+              ? { ...session, unviewed_completed_count: 0 }
+              : session,
+          ),
+      );
+      // 打开中的对话面板缓存也同步清零，面板徽标立即从「待查看」回落。
+      const conversationKey = sessionQueryKey(sessionId);
+      await queryClient.cancelQueries({ queryKey: conversationKey });
+      const previousConversation = queryClient.getQueryData<
+        InfiniteData<SessionConversation, string | null>
+      >(conversationKey);
+      queryClient.setQueryData<InfiniteData<SessionConversation, string | null>>(
+        conversationKey,
+        (current) =>
+          current
+            ? {
+                ...current,
+                pages: current.pages.map((page) => ({
+                  ...page,
+                  session: { ...page.session, unviewed_completed_count: 0 },
+                })),
+              }
+            : current,
+      );
+      return { previous, previousConversation };
+    },
+    onError: (_error, sessionId, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(SESSIONS_QUERY_KEY, context.previous);
+      }
+      if (context?.previousConversation !== undefined) {
+        queryClient.setQueryData(
+          sessionQueryKey(sessionId),
+          context.previousConversation,
+        );
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+    },
+  });
+}
+
 export function useSessionConversation(sessionId: string | null) {
   return useInfiniteQuery({
-    queryKey: sessionKey(sessionId ?? ""),
+    queryKey: sessionQueryKey(sessionId ?? ""),
     enabled: Boolean(sessionId),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
@@ -132,11 +203,19 @@ export function mergeSessionConversationPages(
       pages.flatMap((page) => page.messages),
       (message) => message.id,
     ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    input_requests: valuesById(
+      pages.flatMap((page) => page.input_requests ?? []),
+      (request) => request.id,
+    ).sort((left, right) => left.created_at.localeCompare(right.created_at)),
     events: valuesById(
       pages.flatMap((page) => page.events),
       (event) => String(event.id),
     ).sort((left, right) => left.id - right.id),
     activities,
+    artifacts: valuesById(
+      pages.flatMap((page) => page.artifacts ?? []),
+      (artifact) => artifact.id,
+    ),
     pagination: {
       activities: {
         ...last.pagination.activities,
@@ -159,17 +238,49 @@ export function useCreateSessionTurn(sessionId: string) {
     ReturnType<typeof createPendingIdempotencyTracker> | undefined
   >(undefined);
   const requestKeys = useRef(
-    new WeakMap<{ content: string }, { fingerprint: string; key: string }>(),
+    new WeakMap<
+      {
+        content: string;
+        images?: File[];
+        model?: string | null;
+        reasoning_effort?: string | null;
+        goal_mode?: boolean | null;
+        steer?: boolean;
+      },
+      { fingerprint: string; key: string }
+    >(),
   );
   idempotency.current ??= createPendingIdempotencyTracker();
   return useMutation({
-    mutationFn: (input: { content: string }) => {
-      const fingerprint = `${sessionId}\0${input.content}`;
+    mutationFn: (input: {
+      content: string;
+      images?: File[];
+      model?: string | null;
+      reasoning_effort?: string | null;
+      goal_mode?: boolean | null;
+      steer?: boolean;
+    }) => {
+      const fingerprint = `${sessionId}\0${input.content}\0${input.model ?? ""}\0${input.reasoning_effort ?? ""}\0${input.goal_mode ?? ""}\0${input.steer ?? ""}\0${(input.images ?? [])
+        .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
+        .join("|")}`;
       const idempotencyKey = idempotency.current!.keyFor(fingerprint);
       requestKeys.current.set(input, { fingerprint, key: idempotencyKey });
+      const formData = new FormData();
+      formData.set("content", input.content);
+      if (input.model) formData.set("model", input.model);
+      if (input.reasoning_effort) {
+        formData.set("reasoning_effort", input.reasoning_effort);
+      }
+      if (input.goal_mode !== null && input.goal_mode !== undefined) {
+        formData.set("goal_mode", String(input.goal_mode));
+      }
+      if (input.steer !== undefined) {
+        formData.set("steer", String(input.steer));
+      }
+      for (const image of input.images ?? []) formData.append("images", image);
       return apiFetch<unknown>(`/api/user/sessions/${sessionId}/turns`, {
         method: "POST",
-        json: input,
+        body: formData,
         idempotencyKey,
       });
     },
@@ -178,12 +289,176 @@ export function useCreateSessionTurn(sessionId: string) {
       if (request) {
         idempotency.current!.confirm(request.fingerprint, request.key);
       }
-      void queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
-      void queryClient.invalidateQueries({ queryKey: sessionKey(sessionId) });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(sessionId),
+      });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     },
     onSettled: (_result, _error, input) => {
       requestKeys.current.delete(input);
+    },
+  });
+}
+
+type ThreadCommandResult = { command: AIThreadCommandRow };
+
+export function useCreateThread(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      name: string;
+      directory_key?: string | null;
+      model?: string | null;
+      reasoning_effort?: string | null;
+      platform?: string | null;
+    }) =>
+      apiFetch<ThreadCommandResult>(
+        `/api/user/connections/${connectionId}/threads`,
+        { method: "POST", json: input },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: BRIDGE_DIRECTORIES_QUERY_KEY,
+      });
+    },
+  });
+}
+
+export function useRenameThread(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      name: string;
+      model?: string | null;
+      reasoning_effort?: string | null;
+    }) =>
+      apiFetch<ThreadCommandResult>(`/api/user/sessions/${sessionId}`, {
+        method: "PATCH",
+        json: input,
+      }),
+    onSuccess: (_result, input) => {
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.map((session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  name: input.name,
+                  user_name: input.name,
+                  configured_model:
+                    input.model ?? session.configured_model,
+                  configured_reasoning_effort:
+                    input.reasoning_effort ??
+                    session.configured_reasoning_effort,
+                  thread_settings_status:
+                    input.model || input.reasoning_effort
+                      ? "queued"
+                      : session.thread_settings_status,
+                }
+              : session,
+          ),
+      );
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(sessionId),
+      });
+    },
+  });
+}
+
+export function useDeleteThread(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<ThreadCommandResult>(`/api/user/sessions/${sessionId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.setQueryData<SessionListItem[]>(
+        SESSIONS_QUERY_KEY,
+        (current) =>
+          current?.filter((session) => session.id !== sessionId),
+      );
+      queryClient.removeQueries({
+        queryKey: sessionQueryKey(sessionId),
+        exact: true,
+      });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+    },
+  });
+}
+
+type ThreadDeleteTarget = Pick<SessionListItem, "id" | "name">;
+
+export type DeleteThreadsResult = {
+  deletedIds: string[];
+  failures: Array<ThreadDeleteTarget & { message: string }>;
+};
+
+/** 分批提交删除，避免一次性为大量未勾选 Thread 打满浏览器连接。 */
+export function useDeleteThreads() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      sessions: readonly ThreadDeleteTarget[],
+    ): Promise<DeleteThreadsResult> => {
+      const deletedIds: string[] = [];
+      const failures: DeleteThreadsResult["failures"] = [];
+
+      for (let index = 0; index < sessions.length; index += 5) {
+        const batch = sessions.slice(index, index + 5);
+        const results = await Promise.all(
+          batch.map(async (session) => {
+            try {
+              await apiFetch<ThreadCommandResult>(
+                `/api/user/sessions/${session.id}`,
+                { method: "DELETE" },
+              );
+              return { session, message: null };
+            } catch (error) {
+              return {
+                session,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "删除失败，请稍后重试",
+              };
+            }
+          }),
+        );
+
+        for (const result of results) {
+          if (result.message === null) {
+            deletedIds.push(result.session.id);
+          } else {
+            failures.push({ ...result.session, message: result.message });
+          }
+        }
+      }
+
+      return { deletedIds, failures };
+    },
+    onSuccess: (result) => {
+      const deletedIds = new Set(result.deletedIds);
+      if (deletedIds.size > 0) {
+        queryClient.setQueryData<SessionListItem[]>(
+          SESSIONS_QUERY_KEY,
+          (current) =>
+            current?.filter((session) => !deletedIds.has(session.id)),
+        );
+        for (const sessionId of deletedIds) {
+          queryClient.removeQueries({
+            queryKey: sessionQueryKey(sessionId),
+            exact: true,
+          });
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
     },
   });
 }

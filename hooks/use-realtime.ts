@@ -7,9 +7,17 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { catchUpEventCursor } from "@/hooks/realtime-catchup";
+import {
+  BRIDGE_DIRECTORIES_QUERY_KEY,
+  planningNotesQueryKey,
+  sessionQueryKey,
+  SESSIONS_QUERY_KEY,
+  taskQueryKey,
+  TASKS_QUERY_KEY,
+  threadPlanningNotesQueryKey,
+  turnPlansQueryKey,
+} from "@/hooks/query-keys";
 import { compareSessionActivities } from "@/hooks/use-sessions";
-import { useSupabase } from "@/hooks/use-supabase";
 import type {
   SessionActivityItem,
   SessionConversation,
@@ -28,7 +36,11 @@ export const REALTIME_TABLES = [
   "session_activities",
   "session_history_syncs",
   "ai_sessions",
+  "ai_bridge_directories",
   "artifacts",
+  "planning_notes",
+  "thread_planning_notes",
+  "session_turn_plans",
 ] as const;
 
 export type RealtimeTable = (typeof REALTIME_TABLES)[number];
@@ -80,23 +92,26 @@ export function realtimeInvalidations(
   };
 
   if (table === "tasks") {
-    exact(["tasks"]);
-    exact(["sessions"]);
+    exact(TASKS_QUERY_KEY);
+    exact(SESSIONS_QUERY_KEY);
     for (const row of rows) {
       const taskId = nonEmptyString(row, "id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
+      // 规划面板的 Turn 链进度直接来自任务状态，跟随任务变更刷新。
+      const sessionId = nonEmptyString(row, "assigned_session_id");
+      if (sessionId) exact(turnPlansQueryKey(sessionId));
     }
   } else if (table === "task_messages") {
     // The board list embeds each waiting task's latest AI message.
-    exact(["tasks"]);
+    exact(TASKS_QUERY_KEY);
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
     }
   } else if (table === "task_events") {
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
       // Session conversation activity is delivered by session_activities and
       // merged directly. task_events is a compatibility/audit mirror and must
       // not refetch every loaded infinite-history page for each completed item.
@@ -104,18 +119,39 @@ export function realtimeInvalidations(
   } else if (table === "artifacts") {
     for (const row of rows) {
       const taskId = nonEmptyString(row, "task_id");
-      if (taskId) exact(["tasks", taskId]);
+      if (taskId) exact(taskQueryKey(taskId));
     }
   } else if (table === "ai_sessions") {
-    exact(["sessions"]);
+    exact(SESSIONS_QUERY_KEY);
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "id");
-      if (sessionId) exact(["sessions", sessionId]);
+      if (sessionId) exact(sessionQueryKey(sessionId));
+    }
+  } else if (table === "ai_bridge_directories") {
+    exact(BRIDGE_DIRECTORIES_QUERY_KEY);
+  } else if (table === "planning_notes") {
+    for (const row of rows) {
+      const projectRef = nonEmptyString(row, "project_ref");
+      if (projectRef) {
+        exact(planningNotesQueryKey(projectRef));
+      }
+    }
+  } else if (table === "thread_planning_notes") {
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "session_id");
+      if (sessionId) {
+        exact(threadPlanningNotesQueryKey(sessionId));
+      }
+    }
+  } else if (table === "session_turn_plans") {
+    for (const row of rows) {
+      const sessionId = nonEmptyString(row, "session_id");
+      if (sessionId) exact(turnPlansQueryKey(sessionId));
     }
   } else {
     for (const row of rows) {
       const sessionId = nonEmptyString(row, "session_id");
-      if (sessionId) exact(["sessions", sessionId]);
+      if (sessionId) exact(sessionQueryKey(sessionId));
     }
   }
 
@@ -174,7 +210,7 @@ export function createHistoryActivityRefreshBatcher(
     if (timer !== undefined) clearTimeout(timer);
     timers.delete(sessionId);
     void queryClient.invalidateQueries({
-      queryKey: ["sessions", sessionId],
+      queryKey: sessionQueryKey(sessionId),
       exact: true,
     });
   };
@@ -198,8 +234,9 @@ export function createHistoryActivityRefreshBatcher(
 }
 
 const RECOVERY_INVALIDATIONS: readonly RealtimeInvalidation[] = [
-  { queryKey: ["tasks"], exact: false },
-  { queryKey: ["sessions"], exact: false },
+  { queryKey: TASKS_QUERY_KEY, exact: false },
+  { queryKey: SESSIONS_QUERY_KEY, exact: false },
+  { queryKey: BRIDGE_DIRECTORIES_QUERY_KEY, exact: false },
 ];
 
 /**
@@ -219,10 +256,15 @@ export const SAFE_TASK_REALTIME_COLUMNS = [
   "status",
   "priority",
   "position",
+  "model",
+  "reasoning_effort",
+  "goal_mode",
+  "steer",
   "assigned_session_id",
   "claimed_by_session_id",
   "claimed_at",
   "lease_expires_at",
+  "awaiting_user_input",
   "required_capabilities",
   "external_source",
   "external_task_ref",
@@ -258,26 +300,6 @@ export const SAFE_HISTORY_SYNC_REALTIME_COLUMNS = [
   "completed_at",
   "updated_at",
 ] as const;
-
-/** 从 postgres_changes payload 中提取 task_events 行 id；无法识别时返回 null。 */
-function extractEventId(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object") return null;
-  const row = (payload as { new?: unknown }).new;
-  if (!row || typeof row !== "object") return null;
-  const id = (row as { id?: unknown }).id;
-  return typeof id === "number" ? id : null;
-}
-
-function extractSessionId(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const candidate = payload as { new?: unknown; old?: unknown };
-  for (const row of [candidate.new, candidate.old]) {
-    if (!row || typeof row !== "object") continue;
-    const sessionId = (row as { session_id?: unknown }).session_id;
-    if (typeof sessionId === "string" && sessionId) return sessionId;
-  }
-  return null;
-}
 
 export function sessionActivityFromRealtime(
   payload: unknown,
@@ -370,234 +392,100 @@ export function patchRealtimeSessionList(
   current: readonly SessionListItem[],
   update: RealtimeSessionUpdate,
 ): SessionListItem[] {
-  return current.map((session) =>
-    session.id === update.id
-      ? {
-          ...session,
-          ...update,
-          connection: session.connection,
-          current_task: session.current_task,
-          queued_task_count: session.queued_task_count,
-        }
-      : session,
-  );
+  if (update.deletion_requested_at) {
+    return current.filter((session) => session.id !== update.id);
+  }
+  return current.map((session) => {
+    if (session.id !== update.id) return session;
+    const updated = {
+      ...session,
+      ...update,
+      connection: session.connection,
+      current_task: session.current_task,
+      queued_task_count: session.queued_task_count,
+    };
+    return {
+      ...updated,
+      name: updated.user_name ?? updated.name,
+    };
+  });
 }
 
 export function patchRealtimeSessionConversation(
   current: InfiniteData<SessionConversation, string | null>,
   update: RealtimeSessionUpdate,
 ): InfiniteData<SessionConversation, string | null> {
+  if (update.deletion_requested_at) return current;
   return {
     ...current,
     pages: current.pages.map((page) => ({
       ...page,
       session:
         page.session.id === update.id
-          ? {
-              ...page.session,
-              ...update,
-              connection: page.session.connection,
-              current_task: page.session.current_task,
-              queued_task_count: page.session.queued_task_count,
-            }
+          ? (() => {
+              const updated = {
+                ...page.session,
+                ...update,
+                connection: page.session.connection,
+                current_task: page.session.current_task,
+                queued_task_count: page.session.queued_task_count,
+              };
+              return {
+                ...updated,
+                name: updated.user_name ?? updated.name,
+              };
+            })()
           : page.session,
     })),
   };
 }
 
 /**
- * 订阅当前 Workspace 的 Supabase Realtime 数据库变更。
- * - 按表和行 id 只失效可能受影响的列表、任务详情或会话，并在 150ms 内合并；
- *   live session_activities insert 直接并入对应会话缓存；历史导入的 burst
- *   在安静窗口后整批重拉，避免逐行重排时间线。session_history_syncs 让纯状态
- *   或空批次也能及时刷新；task message/event 镜像不会再次重拉会话的所有历史页。
- * - 维护内存中的最新 TaskEvent id 游标：实时 payload 单调推进；
- *   每次 SUBSCRIBED（含断线重连）按 id > cursor 分页补拉遗漏事件，
- *   发现遗漏即失效查询，全量重拉仍是权威状态恢复手段。
- * - 补拉失败不破坏订阅；30 秒轮询（QueryClient 默认配置）继续兜底。
- * - workspace 变化时游标随 effect 重建而重置；cleanup 后不再写旧订阅。
+ * 订阅当前 Workspace 的本地数据库变更流（LISTEN/NOTIFY → SSE）。
+ * 服务端只下发 `{ table, op, workspace_id }`，前端按表做粗粒度失效；
+ * 断线重连成功后执行一次全量失效作为权威恢复手段。
  */
 export function useRealtimeWorkspace(workspaceId: string | undefined) {
-  const supabase = useSupabase();
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!supabase || !workspaceId) return;
+    if (!workspaceId) return;
 
     let cancelled = false;
-    // null 表示基线尚未建立；仅在闭包内使用，workspace 切换即重置。
-    let cursor: number | null = null;
-    let catchUpInFlight = false;
+    let source: EventSource | null = null;
     const invalidationBatcher = createRealtimeInvalidationBatcher(queryClient);
     const historyRefreshBatcher =
       createHistoryActivityRefreshBatcher(queryClient);
 
-    const advanceCursor = (id: number) => {
-      if (cursor === null || id > cursor) cursor = id;
+    source = new EventSource(
+      `/api/realtime?workspace_id=${encodeURIComponent(workspaceId)}`,
+    );
+    source.onopen = () => {
+      // 首次建立与断线重连后都做一次全量失效，权威状态由拉取恢复。
+      if (!cancelled) invalidationBatcher.schedule(RECOVERY_INVALIDATIONS);
     };
-
-    const fetchMaxEventId = async (): Promise<number> => {
-      const { data, error } = await supabase
-        .from("task_events")
-        .select("id")
-        .eq("workspace_id", workspaceId)
-        .order("id", { ascending: false })
-        .limit(1);
-      if (error) throw error;
-      return data?.[0]?.id ?? 0;
-    };
-
-    const fetchEventIdsAfter = async (
-      afterId: number,
-      limit: number,
-    ): Promise<readonly number[]> => {
-      const { data, error } = await supabase
-        .from("task_events")
-        .select("id")
-        .eq("workspace_id", workspaceId)
-        .gt("id", afterId)
-        .order("id", { ascending: true })
-        .limit(limit);
-      if (error) throw error;
-      return (data ?? []).map((row) => row.id);
-    };
-
-    /** 初次建立基线，重连时补拉遗漏；与实时回调竞态时用 max 单调合并。 */
-    const syncEventCursor = async () => {
-      if (catchUpInFlight) return;
-      catchUpInFlight = true;
+    source.onmessage = (event) => {
       try {
-        if (cursor === null) {
-          advanceCursor(await fetchMaxEventId());
+        const payload = JSON.parse(event.data) as { table?: unknown };
+        if (
+          typeof payload.table !== "string" ||
+          !(REALTIME_TABLES as readonly string[]).includes(payload.table)
+        ) {
           return;
         }
-        const result = await catchUpEventCursor({
-          cursor,
-          fetchPage: fetchEventIdsAfter,
-        });
-        // 补拉期间实时回调可能已推进游标，只取更大值。
-        advanceCursor(result.cursor);
-        if (result.missed > 0 && !cancelled) {
-          invalidationBatcher.schedule(RECOVERY_INVALIDATIONS);
-        }
-      } finally {
-        catchUpInFlight = false;
+        invalidationBatcher.schedule(
+          realtimeInvalidations(payload.table as RealtimeTable, {}),
+        );
+      } catch {
+        // 单条坏消息不影响订阅；下一次连接或事件会继续恢复。
       }
     };
 
-    const channel = supabase.channel(`workspace:${workspaceId}`);
-
-    for (const table of REALTIME_TABLES) {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table,
-          filter: `workspace_id=eq.${workspaceId}`,
-          // 有 service-only 列的表必须显式限制为已授权的公开投影。
-          ...(table === "tasks"
-            ? { select: [...SAFE_TASK_REALTIME_COLUMNS] }
-            : table === "session_history_syncs"
-              ? { select: [...SAFE_HISTORY_SYNC_REALTIME_COLUMNS] }
-            : null),
-        },
-        (payload) => {
-          if (table === "task_events") {
-            const id = extractEventId(payload);
-            if (id !== null) advanceCursor(id);
-          }
-          if (table === "session_history_syncs") {
-            const sessionId = extractSessionId(payload);
-            if (sessionId) {
-              historyRefreshBatcher.schedule(sessionId);
-            } else {
-              invalidationBatcher.schedule(
-                realtimeInvalidations(table, payload),
-              );
-            }
-          } else if (table === "session_activities") {
-            const activity = sessionActivityFromRealtime(payload);
-            const sessionId = activity?.session_id ?? extractSessionId(payload);
-            if (activity && sessionId) {
-              if (isHistoryImportActivity(activity)) {
-                historyRefreshBatcher.schedule(sessionId);
-                return;
-              }
-              const updated = queryClient.setQueryData<
-                InfiniteData<SessionConversation, string | null>
-              >(["sessions", sessionId], (current) =>
-                appendRealtimeSessionActivity(current, activity),
-              );
-              if (!updated) {
-                invalidationBatcher.schedule(
-                  realtimeInvalidations(table, payload),
-                );
-              }
-            } else if (sessionId) {
-              invalidationBatcher.schedule(
-                realtimeInvalidations(table, payload),
-              );
-            }
-          } else if (table === "ai_sessions") {
-            const update = sessionUpdateFromRealtime(payload);
-            if (!update) {
-              invalidationBatcher.schedule(
-                realtimeInvalidations(table, payload),
-              );
-              return;
-            }
-
-            const sessionList = queryClient.getQueryData<SessionListItem[]>([
-              "sessions",
-            ]);
-            if (sessionList?.some((session) => session.id === update.id)) {
-              queryClient.setQueryData<SessionListItem[]>(
-                ["sessions"],
-                (current) =>
-                  current
-                    ? patchRealtimeSessionList(current, update)
-                    : current,
-              );
-            } else {
-              invalidationBatcher.schedule([
-                { queryKey: ["sessions"], exact: true },
-              ]);
-            }
-
-            queryClient.setQueryData<
-              InfiniteData<SessionConversation, string | null>
-            >(["sessions", update.id], (current) =>
-              current
-                ? patchRealtimeSessionConversation(current, update)
-                : current,
-            );
-          } else {
-            invalidationBatcher.schedule(
-              realtimeInvalidations(table, payload),
-            );
-          }
-        },
-      );
-    }
-
-    channel.subscribe((status) => {
-      if (status !== "SUBSCRIBED") return;
-      void (async () => {
-        try {
-          await syncEventCursor();
-        } catch {
-          // 补拉失败不破坏订阅；权威状态由全量失效与轮询兜底恢复。
-        }
-        if (!cancelled) invalidationBatcher.schedule(RECOVERY_INVALIDATIONS);
-      })();
-    });
-
     return () => {
       cancelled = true;
+      source?.close();
       invalidationBatcher.cancel();
       historyRefreshBatcher.cancel();
-      void supabase.removeChannel(channel);
     };
-  }, [supabase, workspaceId, queryClient]);
+  }, [workspaceId, queryClient]);
 }

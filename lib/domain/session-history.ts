@@ -14,6 +14,13 @@ export async function importSessionHistory(
   context: AISessionContext,
   input: ImportSessionHistoryInput,
 ) {
+  // History keeps the human prompt and final AI reply so imported turns remain
+  // readable as conversations. Reasoning summaries still stay outside the
+  // persistence boundary, including when sent by an older/custom Bridge.
+  const items = input.items.filter(
+    (item) =>
+      item.kind === "user_message" || item.kind === "assistant_message",
+  );
   return callDomainRpc("import_session_history", {
     p_workspace_id: context.workspaceId,
     p_connection_id: context.connectionId,
@@ -21,7 +28,7 @@ export async function importSessionHistory(
     p_session_id: context.sessionId,
     p_runtime_instance_id: input.runtime_instance_id,
     p_report_sequence: input.report_sequence,
-    p_items: input.items as Json,
+    p_items: items as Json,
     p_sync: input.sync as Json,
   });
 }

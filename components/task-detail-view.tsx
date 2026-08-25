@@ -6,7 +6,9 @@ import {
   ArrowLeftIcon,
   CircleSlashIcon,
   DownloadIcon,
+  PauseIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   RotateCcwIcon,
   SendIcon,
@@ -16,6 +18,7 @@ import {
 import { ArtifactUpload } from "@/components/artifact-upload";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SubtaskDialog } from "@/components/subtask-dialog";
+import { StructuredUserInputForm } from "@/components/structured-user-input-form";
 import { TaskFormDialog } from "@/components/task-form-dialog";
 import {
   ACTOR_TYPE_LABEL,
@@ -30,12 +33,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSessions } from "@/hooks/use-sessions";
 import { apiFetch } from "@/hooks/api-client";
 import { findPendingQuestion } from "@/hooks/pending-question";
+import { taskDisplayStatus } from "@/lib/domain/task-rules";
 import {
   useCancelTask,
+  usePauseTask,
   usePostTaskMessage,
   useReleaseTask,
   useReopenTask,
   useReplyToTask,
+  useResumeTask,
 } from "@/hooks/use-tasks";
 import { cn, formatBytes, formatDateTime, formatRelativeTime, isPast } from "@/components/utils";
 import type { TaskDetails } from "@/lib/types/domain";
@@ -71,7 +77,9 @@ function KeyValue({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function TaskLink({ task }: { task: TaskRow }) {
-  const meta = TASK_STATUS_META[task.status];
+  const meta = TASK_STATUS_META[
+    task.awaiting_user_input ? "waiting_user" : task.status
+  ];
   return (
     <Link
       href={`/tasks/${task.id}`}
@@ -161,21 +169,32 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     messages,
     events,
     artifacts,
+    input_requests: inputRequests,
   } = details;
 
   const { data: sessions } = useSessions();
   const cancelTask = useCancelTask(task.id);
   const reopenTask = useReopenTask(task.id);
   const releaseTask = useReleaseTask(task.id);
+  const pauseTask = usePauseTask(task.id);
+  const resumeTask = useResumeTask(task.id);
   const postMessage = usePostTaskMessage(task.id);
 
   const [editOpen, setEditOpen] = useState(false);
   const [subtaskOpen, setSubtaskOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
   const [composer, setComposer] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const statusMeta = TASK_STATUS_META[task.status];
+  const hasStructuredWait = inputRequests.some(
+    (request) => request.status === "pending",
+  );
+  const statusMeta = TASK_STATUS_META[
+    task.awaiting_user_input || hasStructuredWait
+      ? "waiting_user"
+      : taskDisplayStatus(task, children.length > 0)
+  ];
   const priority = priorityLevelOf(task.priority);
   const claimedSession = task.claimed_by_session_id
     ? sessions?.find((session) => session.id === task.claimed_by_session_id)
@@ -206,6 +225,18 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     [messages, knownTaskById],
   );
 
+  const pendingStructuredRequest = useMemo(
+    () =>
+      [...inputRequests]
+        .reverse()
+        .find(
+          (request) =>
+            request.status === "pending" &&
+            knownTaskById.get(request.task_id)?.awaiting_user_input === true,
+        ) ?? null,
+    [inputRequests, knownTaskById],
+  );
+
   const replyTargetTaskId = pendingQuestion?.task_id ?? task.id;
   const isDescendantQuestion =
     pendingQuestion !== null && pendingQuestion.task_id !== task.id;
@@ -226,15 +257,26 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
   const canRelease =
     ["claimed", "running"].includes(task.status) &&
     task.claimed_by_session_id !== null;
+  // 暂停/恢复仅适用于叶子任务；聚合父的状态由子任务派生，不提供操作。
+  const canPause =
+    ["ready", "claimed", "running"].includes(task.status) &&
+    children.length === 0;
+  const canResume = task.status === "paused" && children.length === 0;
   // 已取消任务不可编辑。
   const canEdit = task.status !== "cancelled";
   const actionPending =
-    cancelTask.isPending || reopenTask.isPending || releaseTask.isPending;
+    cancelTask.isPending ||
+    reopenTask.isPending ||
+    releaseTask.isPending ||
+    pauseTask.isPending ||
+    resumeTask.isPending;
 
   // 拆分限制与数据库一致：等待回复 / 已取消不可拆分；
   // 只要存在领取记录（即使租约已过期）也不允许用户拆分，需先释放。
   const hasClaim = task.claimed_by_session_id !== null;
-  const subtaskBlockReason = ["waiting_user", "cancelled"].includes(task.status)
+  const subtaskBlockReason = hasStructuredWait
+    ? "任务正在当前 turn 中等待结构化回答，提交前不能拆分子任务。"
+    : ["waiting_user", "cancelled"].includes(task.status)
     ? task.status === "waiting_user"
       ? "任务正在等待回复，回复前不能拆分子任务。"
       : "已取消的任务不能拆分子任务。"
@@ -285,11 +327,11 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3">
         <Link
-          href="/board"
+          href="/sessions"
           className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <ArrowLeftIcon className="size-4" />
-          返回看板
+          返回会话与上下文
         </Link>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -328,6 +370,28 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
               >
                 <UnlockIcon />
                 释放任务
+              </Button>
+            ) : null}
+            {canPause ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionPending}
+                onClick={() => setPauseOpen(true)}
+              >
+                <PauseIcon />
+                暂停任务
+              </Button>
+            ) : null}
+            {canResume ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionPending}
+                onClick={() => runAction(() => resumeTask.mutateAsync(undefined))}
+              >
+                <PlayIcon />
+                恢复任务
               </Button>
             ) : null}
             {canReopen ? (
@@ -446,8 +510,23 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
           </Section>
 
           <Section
-            title={pendingQuestion ? "消息（AI 正在等待你的回复）" : "消息"}
+            title={
+              pendingStructuredRequest || pendingQuestion
+                ? "消息（AI 正在等待你的回复）"
+                : "消息"
+            }
           >
+            {pendingStructuredRequest ? (
+              <StructuredUserInputForm
+                request={pendingStructuredRequest}
+                sourceTaskTitle={
+                  pendingStructuredRequest.task_id === task.id
+                    ? null
+                    : (knownTaskById.get(pendingStructuredRequest.task_id)
+                        ?.title ?? pendingStructuredRequest.task_id)
+                }
+              />
+            ) : null}
             {sortedMessages.length > 0 ? (
               <ol className="flex flex-col gap-3">
                 {sortedMessages.map((message) => (
@@ -483,6 +562,7 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
               <p className="text-sm text-muted-foreground">暂无消息。</p>
             )}
 
+            {!pendingStructuredRequest ? (
             <form onSubmit={onSendMessage} className="flex flex-col gap-2">
               {isDescendantQuestion && pendingQuestion ? (
                 <p className="rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -520,6 +600,11 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
                 {pendingQuestion ? "回复并恢复任务" : "发送"}
               </Button>
             </form>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                当前问题必须通过上方选择框提交；普通留言会在回答后恢复。
+              </p>
+            )}
           </Section>
 
           <Section title="事件时间线">
@@ -691,6 +776,20 @@ export function TaskDetailView({ details }: { details: TaskDetails }) {
         onOpenChange={setSubtaskOpen}
         parentTask={task}
         siblings={children}
+      />
+      <ConfirmDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        title="暂停该任务？"
+        description="暂停后任务进入“已暂停”状态，不会再被会话认领。若任务正在执行，会在一个轮询周期内尽力中断设备上的当前 turn（不保证立即停止）。之后可随时恢复，恢复后回到原会话队列重新执行。"
+        confirmLabel="确认暂停"
+        pending={pauseTask.isPending}
+        onConfirm={() =>
+          runAction(async () => {
+            await pauseTask.mutateAsync(undefined);
+            setPauseOpen(false);
+          })
+        }
       />
       <ConfirmDialog
         open={cancelOpen}

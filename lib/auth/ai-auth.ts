@@ -31,7 +31,7 @@ export async function authenticateAIRequest(request: Request): Promise<AIAuthCon
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("ai_connections")
-    .select("id, workspace_id, last_used_at")
+    .select("id, workspace_id, platform, last_used_at")
     .eq("api_token_hash", tokenHash)
     .is("revoked_at", null)
     .maybeSingle();
@@ -52,7 +52,12 @@ export async function authenticateAIRequest(request: Request): Promise<AIAuthCon
     if (updateError) throw mapDatabaseError(updateError);
   }
 
-  return { connectionId: data.id, workspaceId: data.workspace_id, tokenHash };
+  return {
+    connectionId: data.id,
+    workspaceId: data.workspace_id,
+    platform: data.platform,
+    tokenHash,
+  };
 }
 
 export async function authorizeAISession(
@@ -71,7 +76,10 @@ export async function authorizeAISession(
   if (!data) {
     throw new AppError("SESSION_NOT_AUTHORIZED", "The session does not belong to this connection");
   }
-  return { ...auth, sessionId: data.id };
+  return {
+    ...auth,
+    sessionId: data.id,
+  };
 }
 
 export function sessionIdFromRequest(request: Request): string {

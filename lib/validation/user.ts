@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  bridgeDirectoryKeySchema,
   capabilitiesSchema,
   nonEmptyText,
   optionalText,
@@ -11,6 +12,10 @@ import {
 export const workspaceQuerySchema = z.object({ workspace_id: uuidSchema.optional() }).strict();
 
 export const sessionParamsSchema = z.object({ sessionId: uuidSchema }).strict();
+
+export const connectionParamsSchema = z
+  .object({ connectionId: uuidSchema })
+  .strict();
 
 const bigintCursorSchema = z
   .string()
@@ -48,7 +53,76 @@ export const sessionConversationQuerySchema = z
   );
 
 export const createSessionTurnSchema = z
-  .object({ content: nonEmptyText.max(100_000) })
+  .object({
+    content: nonEmptyText.max(100_000),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+    goal_mode: z.boolean().nullable().optional(),
+    steer: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.goal_mode !== true || value.content.length <= 4_000,
+    {
+      message: "Goal 目标不能超过 4000 个字符",
+      path: ["content"],
+    },
+  );
+
+export const planningNotesQuerySchema = z
+  .object({
+    project_ref: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+
+export const upsertPlanningNotesSchema = z
+  .object({
+    project_ref: z.string().trim().min(1).max(1000),
+    content: z.string().max(100_000),
+  })
+  .strict();
+
+export const upsertThreadPlanningNotesSchema = z
+  .object({
+    content: z.string().max(100_000),
+  })
+  .strict();
+
+export const upsertSelectedThreadsSchema = z
+  .object({
+    session_ids: z.array(uuidSchema).max(1000),
+  })
+  .strict();
+
+export const upsertVisibleThreadsSchema = z
+  .object({
+    session_ids: z.array(uuidSchema).max(1000),
+  })
+  .strict();
+
+export const createTurnPlanStepSchema = z
+  .object({
+    content: nonEmptyText.max(100_000),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
+  .strict();
+
+export const updateTurnPlanStepSchema = z
+  .object({
+    content: nonEmptyText.max(100_000).optional(),
+    position: z.number().int().optional(),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (value) => Object.keys(value).length > 0,
+    "At least one field is required",
+  );
+
+export const turnPlanStepParamsSchema = z
+  .object({ stepId: uuidSchema })
   .strict();
 
 export const createTaskSchema = z
@@ -92,11 +166,70 @@ export const replyToTaskSchema = z
   })
   .strict();
 
+export const taskUserInputRequestParamsSchema = z
+  .object({ taskId: uuidSchema, requestId: uuidSchema })
+  .strict();
+
+export const answerTaskUserInputRequestSchema = z
+  .object({
+    answers: z.record(
+      z.string().trim().min(1).max(200),
+      z.array(nonEmptyText.max(10_000)).length(1),
+    ),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const count = Object.keys(value.answers).length;
+    if (count < 1 || count > 3) {
+      context.addIssue({
+        code: "custom",
+        message: "Answers must contain between 1 and 3 questions",
+        path: ["answers"],
+      });
+    }
+    if (
+      new TextEncoder().encode(JSON.stringify(value.answers)).byteLength >
+      100_000
+    ) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 100_000,
+        origin: "value",
+        inclusive: true,
+        message: "Structured answers must not exceed 100 KiB",
+        path: ["answers"],
+      });
+    }
+  });
+
 export const createConnectionSchema = z
   .object({
     workspace_id: uuidSchema.optional(),
     name: nonEmptyText.max(200),
     platform: nonEmptyText.max(100),
+  })
+  .strict();
+
+export const renameConnectionSchema = z
+  .object({ name: nonEmptyText.max(200) })
+  .strict();
+
+export const createThreadSchema = z
+  .object({
+    name: nonEmptyText.max(200),
+    directory_key: bridgeDirectoryKeySchema.nullable().optional(),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
+    /** Canonical Bridge kind that owns the created Thread (unified devices). */
+    platform: nonEmptyText.max(100).optional(),
+  })
+  .strict();
+
+export const renameThreadSchema = z
+  .object({
+    name: nonEmptyText.max(200),
+    model: z.string().trim().min(1).max(200).nullable().optional(),
+    reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
   })
   .strict();
 
@@ -160,9 +293,42 @@ export const taskListQuerySchema = z
   })
   .strict();
 
+export const createDeviceFileCommandSchema = z
+  .object({
+    connection_id: uuidSchema,
+    action: z.enum(["list", "read"]),
+    path: z.string().trim().min(1).max(4096),
+  })
+  .strict();
+
+export const deviceFileCommandParamsSchema = z
+  .object({ commandId: uuidSchema })
+  .strict();
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type ReplyToTaskInput = z.infer<typeof replyToTaskSchema>;
+export type AnswerTaskUserInputRequestInput = z.infer<
+  typeof answerTaskUserInputRequestSchema
+>;
 export type CreateConnectionInput = z.infer<typeof createConnectionSchema>;
+export type RenameConnectionInput = z.infer<typeof renameConnectionSchema>;
+export type CreateThreadInput = z.infer<typeof createThreadSchema>;
+export type RenameThreadInput = z.infer<typeof renameThreadSchema>;
 export type CreateUserSubtasksInput = z.infer<typeof createUserSubtasksSchema>;
 export type CreateSessionTurnInput = z.infer<typeof createSessionTurnSchema>;
+export type UpsertPlanningNotesInput = z.infer<typeof upsertPlanningNotesSchema>;
+export type UpsertThreadPlanningNotesInput = z.infer<
+  typeof upsertThreadPlanningNotesSchema
+>;
+export type UpsertSelectedThreadsInput = z.infer<
+  typeof upsertSelectedThreadsSchema
+>;
+export type UpsertVisibleThreadsInput = z.infer<
+  typeof upsertVisibleThreadsSchema
+>;
+export type CreateTurnPlanStepInput = z.infer<typeof createTurnPlanStepSchema>;
+export type UpdateTurnPlanStepInput = z.infer<typeof updateTurnPlanStepSchema>;
+export type CreateDeviceFileCommandInput = z.infer<
+  typeof createDeviceFileCommandSchema
+>;

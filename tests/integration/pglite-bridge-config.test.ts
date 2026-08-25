@@ -5,38 +5,10 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-type BridgeConfigurationResponse = {
-  configuration: {
-    connection_id: string;
-    version: number;
-    desired: {
-      enabled: boolean;
-      include_thread_titles: boolean;
-      max_threads: number;
-      max_concurrent_turns: number;
-    };
-    applied: null | {
-      version: number | null;
-      effective: null | {
-        enabled: boolean;
-        include_thread_titles: boolean;
-        max_threads: number;
-        max_concurrent_turns: number;
-      };
-      constraints: Record<string, unknown>;
-      error: string | null;
-      applied_at: string;
-    };
-    runtime: {
-      online: boolean;
-      lease_expires_at: string | null;
-    };
-    updated_at: string;
-  };
-};
+import type { BridgeConfigurationResponse } from "@/lib/types/database";
 
 const migrationsDirectory = path.resolve(process.cwd(), "supabase/migrations");
-const baseMigrations = [
+const preConfigMigrations = [
   "20260808000000_initial_schema.sql",
   "20260808000100_core_functions.sql",
   "20260808000200_rls_storage.sql",
@@ -46,8 +18,28 @@ const baseMigrations = [
   "20260809150155_heartbeat_idempotency_maintenance.sql",
   "20260810100000_bridge_v2_thread_inventory.sql",
 ];
-const bridgeConfigMigration =
-  "20260810130000_bridge_remote_configuration.sql";
+const configMigrations = [
+  "20260810130000_bridge_remote_configuration.sql",
+  "20260810170000_codex_history_sync.sql",
+  "20260810180000_web_thread_management.sql",
+  "20260811120000_structured_user_input.sql",
+  "20260811130000_session_process_detail_sync.sql",
+  "20260811140000_bridge_working_directories.sql",
+  "20260811150000_web_managed_working_directories.sql",
+  "20260811160000_normalize_legacy_unassigned_tasks.sql",
+  "20260812100000_bridge_full_access_default.sql",
+  "20260812130000_session_turn_images.sql",
+  "20260813110000_thread_model_settings.sql",
+  "20260813134500_existing_thread_settings.sql",
+  "20260813143000_turn_model_settings.sql",
+  "20260813170000_dynamic_model_catalog.sql",
+  "20260815120000_planning_workspace.sql",
+  "20260815150000_turn_goal_mode.sql",
+  "20260816120000_web_create_working_directories.sql",
+  "20260817120000_connection_quota.sql",
+  "20260818000000_bridge_device_identity.sql",
+  "20260819000000_bridge_desired_version.sql",
+];
 
 describe("Bridge remote configuration migration", () => {
   let database: PGlite;
@@ -60,23 +52,39 @@ describe("Bridge remote configuration migration", () => {
     expectedVersion,
     idempotencyKey,
     requestHash,
+    workingDirectories = [
+      {
+        directory_key: "main",
+        name: "Main project",
+        working_directory: "/srv/main",
+      },
+      {
+        directory_key: "docs",
+        name: "Docs",
+        working_directory: "/srv/docs",
+      },
+    ],
   }: {
     expectedVersion: number;
     idempotencyKey: string;
     requestHash: string;
+    workingDirectories?: unknown;
   }) => {
     const result = await database.query<{
       response: BridgeConfigurationResponse;
     }>(
       `select public.update_ai_connection_bridge_config(
          $1::uuid, $2::uuid, $3::uuid, $4::integer,
-         false, true, 75, 4, $5::text, $6::text
+         false, true, 75, 4, true, 75, $5::jsonb, $6::text, $7::text
        ) as response`,
       [
         workspaceId,
         userId,
         connectionId,
         expectedVersion,
+        workingDirectories === null
+          ? null
+          : JSON.stringify(workingDirectories),
         idempotencyKey,
         requestHash,
       ],
@@ -125,7 +133,7 @@ describe("Bridge remote configuration migration", () => {
       );
     `);
 
-    for (const migrationName of baseMigrations) {
+    for (const migrationName of preConfigMigrations) {
       const migration = await readFile(
         path.join(migrationsDirectory, migrationName),
         "utf8",
@@ -156,11 +164,13 @@ describe("Bridge remote configuration migration", () => {
       [connectionId, workspaceId, tokenHash, userId],
     );
 
-    const migration = await readFile(
-      path.join(migrationsDirectory, bridgeConfigMigration),
-      "utf8",
-    );
-    await database.exec(migration);
+    for (const migrationName of configMigrations) {
+      const migration = await readFile(
+        path.join(migrationsDirectory, migrationName),
+        "utf8",
+      );
+      await database.exec(migration);
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -174,10 +184,17 @@ describe("Bridge remote configuration migration", () => {
       desired_include_thread_titles: boolean;
       desired_max_threads: number;
       desired_max_concurrent_turns: number;
+      desired_sync_history: boolean;
+      desired_history_turn_limit: number;
+      desired_working_directories: unknown;
+      constraint_allow_working_directory_configuration: boolean | null;
       applied_at: string | null;
     }>(
       `select version, desired_enabled, desired_include_thread_titles,
               desired_max_threads, desired_max_concurrent_turns,
+              desired_sync_history, desired_history_turn_limit,
+              desired_working_directories,
+              constraint_allow_working_directory_configuration,
               applied_at::text
        from public.ai_connection_bridge_settings
        where connection_id = $1::uuid`,
@@ -189,6 +206,10 @@ describe("Bridge remote configuration migration", () => {
       desired_include_thread_titles: false,
       desired_max_threads: 50,
       desired_max_concurrent_turns: 2,
+      desired_sync_history: false,
+      desired_history_turn_limit: 50,
+      desired_working_directories: null,
+      constraint_allow_working_directory_configuration: null,
       applied_at: null,
     });
 
@@ -208,6 +229,125 @@ describe("Bridge remote configuration migration", () => {
     expect(created.rows[0].count).toBe(1);
   });
 
+  it("accepts and persists the danger-full-access device permission mode", async () => {
+    const fullAccessConnectionId = randomUUID();
+    const fullAccessRuntimeId = randomUUID();
+    const fullAccessTokenHash = randomUUID().repeat(2);
+    await database.query(
+      `insert into public.ai_connections (
+         id, workspace_id, name, platform, api_token_hash, created_by_user_id
+       ) values (
+         $1::uuid, $2::uuid, 'Full-access Bridge', 'codex', $3::text, $4::uuid
+       )`,
+      [fullAccessConnectionId, workspaceId, fullAccessTokenHash, userId],
+    );
+
+    const effective = {
+      enabled: true,
+      include_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 2,
+      sync_history: false,
+      history_turn_limit: 50,
+      working_directories: null,
+    };
+    const constraints = {
+      remote_configuration_enabled: false,
+      allow_thread_titles: false,
+      max_threads: 50,
+      max_concurrent_turns: 32,
+      thread_scope: "cwd",
+      working_directory: "/srv/full-access",
+      fixed_thread: false,
+      permission_mode: "danger-full-access",
+      approval_mode: "accept",
+      allow_history_sync: false,
+      max_history_turns: 50,
+      allow_working_directory_configuration: false,
+    };
+    const exchanged = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 1,
+         60, false, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(constraints),
+      ],
+    );
+
+    expect(exchanged.rows[0].response.configuration.applied).toMatchObject({
+      version: 1,
+      effective,
+      constraints: {
+        permission_mode: "danger-full-access",
+        approval_mode: "accept",
+      },
+    });
+    const stored = await database.query<{
+      constraint_permission_mode: string;
+      constraint_approval_mode: string;
+    }>(
+      `select constraint_permission_mode, constraint_approval_mode
+       from public.ai_connection_bridge_settings
+       where connection_id = $1::uuid`,
+      [fullAccessConnectionId],
+    );
+    expect(stored.rows[0]).toEqual({
+      constraint_permission_mode: "danger-full-access",
+      constraint_approval_mode: "accept",
+    });
+
+    const safeConstraints = { ...constraints, permission_mode: "safe" };
+    const replayed = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 1,
+         60, false, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(safeConstraints),
+      ],
+    );
+    expect(
+      replayed.rows[0].response.configuration.applied?.constraints
+        .permission_mode,
+    ).toBe("danger-full-access");
+
+    const released = await database.query<{
+      response: BridgeConfigurationResponse;
+    }>(
+      `select public.exchange_ai_connection_bridge_config(
+         $1::uuid, $2::uuid, $3::text, $4::uuid, 2,
+         60, true, 1, $5::jsonb, $6::jsonb, null
+       ) as response`,
+      [
+        workspaceId,
+        fullAccessConnectionId,
+        fullAccessTokenHash,
+        fullAccessRuntimeId,
+        JSON.stringify(effective),
+        JSON.stringify(safeConstraints),
+      ],
+    );
+    expect(
+      released.rows[0].response.configuration.applied?.constraints
+        .permission_mode,
+    ).toBe("danger-full-access");
+  });
+
   it("replays a successful update before checking its stale expected version", async () => {
     const first = await updateConfiguration({
       expectedVersion: 1,
@@ -222,6 +362,20 @@ describe("Bridge remote configuration migration", () => {
         include_thread_titles: true,
         max_threads: 75,
         max_concurrent_turns: 4,
+        sync_history: true,
+        history_turn_limit: 75,
+        working_directories: [
+          {
+            directory_key: "main",
+            name: "Main project",
+            working_directory: "/srv/main",
+          },
+          {
+            directory_key: "docs",
+            name: "Docs",
+            working_directory: "/srv/docs",
+          },
+        ],
       },
       applied: null,
     });
@@ -247,7 +401,7 @@ describe("Bridge remote configuration migration", () => {
   it("reserves the idempotency row before taking the connection lock", async () => {
     const functionDefinition = await database.query<{ definition: string }>(`
       select pg_get_functiondef(
-        'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,text,text)'::regprocedure
+        'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,boolean,integer,jsonb,text,text)'::regprocedure
       ) as definition
     `);
     const definition = functionDefinition.rows[0].definition;
@@ -258,6 +412,101 @@ describe("Bridge remote configuration migration", () => {
 
     expect(idempotencyPosition).toBeGreaterThan(-1);
     expect(connectionLockPosition).toBeGreaterThan(idempotencyPosition);
+  });
+
+  it("defensively rejects malformed or ambiguous desired directory lists", async () => {
+    const invalidLists = [
+      [],
+      [
+        {
+          directory_key: "same",
+          name: "Main",
+          working_directory: "/srv/main",
+        },
+        {
+          directory_key: "same",
+          name: "Docs",
+          working_directory: "/srv/docs",
+        },
+      ],
+      [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: "/srv/shared",
+        },
+        {
+          directory_key: "docs",
+          name: "Docs",
+          working_directory: "/srv/shared",
+        },
+      ],
+      [
+        {
+          directory_key: "../escape",
+          name: "Invalid key",
+          working_directory: "/srv/main",
+        },
+      ],
+      [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: "/srv/main",
+          unexpected: true,
+        },
+      ],
+      [
+        {
+          directory_key: "main",
+          name: "n".repeat(201),
+          working_directory: "/srv/main",
+        },
+      ],
+      [
+        {
+          directory_key: "main",
+          name: "Main",
+          working_directory: `/${"p".repeat(4096)}`,
+        },
+      ],
+      Array.from({ length: 101 }, (_, index) => ({
+        directory_key: `directory-${index}`,
+        name: `Directory ${index}`,
+        working_directory: `/srv/directory-${index}`,
+      })),
+    ];
+
+    for (const [index, workingDirectories] of invalidLists.entries()) {
+      await expect(
+        updateConfiguration({
+          expectedVersion: 2,
+          idempotencyKey: `bridge-config/invalid-directories/${index}`,
+          requestHash: `bridge-config-invalid-directories-${index}`.padEnd(
+            64,
+            "0",
+          ),
+          workingDirectories,
+        }),
+      ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
+    }
+
+    const stored = await database.query<{
+      version: number;
+      desired_working_directories: unknown;
+    }>(
+      `select version, desired_working_directories
+       from public.ai_connection_bridge_settings
+       where connection_id = $1::uuid`,
+      [connectionId],
+    );
+    expect(stored.rows[0]).toMatchObject({
+      version: 2,
+      desired_working_directories: [
+        expect.objectContaining({ directory_key: "main" }),
+        expect.objectContaining({ directory_key: "docs" }),
+      ],
+    });
   });
 
   it("strictly validates and runtime-fences token-bound applied status", async () => {
@@ -278,6 +527,18 @@ describe("Bridge remote configuration migration", () => {
       max_threads: 50,
       max_concurrent_turns: 3,
     };
+    const workingDirectories = [
+      {
+        directory_key: "main",
+        name: "Main project",
+        working_directory: "/srv/main",
+      },
+      {
+        directory_key: "docs",
+        name: "Docs",
+        working_directory: "/srv/docs",
+      },
+    ];
     const runtimeA = randomUUID();
     const runtimeB = randomUUID();
     const runtimeC = randomUUID();
@@ -335,14 +596,42 @@ describe("Bridge remote configuration migration", () => {
       }),
     ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
     await expect(
+      exchange({
+        effectivePayload: {
+          ...effective,
+          working_directories: [
+            workingDirectories[0],
+            {
+              ...workingDirectories[1],
+              working_directory: workingDirectories[0].working_directory,
+            },
+          ],
+        },
+        constraintsPayload: {
+          ...constraints,
+          allow_working_directory_configuration: true,
+        },
+      }),
+    ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
+    await expect(
       exchange({ leaseSeconds: 14 }),
     ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
 
     const first = await exchange();
     expect(first.rows[0].response.configuration.applied).toMatchObject({
       version: 2,
-      effective,
-      constraints,
+      effective: {
+        ...effective,
+        sync_history: false,
+        history_turn_limit: 50,
+        working_directories: null,
+      },
+      constraints: {
+        ...constraints,
+        allow_history_sync: false,
+        max_history_turns: 50,
+        allow_working_directory_configuration: false,
+      },
       error: null,
     });
     expect(first.rows[0].response.configuration.runtime).toMatchObject({
@@ -371,7 +660,15 @@ describe("Bridge remote configuration migration", () => {
     });
 
     const duplicate = await exchange({
-      effectivePayload: { ...effective, max_threads: 40 },
+      effectivePayload: {
+        ...effective,
+        max_threads: 40,
+        working_directories: workingDirectories,
+      },
+      constraintsPayload: {
+        ...constraints,
+        allow_working_directory_configuration: false,
+      },
     });
     expect(duplicate.rows[0].response.configuration.applied).toMatchObject({
       version: 2,
@@ -396,13 +693,24 @@ describe("Bridge remote configuration migration", () => {
         firstFence.rows[0].active_runtime_lease_expires_at,
     });
 
-    const newerEffective = { ...effective, max_threads: 40 };
+    const newerEffective = {
+      ...effective,
+      max_threads: 40,
+      working_directories: workingDirectories,
+    };
     const newer = await exchange({
       sequence: 2,
       effectivePayload: newerEffective,
+      constraintsPayload: {
+        ...constraints,
+        allow_working_directory_configuration: false,
+      },
     });
     expect(newer.rows[0].response.configuration.applied).toMatchObject({
       effective: newerEffective,
+      constraints: {
+        allow_working_directory_configuration: false,
+      },
     });
     const stale = await exchange({ sequence: 1 });
     expect(stale.rows[0].response.configuration.applied).toEqual(
@@ -561,6 +869,83 @@ describe("Bridge remote configuration migration", () => {
     });
   });
 
+  it("accepts null to restore device-startup working directories", async () => {
+    const first = await updateConfiguration({
+      expectedVersion: 2,
+      idempotencyKey: "bridge-config/directories/local-default",
+      requestHash: "bridge-config-directories-local-default".padEnd(64, "0"),
+      workingDirectories: null,
+    });
+    expect(first.configuration).toMatchObject({
+      version: 3,
+      desired: { working_directories: null },
+    });
+
+    const replay = await updateConfiguration({
+      expectedVersion: 2,
+      idempotencyKey: "bridge-config/directories/local-default",
+      requestHash: "bridge-config-directories-local-default".padEnd(64, "0"),
+      workingDirectories: null,
+    });
+    expect(replay).toEqual(first);
+  });
+
+  it("accepts and persists the per-entry create_if_missing authorization flag", async () => {
+    const updated = await updateConfiguration({
+      expectedVersion: 3,
+      idempotencyKey: "bridge-config/directories/create-if-missing",
+      requestHash: "bridge-config-directories-create-if-missing".padEnd(
+        64,
+        "0",
+      ),
+      workingDirectories: [
+        {
+          directory_key: "main",
+          name: "Main project",
+          working_directory: "/srv/main",
+        },
+        {
+          directory_key: "web-app",
+          name: "Web app",
+          working_directory: "/srv/web-app",
+          create_if_missing: true,
+        },
+      ],
+    });
+    expect(updated.configuration).toMatchObject({
+      version: 4,
+      desired: {
+        working_directories: [
+          expect.objectContaining({ directory_key: "main" }),
+          expect.objectContaining({
+            directory_key: "web-app",
+            create_if_missing: true,
+          }),
+        ],
+      },
+    });
+
+    await expect(
+      updateConfiguration({
+        expectedVersion: 4,
+        idempotencyKey: "bridge-config/directories/create-if-missing-invalid",
+        requestHash:
+          "bridge-config-directories-create-if-missing-invalid".padEnd(
+            64,
+            "0",
+          ),
+        workingDirectories: [
+          {
+            directory_key: "main",
+            name: "Main project",
+            working_directory: "/srv/main",
+            create_if_missing: "yes",
+          },
+        ],
+      }),
+    ).rejects.toThrow("INVALID_BRIDGE_CONFIG");
+  });
+
   it("denies revoked/cross-workspace updates and exposes RPCs only to service_role", async () => {
     const otherUserId = randomUUID();
     await database.query(
@@ -577,7 +962,8 @@ describe("Bridge remote configuration migration", () => {
       database.query(
         `select public.update_ai_connection_bridge_config(
            $1::uuid, $2::uuid, $3::uuid, 2,
-           true, false, 50, 2, $4::text, $5::text
+           true, false, 50, 2, false, 50, null::jsonb,
+           $4::text, $5::text
          )`,
         [
           otherWorkspaceId,
@@ -600,7 +986,8 @@ describe("Bridge remote configuration migration", () => {
       database.query(
         `select public.update_ai_connection_bridge_config(
            $1::uuid, $2::uuid, $3::uuid, 1,
-           true, false, 50, 2, $4::text, $5::text
+           true, false, 50, 2, false, 50, null::jsonb,
+           $4::text, $5::text
          )`,
         [
           workspaceId,
@@ -621,7 +1008,7 @@ describe("Bridge remote configuration migration", () => {
       select
         has_function_privilege(
           'authenticated',
-          'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,text,text)',
+          'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,boolean,integer,jsonb,text,text)',
           'EXECUTE'
         ) as authenticated_update,
         has_function_privilege(
@@ -631,7 +1018,7 @@ describe("Bridge remote configuration migration", () => {
         ) as authenticated_exchange,
         has_function_privilege(
           'service_role',
-          'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,text,text)',
+          'public.update_ai_connection_bridge_config(uuid,uuid,uuid,integer,boolean,boolean,integer,integer,boolean,integer,jsonb,text,text)',
           'EXECUTE'
         ) as service_update,
         has_function_privilege(

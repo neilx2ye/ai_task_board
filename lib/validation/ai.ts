@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   artifactReferenceSchema,
+  bridgeDirectoryKeySchema,
   capabilitiesSchema,
   nonEmptyText,
   optionalText,
@@ -27,18 +28,144 @@ const syncedThreadSchema = z
     platform: nonEmptyText.max(100).default("codex"),
     model: z.string().trim().min(1).max(200).nullable().optional(),
     working_directory: z.string().trim().min(1).max(4096).nullable().optional(),
+    directory_key: bridgeDirectoryKeySchema.nullable().optional(),
     capabilities: capabilitiesSchema,
     archived: z.boolean().default(false),
+  })
+  .strict();
+
+const syncedBridgeDirectorySchema = z
+  .object({
+    directory_key: bridgeDirectoryKeySchema,
+    name: nonEmptyText.max(200),
+    working_directory: nonEmptyText.max(4096),
+  })
+  .strict();
+
+const syncedModelReasoningEffortSchema = z
+  .object({
+    reasoning_effort: nonEmptyText.max(100),
+    description: z.string().trim().max(2_000).nullable().default(null),
+  })
+  .strict();
+
+const syncedModelCatalogEntrySchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    model: nonEmptyText.max(200),
+    display_name: nonEmptyText.max(200),
+    description: z.string().trim().max(2_000).nullable().default(null),
+    default_reasoning_effort: nonEmptyText.max(100).nullable().default(null),
+    supported_reasoning_efforts: z
+      .array(syncedModelReasoningEffortSchema)
+      .max(20)
+      .default([]),
+    input_modalities: z.array(nonEmptyText.max(100)).max(20).default([]),
+    is_default: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const efforts = new Set<string>();
+    value.supported_reasoning_efforts.forEach((effort, index) => {
+      if (efforts.has(effort.reasoning_effort)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate reasoning_effort: ${effort.reasoning_effort}`,
+          path: ["supported_reasoning_efforts", index, "reasoning_effort"],
+        });
+      }
+      efforts.add(effort.reasoning_effort);
+    });
+    const modalities = new Set<string>();
+    value.input_modalities.forEach((modality, index) => {
+      if (modalities.has(modality)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate input modality: ${modality}`,
+          path: ["input_modalities", index],
+        });
+      }
+      modalities.add(modality);
+    });
+  });
+
+const syncedQuotaBucketSchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    label: nonEmptyText.max(200),
+    remaining_percent: z.number().min(0).max(100).nullable(),
+    used_percent: z.number().min(0).max(100).nullable(),
+    limit: z.number().finite().nonnegative().nullable(),
+    used: z.number().finite().nonnegative().nullable(),
+    remaining: z.number().finite().nonnegative().nullable(),
+    resets_at: z.string().trim().min(1).max(100).nullable(),
+    unlimited: z.boolean(),
+    description: z.string().trim().max(2_000).nullable(),
+  })
+  .strict();
+
+const syncedQuotaCreditsSchema = z
+  .object({
+    balance: z.string().trim().max(200).nullable(),
+    has_credits: z.boolean(),
+    unlimited: z.boolean(),
+    available_resets: z.number().int().nonnegative().nullable(),
+    description: z.string().trim().max(2_000).nullable(),
+  })
+  .strict();
+
+export const syncedQuotaSchema = z
+  .object({
+    provider: z.enum(["codex", "kimi", "antigravity"]),
+    status: z.enum(["ok", "unavailable", "error"]),
+    message: z.string().trim().max(2_000).nullable(),
+    account: z.string().trim().max(200).nullable(),
+    plan: z.string().trim().max(200).nullable(),
+    fetched_at: z.string().trim().min(1).max(100),
+    buckets: z.array(syncedQuotaBucketSchema).max(20),
+    credits: syncedQuotaCreditsSchema.nullable(),
   })
   .strict();
 
 export const syncSessionsSchema = z
   .object({
     bridge_version: nonEmptyText.max(100),
+    /** Canonical Bridge runtime kind owning this inventory (codex/kimi/...). */
+    platform: nonEmptyText.max(100).optional(),
+    quota: syncedQuotaSchema.optional(),
+    model_catalog: z.array(syncedModelCatalogEntrySchema).max(500).optional(),
+    device_id: nonEmptyText.max(100).optional(),
+    device_label: nonEmptyText.max(255).optional(),
+    directories: z
+      .array(syncedBridgeDirectorySchema)
+      .min(1)
+      .max(100)
+      .optional(),
     threads: z.array(syncedThreadSchema).max(500),
   })
   .strict()
   .superRefine((value, context) => {
+    const directoryKeys = new Set<string>();
+    const directoryPaths = new Set<string>();
+    value.directories?.forEach((directory, index) => {
+      if (directoryKeys.has(directory.directory_key)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate directory_key: ${directory.directory_key}`,
+          path: ["directories", index, "directory_key"],
+        });
+      }
+      if (directoryPaths.has(directory.working_directory)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate working_directory: ${directory.working_directory}`,
+          path: ["directories", index, "working_directory"],
+        });
+      }
+      directoryKeys.add(directory.directory_key);
+      directoryPaths.add(directory.working_directory);
+    });
+
     const references = new Set<string>();
     value.threads.forEach((thread, index) => {
       if (references.has(thread.external_conversation_ref)) {
@@ -49,19 +176,54 @@ export const syncSessionsSchema = z
         });
       }
       references.add(thread.external_conversation_ref);
+      if (thread.directory_key && !directoryKeys.has(thread.directory_key)) {
+        context.addIssue({
+          code: "custom",
+          message: `Unknown directory_key: ${thread.directory_key}`,
+          path: ["threads", index, "directory_key"],
+        });
+      }
     });
 
+    const models = new Set<string>();
+    let defaultModelCount = 0;
+    value.model_catalog?.forEach((entry, index) => {
+      if (models.has(entry.model)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate model: ${entry.model}`,
+          path: ["model_catalog", index, "model"],
+        });
+      }
+      models.add(entry.model);
+      if (entry.is_default) defaultModelCount += 1;
+    });
+    if (defaultModelCount > 1) {
+      context.addIssue({
+        code: "custom",
+        message: "Model catalog must contain at most one default model",
+        path: ["model_catalog"],
+      });
+    }
+
     if (
-      new TextEncoder().encode(JSON.stringify(value.threads)).byteLength >
-      1024 * 1024
+      new TextEncoder().encode(
+        JSON.stringify({
+          directories: value.directories ?? null,
+          model_catalog: value.model_catalog ?? null,
+          quota: value.quota ?? null,
+          threads: value.threads,
+        }),
+      ).byteLength >
+      1120 * 1024
     ) {
       context.addIssue({
         code: "too_big",
-        maximum: 1024 * 1024,
+        maximum: 1120 * 1024,
         origin: "value",
         inclusive: true,
-        message: "Thread inventory must not exceed 1 MiB",
-        path: ["threads"],
+        message: "Bridge inventory must not exceed 1120 KiB",
+        path: [],
       });
     }
   });
@@ -73,6 +235,84 @@ export const claimOptionsSchema = z
   .strict();
 
 export const sessionHeartbeatSchema = z.object({}).strict();
+
+export const claimThreadCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    /** Canonical Bridge kind claiming the command (codex/kimi/...). */
+    platform: nonEmptyText.max(100).optional(),
+    lease_seconds: z.number().int().min(15).max(300).default(60),
+  })
+  .strict();
+
+export const completeThreadCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    succeeded: z.boolean(),
+    external_thread_id: z.string().trim().min(1).max(500).nullable().optional(),
+    error: z.string().trim().min(1).max(2000).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.succeeded && value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A successful command cannot include an error",
+        path: ["error"],
+      });
+    }
+    if (!value.succeeded && !value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A failed command must include an error",
+        path: ["error"],
+      });
+    }
+  });
+
+export type ClaimThreadCommandInput = z.infer<
+  typeof claimThreadCommandSchema
+>;
+export type CompleteThreadCommandInput = z.infer<
+  typeof completeThreadCommandSchema
+>;
+
+export const claimFileCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    lease_seconds: z.number().int().min(15).max(300).default(60),
+  })
+  .strict();
+
+export const completeFileCommandSchema = z
+  .object({
+    runtime_instance_id: uuidSchema,
+    succeeded: z.boolean(),
+    result: z.record(z.string(), z.unknown()).nullable().optional(),
+    error: z.string().trim().min(1).max(2000).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.succeeded && !value.result) {
+      context.addIssue({
+        code: "custom",
+        message: "A successful file command must include a result",
+        path: ["result"],
+      });
+    }
+    if (!value.succeeded && !value.error) {
+      context.addIssue({
+        code: "custom",
+        message: "A failed file command must include an error",
+        path: ["error"],
+      });
+    }
+  });
+
+export type ClaimFileCommandInput = z.infer<typeof claimFileCommandSchema>;
+export type CompleteFileCommandInput = z.infer<
+  typeof completeFileCommandSchema
+>;
 
 export const reportCurrentTaskSchema = z
   .object({
@@ -168,6 +408,79 @@ export const reportProgressSchema = claimedTaskCommand
 
 export const requestUserInputSchema = claimedTaskCommand
   .extend({ question: nonEmptyText.max(10_000) })
+  .strict();
+
+const taskUserInputOptionSchema = z
+  .object({
+    label: nonEmptyText.max(500),
+    description: z.string().max(2_000),
+  })
+  .strict();
+
+const taskUserInputQuestionSchema = z
+  .object({
+    id: nonEmptyText.max(200),
+    header: nonEmptyText.max(100),
+    question: nonEmptyText.max(10_000),
+    options: z.array(taskUserInputOptionSchema).min(1).max(20).nullable().default(null),
+    isOther: z.boolean().default(false),
+    isSecret: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((question, context) => {
+    if (!question.options) return;
+    const labels = new Set<string>();
+    question.options.forEach((option, index) => {
+      if (labels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate option label: ${option.label}`,
+          path: ["options", index, "label"],
+        });
+      }
+      labels.add(option.label);
+    });
+  });
+
+export const registerTaskUserInputRequestSchema = claimedTaskCommand
+  .extend({
+    request_id: uuidSchema,
+    external_request_id: nonEmptyText.max(500),
+    turn_id: nonEmptyText.max(500),
+    item_id: nonEmptyText.max(500),
+    is_blocking: z.literal(true),
+    questions: z.array(taskUserInputQuestionSchema).min(1).max(3),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const ids = new Set<string>();
+    value.questions.forEach((question, index) => {
+      if (ids.has(question.id)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate question id: ${question.id}`,
+          path: ["questions", index, "id"],
+        });
+      }
+      ids.add(question.id);
+    });
+    if (
+      new TextEncoder().encode(JSON.stringify(value.questions)).byteLength >
+      100_000
+    ) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 100_000,
+        origin: "value",
+        inclusive: true,
+        message: "Structured questions must not exceed 100 KiB",
+        path: ["questions"],
+      });
+    }
+  });
+
+export const pollTaskUserInputRequestSchema = claimedTaskCommand
+  .extend({ request_id: uuidSchema })
   .strict();
 
 export const postTaskMessageSchema = z
@@ -441,6 +754,12 @@ export type HeartbeatClaimInput = z.infer<typeof heartbeatClaimSchema>;
 export type CreateSubtasksInput = z.infer<typeof createSubtasksSchema>;
 export type ReportProgressInput = z.infer<typeof reportProgressSchema>;
 export type RequestUserInputInput = z.infer<typeof requestUserInputSchema>;
+export type RegisterTaskUserInputRequestInput = z.infer<
+  typeof registerTaskUserInputRequestSchema
+>;
+export type PollTaskUserInputRequestInput = z.infer<
+  typeof pollTaskUserInputRequestSchema
+>;
 export type PostTaskMessageInput = z.infer<typeof postTaskMessageSchema>;
 export type ReportSessionActivityInput = z.infer<typeof reportSessionActivitySchema>;
 export type ImportSessionHistoryInput = z.infer<

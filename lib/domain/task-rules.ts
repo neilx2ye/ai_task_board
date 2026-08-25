@@ -1,17 +1,40 @@
 import type { TaskStatus } from "@/lib/types/database";
 
-export type TaskTreeNode = {
-  id: string;
-  parent_task_id: string | null;
-  status: TaskStatus;
-};
-
 export type ClaimCandidate = {
   id: string;
   root_task_id?: string;
   priority: number;
   created_at: string;
 };
+
+export type TaskDisplayState = {
+  status: TaskStatus;
+  assigned_session_id: string | null;
+};
+
+/**
+ * `ready` only means "reserved" when a runnable leaf is actually bound to a
+ * session. Older rows (or maintenance orphans) can still be `ready` without a
+ * session; present those as historical unbound work instead of implying that
+ * some AI conversation will receive them. Aggregate parents are exempt because
+ * their `ready` state is derived from assigned descendants.
+ *
+ * This is a display projection only. In particular, it never guesses that a
+ * task completed from text, activity timestamps, or session presence.
+ */
+export function taskDisplayStatus(
+  task: TaskDisplayState,
+  hasChildren = false,
+): TaskStatus {
+  if (
+    task.status === "ready" &&
+    task.assigned_session_id === null &&
+    !hasChildren
+  ) {
+    return "inbox";
+  }
+  return task.status;
+}
 
 /**
  * Mirrors the parent display precedence enforced by the database. This is for
@@ -22,55 +45,19 @@ export function aggregateParentStatus(statuses: readonly TaskStatus[]): TaskStat
   if (!active.length) return "blocked";
   if (active.every((status) => status === "completed")) return "completed";
   if (active.includes("waiting_user")) return "waiting_user";
-  if (active.some((status) => status === "claimed" || status === "running")) {
+  if (active.some(isTaskRunningStatus)) {
     return "running";
   }
   if (active.includes("failed")) return "failed";
   if (active.includes("ready")) return "ready";
+  if (active.includes("blocked")) return "blocked";
+  if (active.includes("paused")) return "paused";
   return "blocked";
 }
 
-/** Count non-cancelled leaves below (or including) rootTaskId at any depth. */
-export function calculateLeafProgress(
-  tasks: readonly TaskTreeNode[],
-  rootTaskId: string,
-): { completed_leaves: number; total_leaves: number } {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const root = byId.get(rootTaskId);
-  if (!root || root.status === "cancelled") {
-    return { completed_leaves: 0, total_leaves: 0 };
-  }
-
-  const allChildren = new Map<string, TaskTreeNode[]>();
-  for (const task of tasks) {
-    if (!task.parent_task_id) continue;
-    const siblings = allChildren.get(task.parent_task_id) ?? [];
-    siblings.push(task);
-    allChildren.set(task.parent_task_id, siblings);
-  }
-
-  let completedLeaves = 0;
-  let totalLeaves = 0;
-  const visited = new Set<string>();
-  const queue = [root];
-  while (queue.length) {
-    const task = queue.shift();
-    if (!task || visited.has(task.id)) continue;
-    visited.add(task.id);
-    const children = allChildren.get(task.id) ?? [];
-    const activeChildren = children.filter((child) => child.status !== "cancelled");
-    if (!activeChildren.length) {
-      // Once a parent has children it stays aggregation-only, even if every
-      // child was cancelled. This matches the SQL structured-progress helper.
-      if (task.id === rootTaskId && children.length > 0) continue;
-      totalLeaves += 1;
-      if (task.status === "completed") completedLeaves += 1;
-      continue;
-    }
-    queue.push(...activeChildren);
-  }
-
-  return { completed_leaves: completedLeaves, total_leaves: totalLeaves };
+/** claimed/running 都表示会话正在处理该任务，Web 可对其下发停止（暂停）指令。 */
+export function isTaskRunningStatus(status: TaskStatus): boolean {
+  return status === "claimed" || status === "running";
 }
 
 export function matchesCapabilities(
@@ -104,13 +91,14 @@ export function compareClaimCandidates(
 
 const allowedTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   inbox: new Set(["ready", "blocked", "cancelled"]),
-  ready: new Set(["claimed", "cancelled"]),
+  ready: new Set(["claimed", "paused", "cancelled"]),
   claimed: new Set([
     "claimed",
     "running",
     "ready",
     "waiting_user",
     "blocked",
+    "paused",
     "completed",
     "failed",
     "cancelled",
@@ -121,12 +109,14 @@ const allowedTransitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
     "ready",
     "waiting_user",
     "blocked",
+    "paused",
     "completed",
     "failed",
     "cancelled",
   ]),
   waiting_user: new Set(["ready", "blocked", "cancelled"]),
   blocked: new Set(["ready", "cancelled"]),
+  paused: new Set(["ready", "blocked", "cancelled"]),
   completed: new Set(["ready", "blocked", "cancelled"]),
   failed: new Set(["ready", "blocked", "cancelled"]),
   cancelled: new Set(),
@@ -138,6 +128,7 @@ const parentAggregateStates = new Set<TaskStatus>([
   "running",
   "waiting_user",
   "failed",
+  "paused",
   "completed",
 ]);
 

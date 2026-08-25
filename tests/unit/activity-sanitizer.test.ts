@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -30,7 +32,7 @@ describe("Harness activity sanitization", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("AI_TASK_BOARD_URL is required");
+    expect(result.stderr).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
     expect(result.stderr).not.toContain("ERR_PACKAGE_PATH_NOT_EXPORTED");
   });
 
@@ -55,9 +57,42 @@ describe("Harness activity sanitization", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("ai-task-board-codex-bridge");
+    expect(result.stdout).toContain("ai-task-board-bridge");
+    expect(result.stdout).toContain("ai-task-board-bridge setup");
+    expect(result.stdout).toContain("current user's systemd service");
     expect(result.stdout).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
+    expect(result.stdout).toContain("Web can override (accept, decline, accept-session)");
+    expect(result.stdout).toContain(
+      "Web can override (danger-full-access, safe, inherit)",
+    );
     expect(result.stderr).toBe("");
+  });
+
+  it("requires a terminal for the interactive setup command", () => {
+    const isolatedHome = mkdtempSync(path.join(tmpdir(), "atb-help-test-"));
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "packages/codex-bridge/src/cli.ts",
+        "setup",
+      ],
+      {
+        cwd: path.resolve(process.cwd()),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: isolatedHome,
+          XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
+        },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("AI_TASK_BOARD_CONNECTION_TOKEN");
+    expect(result.stderr).toContain("交互式终端");
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   it("redacts common token shapes without corrupting ordinary text", () => {

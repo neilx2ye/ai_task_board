@@ -56,6 +56,21 @@ lines.on("line", (line) => {
   }
 
   const responses = {
+    "model/list": {
+      data: [{
+        id: "custom-fast",
+        model: "provider/custom-fast",
+        displayName: "Custom Fast",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Fast" },
+          { reasoningEffort: "medium", description: "Balanced" },
+        ],
+        inputModalities: ["text", "image"],
+        isDefault: true,
+      }],
+      nextCursor: null,
+    },
     "thread/list": {
       data: [{ id: "thread-listed", cursor: message.params.cursor }],
       nextCursor: null,
@@ -90,9 +105,20 @@ lines.on("line", (line) => {
     },
     "thread/resume": {
       thread: { id: message.params.threadId, resumed: true },
+      model: message.params.model ?? "gpt-5.6-sol",
+      reasoningEffort:
+        message.params.config?.model_reasoning_effort ?? "max",
     },
+    "thread/name/set": {},
+    "thread/delete": {},
+    "thread/archive": {},
     "turn/start": {
-      turn: { id: "turn-started", input: message.params.input },
+      turn: {
+        id: "turn-started",
+        input: message.params.input,
+        model: message.params.model,
+        effort: message.params.effort,
+      },
     },
     "turn/steer": {
       turnId: message.params.expectedTurnId,
@@ -193,6 +219,19 @@ describe("CodexAppServerClient", () => {
       nextCursor: null,
     });
     await expect(
+      client.modelList({ limit: 100, includeHidden: false }),
+    ).resolves.toMatchObject({
+      data: [{
+        model: "provider/custom-fast",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low" },
+          { reasoningEffort: "medium" },
+        ],
+      }],
+      nextCursor: null,
+    });
+    await expect(
       client.threadRead({ threadId: "thread-existing", includeTurns: true }),
     ).resolves.toMatchObject({
       thread: { id: "thread-existing", turns: [{ id: "turn-read" }] },
@@ -222,16 +261,39 @@ describe("CodexAppServerClient", () => {
       thread: { id: "thread-started", cwd: "/workspace" },
     });
     await expect(
-      client.threadResume({ threadId: "thread-existing" }),
+      client.threadResume({
+        threadId: "thread-existing",
+        model: "gpt-5.6-terra",
+        config: { model_reasoning_effort: "high" },
+      }),
     ).resolves.toMatchObject({
       thread: { id: "thread-existing", resumed: true },
+      model: "gpt-5.6-terra",
+      reasoningEffort: "high",
     });
+    await expect(
+      client.threadSetName({ threadId: "thread-existing", name: "New name" }),
+    ).resolves.toEqual({});
+    await expect(
+      client.threadDelete({ threadId: "thread-existing" }),
+    ).resolves.toEqual({});
+    await expect(
+      client.threadArchive({ threadId: "thread-existing" }),
+    ).resolves.toEqual({});
     await expect(
       client.turnStart({
         threadId: "thread-existing",
         input: [{ type: "text", text: "Run tests" }],
+        model: "gpt-5.6-terra",
+        effort: "high",
       }),
-    ).resolves.toMatchObject({ turn: { id: "turn-started" } });
+    ).resolves.toMatchObject({
+      turn: {
+        id: "turn-started",
+        model: "gpt-5.6-terra",
+        effort: "high",
+      },
+    });
     await expect(
       client.turnSteer({
         threadId: "thread-existing",

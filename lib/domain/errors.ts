@@ -14,6 +14,10 @@ export const BUSINESS_ERROR_CODES = [
   "VERSION_CONFLICT",
   "BRIDGE_INSTANCE_CONFLICT",
   "HISTORY_SYNC_NOT_ALLOWED",
+  "THREAD_MANAGEMENT_NOT_SUPPORTED",
+  "THREAD_NOT_IDLE",
+  "INVALID_FILE_COMMAND",
+  "PATH_NOT_FOUND",
 ] as const;
 
 export type BusinessErrorCode = (typeof BUSINESS_ERROR_CODES)[number];
@@ -32,6 +36,7 @@ const statusByCode: Record<ApiErrorCode, number> = {
   INVALID_REQUEST: 400,
   PAYLOAD_TOO_LARGE: 413,
   METHOD_NOT_ALLOWED: 405,
+  PATH_NOT_FOUND: 404,
   TASK_NOT_FOUND: 404,
   TASK_NOT_READY: 409,
   TASK_ALREADY_CLAIMED: 409,
@@ -45,6 +50,9 @@ const statusByCode: Record<ApiErrorCode, number> = {
   VERSION_CONFLICT: 409,
   BRIDGE_INSTANCE_CONFLICT: 409,
   HISTORY_SYNC_NOT_ALLOWED: 403,
+  THREAD_MANAGEMENT_NOT_SUPPORTED: 409,
+  THREAD_NOT_IDLE: 409,
+  INVALID_FILE_COMMAND: 400,
   INTERNAL_ERROR: 500,
 };
 
@@ -120,6 +128,11 @@ function messageForCode(code: BusinessErrorCode): string {
     VERSION_CONFLICT: "The configuration was changed by another request",
     BRIDGE_INSTANCE_CONFLICT: "Another Bridge runtime is active for this connection",
     HISTORY_SYNC_NOT_ALLOWED: "Codex history sync is not enabled for this Bridge",
+    THREAD_MANAGEMENT_NOT_SUPPORTED:
+      "This Bridge version does not support Web Thread management",
+    THREAD_NOT_IDLE: "The Thread still has active or queued work",
+    INVALID_FILE_COMMAND: "The device file command is invalid",
+    PATH_NOT_FOUND: "The requested path does not exist",
   };
   return messages[code];
 }

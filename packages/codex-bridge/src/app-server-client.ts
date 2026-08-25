@@ -83,6 +83,48 @@ export interface AppServerThreadListResponse {
   [key: string]: unknown;
 }
 
+export interface AppServerModelReasoningEffort {
+  reasoningEffort: string;
+  description?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerModel {
+  id: string;
+  model: string;
+  displayName: string;
+  description?: string | null;
+  hidden?: boolean;
+  defaultReasoningEffort?: string | null;
+  supportedReasoningEfforts?: AppServerModelReasoningEffort[];
+  inputModalities?: string[];
+  supportsPersonality?: boolean;
+  isDefault?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AppServerModelListParams {
+  cursor?: string | null;
+  limit?: number | null;
+  includeHidden?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AppServerModelListResponse {
+  data: AppServerModel[];
+  nextCursor: string | null;
+  [key: string]: unknown;
+}
+
+export type AppServerAccountRateLimitsParams = Record<string, never>;
+
+export interface AppServerAccountRateLimitsResponse {
+  rateLimits: Record<string, unknown>;
+  rateLimitsByLimitId?: Record<string, Record<string, unknown>> | null;
+  rateLimitResetCredits?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
 export interface AppServerThreadReadParams {
   threadId: string;
   includeTurns?: boolean;
@@ -133,24 +175,102 @@ export interface AppServerThreadItemsListResponse {
 }
 
 export interface AppServerThreadStartParams {
+  model?: string | null;
+  /** Per-thread Codex config overrides, such as model_reasoning_effort. */
+  config?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 
 export interface AppServerThreadStartResponse {
   thread: AppServerThread;
+  /** Effective model selected by Codex for this resumed/started Thread. */
+  model?: string | null;
+  /** Effective reasoning effort selected by Codex. */
+  reasoningEffort?: string | null;
   [key: string]: unknown;
 }
 
 export interface AppServerThreadResumeParams {
   threadId: string;
+  model?: string | null;
+  /** Per-thread Codex config overrides, such as model_reasoning_effort. */
+  config?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 
 export type AppServerThreadResumeResponse = AppServerThreadStartResponse;
 
+export interface AppServerThreadSetNameParams {
+  threadId: string;
+  name: string;
+}
+
+export type AppServerThreadSetNameResponse = Record<string, never>;
+
+export interface AppServerThreadDeleteParams {
+  threadId: string;
+}
+
+export type AppServerThreadDeleteResponse = Record<string, never>;
+
+export type AppServerThreadArchiveParams = AppServerThreadDeleteParams;
+export type AppServerThreadArchiveResponse = Record<string, never>;
+
+export interface AppServerThreadGoal {
+  threadId: string;
+  objective: string;
+  status?: string | null;
+  tokenBudget?: number | null;
+  tokensUsed?: number | null;
+  timeUsedSeconds?: number | null;
+  createdAt?: number | null;
+  updatedAt?: number | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalSetParams {
+  threadId: string;
+  /** Omitting the objective preserves it while updating status/tokenBudget. */
+  objective?: string | null;
+  status?: "active" | "paused" | "blocked" | "complete" | string | null;
+  tokenBudget?: number | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalSetResponse {
+  goal: AppServerThreadGoal;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalGetParams {
+  threadId: string;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalGetResponse {
+  goal: AppServerThreadGoal | null;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalClearParams {
+  threadId: string;
+  [key: string]: unknown;
+}
+
+export interface AppServerThreadGoalClearResponse {
+  cleared: boolean;
+  [key: string]: unknown;
+}
+
 export interface AppServerTurnStartParams {
   threadId: string;
   input: AppServerUserInput[];
+  /** Per-turn model override; Codex keeps it as the Thread default afterward. */
+  model?: string | null;
+  /** Per-turn reasoning override; Codex keeps it as the Thread default afterward. */
+  effort?: string | null;
+  /** Request a provider-exposed reasoning summary for this and later turns. */
+  summary?: "auto" | "concise" | "detailed" | "none" | null;
   [key: string]: unknown;
 }
 
@@ -357,8 +477,8 @@ export class CodexAppServerClient {
     this.defaultInitializeParams = {
       clientInfo: options.clientInfo ?? {
         name: "ai_task_board_bridge",
-        title: "AI Task Board Codex Bridge",
-        version: "0.4.1",
+        title: "AI Task Board Bridge",
+        version: "1.2.0",
       },
       capabilities: options.capabilities ?? null,
     };
@@ -553,6 +673,19 @@ export class CodexAppServerClient {
     return this.initializedRequest("thread/list", params, options);
   }
 
+  async modelList(
+    params: AppServerModelListParams = {},
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerModelListResponse> {
+    return this.initializedRequest("model/list", params, options);
+  }
+
+  async accountRateLimitsRead(
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerAccountRateLimitsResponse> {
+    return this.initializedRequest("account/rateLimits/read", {}, options);
+  }
+
   async threadRead(
     params: AppServerThreadReadParams,
     options?: AppServerRequestOptions,
@@ -586,6 +719,48 @@ export class CodexAppServerClient {
     options?: AppServerRequestOptions,
   ): Promise<AppServerThreadResumeResponse> {
     return this.initializedRequest("thread/resume", params, options);
+  }
+
+  async threadSetName(
+    params: AppServerThreadSetNameParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadSetNameResponse> {
+    return this.initializedRequest("thread/name/set", params, options);
+  }
+
+  async threadDelete(
+    params: AppServerThreadDeleteParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadDeleteResponse> {
+    return this.initializedRequest("thread/delete", params, options);
+  }
+
+  async threadArchive(
+    params: AppServerThreadArchiveParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadArchiveResponse> {
+    return this.initializedRequest("thread/archive", params, options);
+  }
+
+  async threadGoalSet(
+    params: AppServerThreadGoalSetParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalSetResponse> {
+    return this.initializedRequest("thread/goal/set", params, options);
+  }
+
+  async threadGoalGet(
+    params: AppServerThreadGoalGetParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalGetResponse> {
+    return this.initializedRequest("thread/goal/get", params, options);
+  }
+
+  async threadGoalClear(
+    params: AppServerThreadGoalClearParams,
+    options?: AppServerRequestOptions,
+  ): Promise<AppServerThreadGoalClearResponse> {
+    return this.initializedRequest("thread/goal/clear", params, options);
   }
 
   async turnStart(

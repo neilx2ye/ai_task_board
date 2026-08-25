@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const FAKE_CODEX = `#!/usr/bin/env node
 const readline = require("node:readline");
 const threads = [
-  { id: "thread-a", name: "Alpha", preview: "Alpha", cwd: "/workspace/a", parentThreadId: null },
-  { id: "thread-b", name: "Beta", preview: "Beta", cwd: "/workspace/b", parentThreadId: null },
+  { id: "thread-a", name: "Alpha", preview: "Alpha", cwd: process.env.FAKE_THREAD_A_CWD || "/workspace/a", parentThreadId: null },
+  { id: "thread-b", name: "Beta", preview: "Beta", cwd: process.env.FAKE_THREAD_B_CWD || "/workspace/b", parentThreadId: null },
 ];
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -24,6 +24,23 @@ lines.on("line", (line) => {
   if (message.method === "initialize") {
     process.stderr.write("FAKE_INITIALIZE " + JSON.stringify(message.params) + "\\n");
     send({ id: message.id, result: { userAgent: "fake-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: {
+      data: [{
+        id: "custom-fast",
+        model: "provider/custom-fast",
+        displayName: "Custom Fast",
+        description: "Configured by the fake provider",
+        defaultReasoningEffort: "balanced",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "quick", description: "Fast" },
+          { reasoningEffort: "balanced", description: "Balanced" },
+        ],
+        inputModalities: ["text", "image"],
+        isDefault: true,
+      }],
+      nextCursor: null,
+    } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: { data: threads, nextCursor: null, backwardsCursor: null } });
   } else if (message.method === "thread/resume") {
@@ -40,6 +57,11 @@ lines.on("line", (line) => {
     } });
     send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta: "Working" } });
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
+    send({
+      id: "approval-" + threadId,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId, itemId: "approval-item-" + threadId, command: "echo ok" },
+    });
     setTimeout(() => {
       send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta: " " } });
     }, 600);
@@ -50,6 +72,33 @@ lines.on("line", (line) => {
         turnId,
         item: { type: "agentMessage", id: itemId, text: "", phase: "final_answer" },
       } });
+      send({ method: "item/reasoning/summaryTextDelta", params: {
+        threadId, turnId, itemId: "reasoning-" + threadId, delta: "Checked " + threadId,
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          type: "reasoning",
+          id: "reasoning-" + threadId,
+          summary: ["Checked " + threadId],
+        },
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          type: "commandExecution",
+          id: "command-" + threadId,
+          command: "echo ok",
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: "ok",
+        },
+      } });
+      send({ method: "thread/tokenUsage/updated", params: {
+        threadId, turnId, tokenUsage: { totalTokens: 42 },
+      } });
       send({ method: "turn/completed", params: {
         threadId,
         turn: { id: turnId, status: "completed", error: null },
@@ -57,6 +106,8 @@ lines.on("line", (line) => {
     }, 1_200);
   } else if (message.method === "turn/interrupt") {
     send({ id: message.id, result: {} });
+  } else if (String(message.id).startsWith("approval-") && !message.method) {
+    process.stderr.write("FAKE_APPROVAL " + JSON.stringify(message) + "\\n");
   }
 });
 `;
@@ -69,6 +120,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-delayed-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-delayed", cwd: "/workspace/delayed", parentThreadId: null }],
@@ -95,6 +148,7 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send({ id: message.id, result: { userAgent: "fake-empty" } });
+  else if (message.method === "model/list") send({ id: message.id, result: { data: [], nextCursor: null } });
   else if (message.method === "thread/list") send({ id: message.id, result: { data: [], nextCursor: null } });
 });
 `;
@@ -106,6 +160,7 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send({ id: message.id, result: { userAgent: "fake-crash" } });
+  else if (message.method === "model/list") send({ id: message.id, result: { data: [], nextCursor: null } });
   else if (message.method === "thread/list") process.exit(7);
 });
 `;
@@ -118,6 +173,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-backlog" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{ id: "thread-overflow", cwd: "/workspace/overflow", parentThreadId: null }],
@@ -131,7 +188,7 @@ lines.on("line", (line) => {
     } });
     setTimeout(() => {
       for (let index = 0; index < 80; index += 1) {
-        send({ method: "item/commandExecution/outputDelta", params: {
+        send({ method: "item/agentMessage/delta", params: {
           threadId: "thread-overflow",
           turnId: "turn-overflow",
           itemId: "item-" + index,
@@ -184,12 +241,23 @@ describe("Codex Bridge multi-thread device runtime", () => {
     temporaryDirectory = null;
   });
 
-  it(
-    "discovers two threads and completes one queued turn on each",
-    async () => {
+  it.each([
+    {
+      profile: "the default full-access profile",
+      permissionMode: undefined,
+    },
+    {
+      profile: "the explicit safe profile",
+      permissionMode: "safe",
+    },
+  ])(
+    "discovers two threads and completes one queued turn on each with $profile",
+    async ({ permissionMode }) => {
       const claimedSessions = new Set<string>();
       const activities: SeenActivity[] = [];
       let syncedInventory: Array<Record<string, unknown>> = [];
+      let syncedDirectories: Array<Record<string, unknown>> = [];
+      let syncedModelCatalog: Array<Record<string, unknown>> = [];
       const completedSessions = new Set<string>();
       const wakeResponses = new Set<ServerResponse>();
       let resolveCompleted!: () => void;
@@ -218,6 +286,12 @@ describe("Codex Bridge multi-thread device runtime", () => {
         if (pathname === "/api/ai/sessions/sync") {
           const body = await bodyOf(request);
           const threads = body.threads as Array<Record<string, unknown>>;
+          syncedDirectories = body.directories as Array<
+            Record<string, unknown>
+          >;
+          syncedModelCatalog = body.model_catalog as Array<
+            Record<string, unknown>
+          >;
           syncedInventory = threads;
           json(response, {
             sessions: threads.map((thread, index) => ({
@@ -236,6 +310,8 @@ describe("Codex Bridge multi-thread device runtime", () => {
                 title: `Task for ${sessionId}`,
                 description: `Please work in ${sessionId}`,
                 acceptance_criteria: null,
+                model: "gpt-5.6-terra",
+                reasoning_effort: "high",
                 claim_token: `claim-${sessionId}`,
               },
             });
@@ -265,6 +341,12 @@ describe("Codex Bridge multi-thread device runtime", () => {
       if (!address || typeof address === "string") throw new Error("No test port");
 
       temporaryDirectory = await mkdtemp(path.join(tmpdir(), "atb-bridge-test-"));
+      const workingDirectoryA = path.join(temporaryDirectory, "a");
+      const workingDirectoryB = path.join(temporaryDirectory, "b");
+      await Promise.all([
+        mkdir(workingDirectoryA),
+        mkdir(workingDirectoryB),
+      ]);
       const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
       await writeFile(fakeCodex, FAKE_CODEX, "utf8");
       await chmod(fakeCodex, 0o755);
@@ -275,13 +357,25 @@ describe("Codex Bridge multi-thread device runtime", () => {
         AI_TASK_BOARD_CONNECTION_TOKEN: "atb_test_connection_token",
         CODEX_BINARY: fakeCodex,
         CODEX_MAX_THREADS: "2",
-        CODEX_THREAD_SCOPE: "all",
+        CODEX_THREAD_SCOPE: "cwd",
+        CODEX_WORKING_DIRECTORIES: JSON.stringify([
+          { key: "a", name: "Project A", path: workingDirectoryA },
+          { key: "b", name: "Project B", path: workingDirectoryB },
+        ]),
         CODEX_MAX_CONCURRENT_TURNS: "2",
+        FAKE_THREAD_A_CWD: workingDirectoryA,
+        FAKE_THREAD_B_CWD: workingDirectoryB,
         OPENAI_API_KEY: "codex_auth_is_preserved",
         AI_TASK_BOARD_POLL_INTERVAL_MS: "500",
         AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
       };
       delete environment.CODEX_THREAD_ID;
+      delete environment.CODEX_BRIDGE_APPROVAL_MODE;
+      if (permissionMode) {
+        environment.CODEX_BRIDGE_PERMISSION_MODE = permissionMode;
+      } else {
+        delete environment.CODEX_BRIDGE_PERMISSION_MODE;
+      }
       child = spawn(
         path.resolve("node_modules/.bin/tsx"),
         [path.resolve("packages/codex-bridge/src/cli.ts")],
@@ -315,10 +409,43 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(completedSessions).toEqual(new Set(["session-1", "session-2"]));
       expect(JSON.stringify(syncedInventory)).not.toContain("Alpha");
       expect(JSON.stringify(syncedInventory)).not.toContain("Beta");
+      expect(syncedDirectories).toEqual([
+        {
+          directory_key: "a",
+          name: "Project A",
+          working_directory: workingDirectoryA,
+        },
+        {
+          directory_key: "b",
+          name: "Project B",
+          working_directory: workingDirectoryB,
+        },
+      ]);
+      expect(syncedModelCatalog).toEqual([
+        {
+          id: "custom-fast",
+          model: "provider/custom-fast",
+          display_name: "Custom Fast",
+          description: "Configured by the fake provider",
+          default_reasoning_effort: "balanced",
+          supported_reasoning_efforts: [
+            { reasoning_effort: "quick", description: "Fast" },
+            { reasoning_effort: "balanced", description: "Balanced" },
+          ],
+          input_modalities: ["text", "image"],
+          is_default: true,
+        },
+      ]);
       expect(syncedInventory).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ name: "Codex · a · thread-a" }),
-          expect.objectContaining({ name: "Codex · b · thread-b" }),
+          expect.objectContaining({
+            name: "Codex · a · thread-a",
+            directory_key: "a",
+          }),
+          expect.objectContaining({
+            name: "Codex · b · thread-b",
+            directory_key: "b",
+          }),
         ]),
       );
       expect(stderr).toContain(
@@ -327,9 +454,35 @@ describe("Codex Bridge multi-thread device runtime", () => {
       expect(stderr).toContain('"requestAttestation":false');
       expect(stderr).toContain('"approvalPolicy":"on-request"');
       expect(stderr).toContain('"approvalsReviewer":"user"');
-      expect(stderr).toContain('"sandbox":"workspace-write"');
-      expect(stderr).toContain('"type":"workspaceWrite"');
-      expect(stderr).toContain('"writableRoots":["/workspace/a"]');
+      expect(stderr).toContain('"summary":"none"');
+      expect(stderr).toContain('"model":"gpt-5.6-terra"');
+      expect(stderr).toContain('"effort":"high"');
+      expect(stderr).not.toContain('"summary":"concise"');
+      if (permissionMode === "safe") {
+        expect(stderr).toContain('"sandbox":"workspace-write"');
+        expect(stderr).toContain('"type":"workspaceWrite"');
+        expect(stderr).toContain(
+          `"writableRoots":[${JSON.stringify(workingDirectoryA)}]`,
+        );
+        expect(stderr).toContain('"networkAccess":false');
+        expect(stderr).toContain('"excludeTmpdirEnvVar":true');
+        expect(stderr).toContain('"excludeSlashTmp":true');
+        expect(stderr).not.toContain('"sandbox":"danger-full-access"');
+        expect(stderr).not.toContain('"type":"dangerFullAccess"');
+      } else {
+        expect(stderr).toContain('"sandbox":"danger-full-access"');
+        expect(stderr).toContain('"type":"dangerFullAccess"');
+        expect(stderr).not.toContain('"sandbox":"workspace-write"');
+        expect(stderr).not.toContain('"type":"workspaceWrite"');
+        expect(stderr).not.toContain('"networkAccess":false');
+        expect(stderr).not.toContain('"writableRoots"');
+      }
+      expect(stderr).toContain(
+        'FAKE_APPROVAL {"id":"approval-thread-a","result":{"decision":"accept"}}',
+      );
+      expect(stderr).toContain(
+        'FAKE_APPROVAL {"id":"approval-thread-b","result":{"decision":"accept"}}',
+      );
       expect(
         activities.filter((activity) => activity.body.kind === "assistant_message"),
       ).toEqual(
@@ -362,6 +515,11 @@ describe("Codex Bridge multi-thread device runtime", () => {
           (activity) =>
             activity.body.kind === "assistant_message" &&
             activity.body.content === " ",
+        ),
+      ).toBe(true);
+      expect(
+        activities.every(
+          (activity) => activity.body.kind === "assistant_message",
         ),
       ).toBe(true);
       expect(JSON.stringify(activities)).not.toContain("LEAKED OLD TURN");
@@ -520,7 +678,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         const [code] = await Promise.race([
           once(child, "exit"),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`4xx fail-fast timeout: ${stderr}`)), 4_000),
+            setTimeout(() => reject(new Error(`4xx fail-fast timeout: ${stderr}`)), 8_000),
           ),
         ]);
         child = null;
@@ -534,7 +692,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         );
       }
     },
-    10_000,
+    15_000,
   );
 
   it("exits non-zero when Codex App Server exits unexpectedly", async () => {
@@ -573,7 +731,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
       const [code] = await Promise.race([
         once(child, "exit"),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 4_000),
+          setTimeout(() => reject(new Error(`Crash propagation timeout: ${stderr}`)), 8_000),
         ),
       ]);
       child = null;
@@ -586,7 +744,7 @@ describe("Codex Bridge multi-thread device runtime", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 10_000);
+  }, 15_000);
 
   it("interrupts and exits instead of buffering unbounded activity uploads", async () => {
     const wakeResponses = new Set<ServerResponse>();

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,6 +15,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-config-codex" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: [{
@@ -43,6 +45,8 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake-delayed-retirement" } });
+  } else if (message.method === "model/list") {
+    send({ id: message.id, result: { data: [], nextCursor: null } });
   } else if (message.method === "thread/list") {
     send({ id: message.id, result: {
       data: threads.slice(0, message.params.limit || threads.length),
@@ -72,6 +76,11 @@ type Desired = {
   include_thread_titles: boolean;
   max_threads: number;
   max_concurrent_turns: number;
+  working_directories: Array<{
+    directory_key: string;
+    name: string;
+    working_directory: string;
+  }> | null;
 };
 
 function json(response: ServerResponse, data: unknown, status = 200): void {
@@ -128,9 +137,11 @@ describe("Codex Bridge Web configuration", () => {
       include_thread_titles: false,
       max_threads: 40,
       max_concurrent_turns: 20,
+      working_directories: null,
     };
     const configurationStatuses: Array<Record<string, unknown>> = [];
     const inventories: Array<Array<Record<string, unknown>>> = [];
+    const directoryInventories: Array<Array<Record<string, unknown>>> = [];
     const wakeResponses = new Set<ServerResponse>();
     let failNextEmptySync = false;
     const server = createServer(async (request, response) => {
@@ -152,6 +163,9 @@ describe("Codex Bridge Web configuration", () => {
         const body = await bodyOf(request);
         const threads = body.threads as Array<Record<string, unknown>>;
         inventories.push(threads);
+        directoryInventories.push(
+          body.directories as Array<Record<string, unknown>>,
+        );
         if (threads.length === 0 && failNextEmptySync) {
           failNextEmptySync = false;
           response.writeHead(500, { "Content-Type": "application/json" });
@@ -186,6 +200,8 @@ describe("Codex Bridge Web configuration", () => {
     if (!address || typeof address === "string") throw new Error("No test port");
 
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "atb-config-test-"));
+    const remoteDirectory = path.join(temporaryDirectory, "remote-project");
+    await mkdir(remoteDirectory);
     const fakeCodex = path.join(temporaryDirectory, "fake-codex.cjs");
     await writeFile(fakeCodex, FAKE_CODEX, "utf8");
     await chmod(fakeCodex, 0o755);
@@ -204,6 +220,7 @@ describe("Codex Bridge Web configuration", () => {
           CODEX_BINARY: fakeCodex,
           CODEX_BRIDGE_WEB_CONFIG: "true",
           CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES: "true",
+          CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES: "true",
           CODEX_BRIDGE_INCLUDE_THREAD_TITLES: "false",
           CODEX_MAX_THREADS: "4",
           CODEX_MAX_CONCURRENT_TURNS: "3",
@@ -242,6 +259,13 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: true,
         max_threads: 4,
         max_concurrent_turns: 2,
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
       };
       const titleChangeStart = inventories.length;
       await waitUntil(
@@ -253,6 +277,13 @@ describe("Codex Bridge Web configuration", () => {
           ),
         () => `title change was not synced\n${stdout}\n${stderr}`,
       );
+      expect(directoryInventories.slice(titleChangeStart)).toContainEqual([
+        {
+          directory_key: "remote",
+          name: "Remote project",
+          working_directory: remoteDirectory,
+        },
+      ]);
 
       version = 3;
       desired = { ...desired, enabled: false };
@@ -290,6 +321,39 @@ describe("Codex Bridge Web configuration", () => {
         () => configurationStatuses.some((status) => status.applied_version === 4),
         () => `version 4 was not re-reported\n${stdout}\n${stderr}`,
       );
+
+      version = 5;
+      desired = {
+        ...desired,
+        working_directories: [
+          {
+            directory_key: "missing",
+            name: "Missing project",
+            working_directory: path.join(
+              temporaryDirectory,
+              "does-not-exist",
+            ),
+          },
+        ],
+      };
+      const invalidStart = configurationStatuses.length;
+      await waitUntil(
+        () =>
+          configurationStatuses.slice(invalidStart).some(
+            (status) =>
+              status.applied_version === 4 &&
+              String(status.error).includes("应用 version=5 失败") &&
+              String(status.error).includes("不存在或不是目录") &&
+              Array.isArray(
+                (status.effective as Record<string, unknown> | null)
+                  ?.working_directories,
+              ),
+          ),
+        () => `invalid directory config was not rejected and reported\n${stdout}\n${stderr}`,
+      );
+      expect(
+        configurationStatuses.some((status) => status.applied_version === 5),
+      ).toBe(false);
     } finally {
       await stopChild(child);
       child = null;
@@ -302,19 +366,24 @@ describe("Codex Bridge Web configuration", () => {
     const finalStatus = configurationStatuses.find(
       (status) => status.applied_version === 4,
     );
+    const rejectedStatus = configurationStatuses.find(
+      (status) =>
+        status.applied_version === 4 &&
+        String(status.error).includes("应用 version=5 失败"),
+    );
     expect(
       configurationStatuses.find((status) => status.applied_version === 1),
     ).toMatchObject({
       effective: {
-        max_threads: 4,
-        max_concurrent_turns: 3,
+        max_threads: 40,
+        max_concurrent_turns: 20,
       },
-      error: expect.stringContaining("max_threads=40"),
+      error: null,
     });
     expect(finalStatus).toMatchObject({
       runtime_instance_id: expect.any(String),
       report_sequence: expect.any(Number),
-      lease_seconds: 15,
+      lease_seconds: 120,
       release_runtime: false,
       applied_version: 4,
       effective: {
@@ -322,12 +391,20 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: true,
         max_threads: 4,
         max_concurrent_turns: 2,
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
       },
       constraints: {
         remote_configuration_enabled: true,
         allow_thread_titles: true,
-        max_threads: 4,
-        max_concurrent_turns: 3,
+        allow_working_directory_configuration: true,
+        max_threads: 500,
+        max_concurrent_turns: 32,
         thread_scope: "all",
         working_directory: temporaryDirectory,
         fixed_thread: false,
@@ -335,6 +412,17 @@ describe("Codex Bridge Web configuration", () => {
         approval_mode: "decline",
       },
       error: null,
+    });
+    expect(rejectedStatus).toMatchObject({
+      effective: {
+        working_directories: [
+          {
+            directory_key: "remote",
+            name: "Remote project",
+            working_directory: remoteDirectory,
+          },
+        ],
+      },
     });
     expect(new Set(configurationStatuses.map((status) => status.runtime_instance_id))).toHaveLength(1);
     const sequences = configurationStatuses.map((status) => Number(status.report_sequence));
@@ -356,6 +444,7 @@ describe("Codex Bridge Web configuration", () => {
       include_thread_titles: false,
       max_threads: 2,
       max_concurrent_turns: 2,
+      working_directories: null,
     };
     let availableTasks = 1;
     let claimedTasks = 0;
@@ -550,6 +639,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -628,11 +718,23 @@ describe("Codex Bridge Web configuration", () => {
     expect(statuses.at(-1)).toMatchObject({ release_runtime: true });
   }, 15_000);
 
-  it("fails fast on a missing config endpoint when Web config is enabled", async () => {
+  it("falls back to legacy inventory when the config endpoint is missing", async () => {
+    const inventories: Array<Array<Record<string, unknown>>> = [];
     const server = createServer(async (request, response) => {
+      const pathname = new URL(request.url ?? "/", "http://board.test").pathname;
+      if (pathname === "/api/ai/config") {
+        response.writeHead(404, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "legacy Board" } }));
+        return;
+      }
+      if (pathname === "/api/ai/sessions/sync") {
+        const body = await bodyOf(request);
+        inventories.push(body.threads as Array<Record<string, unknown>>);
+        json(response, { sessions: [] });
+        return;
+      }
       if (request.method !== "GET") await bodyOf(request);
-      response.writeHead(404, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "config endpoint missing" } }));
+      json(response, {});
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -652,7 +754,11 @@ describe("Codex Bridge Web configuration", () => {
           AI_TASK_BOARD_URL: `http://127.0.0.1:${address.port}`,
           AI_TASK_BOARD_CONNECTION_TOKEN: "atb_config_404",
           CODEX_BINARY: fakeCodex,
+          // Web 配置恒启用，旧开关不再改变 404 降级行为。
           CODEX_BRIDGE_WEB_CONFIG: "true",
+          CODEX_THREAD_ID: "",
+          CODEX_THREAD_SCOPE: "all",
+          CODEX_WORKING_DIRECTORY: temporaryDirectory,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -663,15 +769,12 @@ describe("Codex Bridge Web configuration", () => {
     });
 
     try {
-      const [code] = await Promise.race([
-        once(child, "exit"),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`404 fail-fast timeout: ${stderr}`)), 5_000),
-        ),
-      ]);
-      child = null;
-      expect(code).not.toBe(0);
-      expect(stderr).toContain("看板缺少 Bridge 0.4 API");
+      await waitUntil(
+        () => inventories.some((threads) => threads.length === 1),
+        () => `legacy inventory was not synced\n${stderr}`,
+        8_000,
+      );
+      expect(child.exitCode).toBe(null);
     } finally {
       await stopChild(child);
       child = null;
@@ -679,7 +782,9 @@ describe("Codex Bridge Web configuration", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 10_000);
+
+    expect(inventories.at(-1)).toHaveLength(1);
+  }, 15_000);
 
   it("waits before inventory until an older runtime lease can be acquired", async () => {
     let inventoryRequests = 0;
@@ -708,6 +813,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -797,6 +903,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -884,6 +991,7 @@ describe("Codex Bridge Web configuration", () => {
               include_thread_titles: false,
               max_threads: 1,
               max_concurrent_turns: 1,
+              working_directories: null,
             },
             applied: null,
             updated_at: new Date().toISOString(),
@@ -932,6 +1040,7 @@ describe("Codex Bridge Web configuration", () => {
           AI_TASK_BOARD_CONNECTION_TOKEN: "atb_self_fence",
           AI_TASK_BOARD_CONFIG_POLL_INTERVAL_MS: "1000",
           AI_TASK_BOARD_THREAD_SYNC_INTERVAL_MS: "10000",
+          CODEX_BRIDGE_RUNTIME_LEASE_SECONDS: "15",
           CODEX_BINARY: fakeCodex,
           CODEX_BRIDGE_WEB_CONFIG: "false",
           CODEX_THREAD_ID: "",
@@ -972,7 +1081,7 @@ describe("Codex Bridge Web configuration", () => {
     }
   }, 25_000);
 
-  it("renews the local gate but ignores desired config when disabled", async () => {
+  it("applies Web desired config even when the legacy device gate is unset", async () => {
     const statuses: Array<Record<string, unknown>> = [];
     const inventories: Array<Array<Record<string, unknown>>> = [];
     const server = createServer(async (request, response) => {
@@ -1045,8 +1154,8 @@ describe("Codex Bridge Web configuration", () => {
 
     try {
       await waitUntil(
-        () => inventories.some((threads) => threads.length === 1),
-        () => `local inventory was not synced\n${stderr}`,
+        () => inventories.some((threads) => threads.length === 0),
+        () => `disabled bridge did not publish the empty inventory\n${stderr}`,
       );
       await waitUntil(
         () =>
@@ -1069,7 +1178,7 @@ describe("Codex Bridge Web configuration", () => {
     expect(activeStatuses[0]).toMatchObject({
       runtime_instance_id: expect.any(String),
       report_sequence: 1,
-      lease_seconds: 15,
+      lease_seconds: 120,
       release_runtime: false,
       applied_version: null,
       effective: {
@@ -1077,19 +1186,40 @@ describe("Codex Bridge Web configuration", () => {
         include_thread_titles: false,
         max_threads: 4,
         max_concurrent_turns: 3,
+        working_directories: [
+          {
+            directory_key: "default",
+            name: path.basename(temporaryDirectory),
+            working_directory: temporaryDirectory,
+          },
+        ],
       },
       constraints: {
-        remote_configuration_enabled: false,
-        allow_thread_titles: false,
+        remote_configuration_enabled: true,
+        allow_thread_titles: true,
+        allow_working_directory_configuration: true,
         fixed_thread: false,
       },
       error: null,
+    });
+    const appliedStatus = activeStatuses.find(
+      (status) => status.applied_version === 1,
+    );
+    expect(appliedStatus).toBeDefined();
+    expect(appliedStatus).toMatchObject({
+      applied_version: 1,
+      effective: {
+        enabled: false,
+        include_thread_titles: true,
+        max_threads: 1,
+        max_concurrent_turns: 1,
+      },
     });
     expect(statuses.at(-1)).toMatchObject({
       runtime_instance_id: activeStatuses[0]?.runtime_instance_id,
       report_sequence: statuses.length,
       release_runtime: true,
     });
-    expect(inventories.at(-1)).toHaveLength(1);
+    expect(inventories.at(-1)).toHaveLength(0);
   }, 10_000);
 });

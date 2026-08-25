@@ -420,6 +420,41 @@ type TurnHistoryResult =
   | { status: "board_turn" }
   | { status: "safety_cap" };
 
+function embeddedTurnHistory(
+  threadId: string,
+  turn: AppServerTurn,
+  threadCreatedAt: number | null,
+  activityLimit: number,
+): TurnHistoryResult | null {
+  // Codex 0.147 removed `thread/items/list` for rollouts that cannot page
+  // items from the thread store. `thread/turns/list` with `itemsView: "full"`
+  // embeds the complete item list instead, so prefer that path and only fall
+  // back to item pagination when the server still returns unloaded turns.
+  if (turn.itemsView !== "full" || !Array.isArray(turn.items)) return null;
+  if (turn.items.length > HISTORY_ITEMS_PER_TURN_LIMIT) {
+    return { status: "safety_cap" };
+  }
+
+  const collector = createHistoryCandidateCollector(activityLimit);
+  for (const [sourceIndex, item] of turn.items.entries()) {
+    if (observeHistoryItem(collector, item, sourceIndex)) {
+      return { status: "board_turn" };
+    }
+  }
+  const { candidates, overflowed } = collectedHistoryCandidates(collector);
+  if (overflowed) return { status: "safety_cap" };
+  return {
+    status: "accepted",
+    activities: historyActivitiesFromCandidates(
+      threadId,
+      turn,
+      candidates,
+      threadCreatedAt,
+      turn.items.length > HISTORY_LEGACY_ITEMS_PER_TURN_LIMIT,
+    ),
+  };
+}
+
 async function readTurnHistory(
   appServer: HistoryAppServer,
   threadId: string,
@@ -428,6 +463,14 @@ async function readTurnHistory(
   activityLimit: number,
   signal: AbortSignal,
 ): Promise<TurnHistoryResult> {
+  const embedded = embeddedTurnHistory(
+    threadId,
+    turn,
+    threadCreatedAt,
+    activityLimit,
+  );
+  if (embedded) return embedded;
+
   const collector = createHistoryCandidateCollector(activityLimit);
   const seenCursors = new Set<string>();
   let cursor: string | null = null;
@@ -534,7 +577,7 @@ export async function scanThreadHistory(options: {
         cursor,
         limit: requestLimit,
         sortDirection: "desc",
-        itemsView: "notLoaded",
+        itemsView: "full",
       },
       { signal: options.signal, timeoutMs: 10_000 },
     );
@@ -887,9 +930,13 @@ export class HistorySynchronizer {
           complete ? null : (result.nextCursor ?? HISTORY_SAFETY_CAP_CURSOR),
         error: null,
       };
+      const importableItems = result.items.filter(
+        (item) =>
+          item.kind === "user_message" || item.kind === "assistant_message",
+      );
       const batches = splitHistoryImportItems(
         this.options.runtimeInstanceId,
-        result.items,
+        importableItems,
         finalSync,
       );
       for (const [index, items] of batches.entries()) {
@@ -979,7 +1026,11 @@ export class HistorySynchronizer {
       typeof updatedAt === "number" && Number.isFinite(updatedAt)
         ? String(updatedAt)
         : `legacy:${String(target.thread.createdAt ?? "unknown")}`;
-    return JSON.stringify([target.sessionId, updatedMarker, turnLimit]);
+    return JSON.stringify([
+      target.sessionId,
+      updatedMarker,
+      turnLimit,
+    ]);
   }
 
   private async reportFailure(

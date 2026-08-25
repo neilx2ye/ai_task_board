@@ -9,6 +9,11 @@ import {
   hashToken,
 } from "@/lib/auth/ai-token";
 import type { UserWorkspaceContext } from "@/lib/auth/user";
+import {
+  canonicalBridgeKind,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
+import { parseCodexModelCatalog } from "@/lib/codex-models";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import {
   chunkValues,
@@ -19,6 +24,7 @@ import { callDomainRpc, type DomainFunctionArgs } from "@/lib/domain/rpc";
 import {
   loadTaskRelations,
   SAFE_TASK_COLUMNS,
+  SAFE_TASK_USER_INPUT_REQUEST_COLUMNS,
   sanitizeTask,
 } from "@/lib/domain/tasks";
 import { taskTitleFromPrompt } from "@/lib/domain/task-title";
@@ -29,6 +35,7 @@ import type {
   SessionListItem,
 } from "@/lib/types/domain";
 import type {
+  AIThreadCommandRow,
   AISessionRow,
   TaskEventRow,
   TaskMessageRow,
@@ -38,10 +45,14 @@ import type {
 import { safeFilename, safeMimeType } from "@/lib/validation/artifacts";
 import type {
   CreateConnectionInput,
+  CreateThreadInput,
   CreateSessionTurnInput,
   CreateTaskInput,
   CreateUserSubtasksInput,
+  RenameConnectionInput,
+  RenameThreadInput,
   ReplyToTaskInput,
+  AnswerTaskUserInputRequestInput,
   UpdateTaskInput,
 } from "@/lib/validation/user";
 
@@ -56,7 +67,7 @@ type UserContextParameters = Pick<
 >;
 
 const SESSION_CARD_TASK_COLUMNS =
-  "id, title, status, progress_note, progress_percent_estimate, updated_at, assigned_session_id" as const;
+  "id, title, status, progress_note, progress_percent_estimate, updated_at, assigned_session_id, awaiting_user_input" as const;
 
 function sessionTaskSummary(
   task: Pick<
@@ -67,6 +78,7 @@ function sessionTaskSummary(
     | "progress_note"
     | "progress_percent_estimate"
     | "updated_at"
+    | "awaiting_user_input"
   >,
 ): SessionCurrentTaskSummary {
   return {
@@ -76,10 +88,280 @@ function sessionTaskSummary(
     progress_note: task.progress_note,
     progress_percent_estimate: task.progress_percent_estimate,
     updated_at: task.updated_at,
+    awaiting_user_input: task.awaiting_user_input,
   };
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;
+
+function isMissingModelCatalogSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("model_catalog");
+}
+
+function isMissingQuotaSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("quota");
+}
+
+function isMissingDeviceSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    source.includes("device_id") ||
+    source.includes("device_label") ||
+    source.includes("desired_bridge_version")
+  );
+}
+
+function isMissingPlatformSchema(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  return [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .includes("platform");
+}
+
+function isMissingBridgeVersionColumn(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
+  if (
+    error.code !== "PGRST204" &&
+    error.code !== "42703" &&
+    error.code !== "42P01"
+  ) {
+    return false;
+  }
+  const source = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    source.includes("bridge_version") &&
+    !source.includes("desired_bridge_version")
+  );
+}
+
+async function loadConnectionModelSettings(
+  admin: AdminClient,
+  workspaceId: string,
+  connections: readonly { id: string; platform: string }[],
+) {
+  const connectionIds = connections.map((connection) => connection.id);
+  const platformByConnectionId = new Map(
+    connections.map((connection) => [
+      connection.id,
+      canonicalBridgeKind(connection.platform),
+    ]),
+  );
+  const withPlatformDefaults = <T extends { connection_id: string }>(
+    rows: T[],
+  ): (T & { platform: string })[] =>
+    rows.map((row) => ({
+      ...row,
+      platform: platformByConnectionId.get(row.connection_id) ?? "codex",
+    }));
+
+  return collectChunkedRows(connectionIds, async (ids) => {
+    let { data, error } = await admin
+      .from("ai_connection_bridge_settings")
+      .select(
+        "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version, bridge_version",
+      )
+      .eq("workspace_id", workspaceId)
+      .in("connection_id", [...ids]);
+    if (error && isMissingPlatformSchema(error)) {
+      // Rolling deployment: the platform-scoping migration may land after the
+      // Web release. Re-query without the column and derive it from the
+      // connection platform.
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? withPlatformDefaults(
+            fallback.data.map((row) => ({ ...row, bridge_version: null })),
+          )
+        : null;
+      error = fallback.error;
+    }
+    if (error && isMissingDeviceSchema(error)) {
+      // 滚动部署：设备标识/期望版本迁移可能落后于 Web 发布，先退回旧查询。
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, model_catalog, model_catalog_updated_at, quota, quota_updated_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? withPlatformDefaults(
+          fallback.data.map((row) => ({
+            ...row,
+            device_id: null,
+            device_label: null,
+            desired_bridge_version: null,
+            bridge_version: null,
+          })),
+        )
+        : null;
+      error = fallback.error;
+    }
+    if (error && isMissingBridgeVersionColumn(error)) {
+      // 滚动部署：平台维度版本列可能落后于 Web 发布，先退回不读该列。
+      const fallback = await admin
+        .from("ai_connection_bridge_settings")
+        .select(
+          "connection_id, platform, model_catalog, model_catalog_updated_at, quota, quota_updated_at, device_id, device_label, desired_bridge_version",
+        )
+        .eq("workspace_id", workspaceId)
+        .in("connection_id", [...ids]);
+      data = fallback.data
+        ? fallback.data.map((row) => ({ ...row, bridge_version: null }))
+        : null;
+      error = fallback.error;
+    }
+    if (error && !isMissingModelCatalogSchema(error)) {
+      if (isMissingQuotaSchema(error)) {
+        const legacy = await admin
+          .from("ai_connection_bridge_settings")
+          .select("connection_id, model_catalog, model_catalog_updated_at")
+          .eq("workspace_id", workspaceId)
+          .in("connection_id", [...ids]);
+        if (legacy.error) throw mapDatabaseError(legacy.error);
+        return withPlatformDefaults(
+          (legacy.data ?? []).map((row) => ({
+            ...row,
+            quota: null,
+            quota_updated_at: null,
+            device_id: null,
+            device_label: null,
+            desired_bridge_version: null,
+            bridge_version: null,
+          })),
+        );
+      }
+      throw mapDatabaseError(error);
+    }
+    return data ?? [];
+  });
+}
+
+type ThreadSettingsCommand = Pick<
+  AIThreadCommandRow,
+  | "id"
+  | "external_thread_id"
+  | "model"
+  | "reasoning_effort"
+  | "status"
+  | "created_at"
+>;
+
+type ThreadSettings = {
+  model: string | null;
+  reasoningEffort: string | null;
+  status: SessionListItem["thread_settings_status"];
+};
+
+function mergeThreadSettingsStatus(
+  current: ThreadSettings["status"],
+  incoming: ThreadSettingsCommand["status"],
+): ThreadSettings["status"] {
+  if (incoming === "failed") return current;
+  if (current === "running" || incoming === "running") return "running";
+  if (current === "queued" || incoming === "queued") return "queued";
+  return "succeeded";
+}
+
+function threadSettingsByExternalRef(
+  commands: readonly ThreadSettingsCommand[],
+): Map<string, ThreadSettings> {
+  const settingsByRef = new Map<string, ThreadSettings>();
+  for (const command of commands) {
+    const externalRef = command.external_thread_id;
+    if (!externalRef || (!command.model && !command.reasoning_effort)) continue;
+
+    const settings = settingsByRef.get(externalRef) ?? {
+      model: null,
+      reasoningEffort: null,
+      status: null,
+    };
+    let contributed = false;
+    if (!settings.model && command.model) {
+      settings.model = command.model;
+      contributed = true;
+    }
+    if (!settings.reasoningEffort && command.reasoning_effort) {
+      settings.reasoningEffort = command.reasoning_effort;
+      contributed = true;
+    }
+    if (contributed) {
+      settings.status = mergeThreadSettingsStatus(
+        settings.status,
+        command.status,
+      );
+      settingsByRef.set(externalRef, settings);
+    }
+  }
+  return settingsByRef;
+}
 
 async function loadSessionListItems(
   admin: AdminClient,
@@ -91,22 +373,42 @@ async function loadSessionListItems(
   const connectionIds = [...new Set(sessions.map((session) => session.connection_id))];
   const currentTaskIds = [
     ...new Set(
-      sessions
-        .map((session) => session.current_task_id)
-        .filter((taskId): taskId is string => Boolean(taskId)),
+      sessions.flatMap((session) => [
+        ...(session.current_task_id ? [session.current_task_id] : []),
+        ...(session.last_completed_task_id
+          ? [session.last_completed_task_id]
+          : []),
+      ]),
     ),
   ];
   const sessionIds = sessions.map((session) => session.id);
-  const [connections, currentTasks, pendingTasks] = await Promise.all([
-    collectChunkedRows(connectionIds, async (ids) => {
-      const { data, error } = await admin
-        .from("ai_connections")
-        .select("id, name, platform, last_seen_at, bridge_version, revoked_at")
-        .eq("workspace_id", workspaceId)
-        .in("id", [...ids]);
-      if (error) throw mapDatabaseError(error);
-      return data ?? [];
-    }),
+  const externalThreadRefs = [
+    ...new Set(
+      sessions.flatMap((session) =>
+        session.external_conversation_ref
+          ? [session.external_conversation_ref]
+          : [],
+      ),
+    ),
+  ];
+  const connectionRows = await collectChunkedRows(connectionIds, async (ids) => {
+    const { data, error } = await admin
+      .from("ai_connections")
+      .select("id, name, platform, last_seen_at, bridge_version, revoked_at")
+      .eq("workspace_id", workspaceId)
+      .in("id", [...ids]);
+    if (error) throw mapDatabaseError(error);
+    return data ?? [];
+  });
+  const [
+    connectionSettings,
+    currentTasks,
+    pendingTasks,
+    runningTasks,
+    threadSettingCommands,
+  ] =
+    await Promise.all([
+    loadConnectionModelSettings(admin, workspaceId, connectionRows),
     collectChunkedRows(currentTaskIds, async (ids) => {
       const { data, error } = await admin
         .from("tasks")
@@ -132,17 +434,83 @@ async function loadSessionListItems(
         return data ?? [];
       }),
     ),
+    collectChunkedRows(sessionIds, (ids) =>
+      collectRangePages(async (from, to) => {
+        const { data, error } = await admin
+          .from("tasks")
+          .select("id, assigned_session_id")
+          .eq("workspace_id", workspaceId)
+          .in("status", ["claimed", "running"])
+          .in("assigned_session_id", [...ids])
+          .order("created_at")
+          .order("id")
+          .range(from, to);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      }),
+    ),
+    collectChunkedRows(externalThreadRefs, (externalRefs) =>
+      collectRangePages(async (from, to) => {
+        const { data, error } = await admin
+          .from("ai_thread_commands")
+          .select(
+            "id, external_thread_id, model, reasoning_effort, status, created_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .in("external_thread_id", [...externalRefs])
+          .in("action", ["create", "rename"])
+          .in("status", ["queued", "running", "succeeded"])
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to);
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      }),
+    ),
   ]);
 
   const connectionById = new Map(
-    connections.map((connection) => [connection.id, connection]),
+    connectionRows.map((connection) => [connection.id, connection]),
   );
+  const connectionSettingsById = new Map(
+    connectionSettings.map((settings) => [
+      `${settings.connection_id}:${settings.platform}`,
+      settings,
+    ]),
+  );
+  const bridgeVersionsByConnectionId = new Map<
+    string,
+    {
+      platform: string;
+      bridge_version: string | null;
+      desired_bridge_version: string | null;
+    }[]
+  >();
+  for (const settings of connectionSettings) {
+    const entry = {
+      platform: settings.platform,
+      bridge_version: settings.bridge_version ?? null,
+      desired_bridge_version: settings.desired_bridge_version ?? null,
+    };
+    const existing = bridgeVersionsByConnectionId.get(settings.connection_id);
+    if (existing) existing.push(entry);
+    else bridgeVersionsByConnectionId.set(settings.connection_id, [entry]);
+  }
   const currentTaskById = new Map(
     currentTasks.map((task) => [task.id, sessionTaskSummary(task)]),
   );
+  const runningCountBySession = new Map<string, number>();
+  for (const row of runningTasks) {
+    if (!row.assigned_session_id) continue;
+    runningCountBySession.set(
+      row.assigned_session_id,
+      (runningCountBySession.get(row.assigned_session_id) ?? 0) + 1,
+    );
+  }
   const queuedCountBySession = new Map<string, number>();
   const waitingTaskBySession = new Map<string, SessionCurrentTaskSummary>();
   const nextTaskBySession = new Map<string, SessionCurrentTaskSummary>();
+  const threadSettings = threadSettingsByExternalRef(threadSettingCommands);
   for (const row of pendingTasks) {
     if (!row.assigned_session_id) continue;
     if (row.status === "ready") {
@@ -160,24 +528,68 @@ async function loadSessionListItems(
 
   return sessions.map((session): SessionListItem => {
     const connection = connectionById.get(session.connection_id);
+    const currentTask = session.current_task_id
+      ? currentTaskById.get(session.current_task_id)
+      : undefined;
+    const settings = session.external_conversation_ref
+      ? threadSettings.get(session.external_conversation_ref)
+      : undefined;
+    const connectionModelSettings =
+      connectionSettingsById.get(
+        `${session.connection_id}:${canonicalBridgeKind(session.platform)}`,
+      ) ??
+      connectionSettings.find(
+        (row) => row.connection_id === session.connection_id,
+      );
+    const platformSettings = connectionSettingsById.get(
+      `${session.connection_id}:${canonicalBridgeKind(session.platform)}`,
+    );
+    const bridgeVersion =
+      platformSettings?.bridge_version ??
+      (connection && !isUnifiedPlatform(connection.platform)
+        ? connection.bridge_version
+        : null);
     return {
       ...session,
-      connection: connection ?? {
-        id: session.connection_id,
-        name: "已撤销的连接",
-        platform: session.platform,
-        last_seen_at: null,
-        bridge_version: null,
-        revoked_at: new Date(0).toISOString(),
-      },
+      status: currentTask?.awaiting_user_input ? "waiting" : session.status,
+      unviewed_completed_count: session.unviewed_completed_count ?? 0,
+      name: session.user_name ?? session.name,
+      connection: connection
+        ? {
+            ...connection,
+            bridge_version: bridgeVersion,
+            bridge_versions:
+              bridgeVersionsByConnectionId.get(connection.id) ?? [],
+            model_catalog: parseCodexModelCatalog(
+              connectionModelSettings?.model_catalog,
+            ),
+            model_catalog_updated_at:
+              connectionModelSettings?.model_catalog_updated_at ?? null,
+          }
+        : {
+            id: session.connection_id,
+            name: "已撤销的连接",
+            platform: session.platform,
+            last_seen_at: null,
+            bridge_version: null,
+            revoked_at: new Date(0).toISOString(),
+            model_catalog: null,
+            model_catalog_updated_at: null,
+            bridge_versions: [],
+          },
       current_task:
-        (session.current_task_id
-          ? currentTaskById.get(session.current_task_id)
-          : null) ??
+        currentTask ??
         waitingTaskBySession.get(session.id) ??
         nextTaskBySession.get(session.id) ??
         null,
+      last_completed_task: session.last_completed_task_id
+        ? currentTaskById.get(session.last_completed_task_id) ?? null
+        : null,
+      running_task_count: runningCountBySession.get(session.id) ?? 0,
       queued_task_count: queuedCountBySession.get(session.id) ?? 0,
+      configured_model: settings?.model ?? null,
+      configured_reasoning_effort: settings?.reasoningEffort ?? null,
+      thread_settings_status: settings?.status ?? null,
     };
   });
 }
@@ -233,7 +645,9 @@ export async function listUserTasks(
   if (error) throw mapDatabaseError(error);
   const tasks = (data ?? []).map(sanitizeTask);
   const waitingTaskIds = tasks
-    .filter((task) => task.status === "waiting_user")
+    .filter(
+      (task) => task.status === "waiting_user" || task.awaiting_user_input,
+    )
     .map((task) => task.id);
   if (!waitingTaskIds.length) return { tasks, latest_ai_messages: [] };
 
@@ -351,6 +765,26 @@ export async function replyToTask(
   });
 }
 
+export async function answerTaskUserInputRequest(
+  context: UserWorkspaceContext,
+  taskId: string,
+  requestId: string,
+  input: AnswerTaskUserInputRequestInput,
+  idempotencyKey: string,
+) {
+  return callDomainRpc("answer_task_user_input_request", {
+    ...userContext(context),
+    p_task_id: taskId,
+    p_request_id: requestId,
+    p_answers: input.answers,
+    ...commandMetadata(
+      "answer_task_user_input_request",
+      { taskId, requestId, ...input },
+      idempotencyKey,
+    ),
+  });
+}
+
 export async function postUserTaskMessage(
   context: UserWorkspaceContext,
   taskId: string,
@@ -367,7 +801,12 @@ export async function postUserTaskMessage(
 }
 
 async function taskCommand(
-  operation: "release_task_by_user" | "cancel_task" | "reopen_task",
+  operation:
+    | "release_task_by_user"
+    | "cancel_task"
+    | "reopen_task"
+    | "pause_task"
+    | "resume_task",
   context: UserWorkspaceContext,
   taskId: string,
   reason: string | null,
@@ -384,6 +823,8 @@ async function taskCommand(
 export const releaseUserTask = taskCommand.bind(null, "release_task_by_user");
 export const cancelUserTask = taskCommand.bind(null, "cancel_task");
 export const reopenUserTask = taskCommand.bind(null, "reopen_task");
+export const pauseUserTask = taskCommand.bind(null, "pause_task");
+export const resumeUserTask = taskCommand.bind(null, "resume_task");
 
 export async function listConnections(context: UserWorkspaceContext) {
   const admin = createAdminClient();
@@ -396,7 +837,57 @@ export async function listConnections(context: UserWorkspaceContext) {
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
   if (error) throw mapDatabaseError(error);
-  return { connections: data ?? [] };
+  const connections = data ?? [];
+  const settings = await loadConnectionModelSettings(
+    admin,
+    context.workspaceId,
+    connections.map((connection) => ({
+      id: connection.id,
+      platform: connection.platform,
+    })),
+  );
+  return {
+    connections: connections.map((connection) => {
+      const connectionSettings = settings.filter(
+        (row) => row.connection_id === connection.id,
+      );
+      const modelSettings =
+        connectionSettings.find(
+          (row) => row.platform === canonicalBridgeKind(connection.platform),
+        ) ?? connectionSettings[0];
+      const quotas = connectionSettings
+        .filter((row) => row.quota !== null && row.quota !== undefined)
+        .map((row) => ({
+          platform: row.platform,
+          quota: row.quota,
+          quota_updated_at: row.quota_updated_at,
+        }));
+      const bridgeVersions = connectionSettings
+        .filter(
+          (row) =>
+            row.bridge_version !== null ||
+            row.desired_bridge_version !== null,
+        )
+        .map((row) => ({
+          platform: row.platform,
+          bridge_version: row.bridge_version,
+          desired_bridge_version: row.desired_bridge_version,
+        }));
+      return {
+        ...connection,
+        model_catalog: parseCodexModelCatalog(modelSettings?.model_catalog),
+        model_catalog_updated_at:
+          modelSettings?.model_catalog_updated_at ?? null,
+        quota: modelSettings?.quota ?? null,
+        quota_updated_at: modelSettings?.quota_updated_at ?? null,
+        quotas: quotas.length > 1 ? quotas : null,
+        device_id: modelSettings?.device_id ?? null,
+        device_label: modelSettings?.device_label ?? null,
+        desired_bridge_version: modelSettings?.desired_bridge_version ?? null,
+        bridge_versions: bridgeVersions.length ? bridgeVersions : null,
+      };
+    }),
+  };
 }
 
 export async function createConnection(
@@ -454,6 +945,162 @@ export async function rotateConnection(
   return { connection: result.connection, token };
 }
 
+export async function renameConnection(
+  context: UserWorkspaceContext,
+  connectionId: string,
+  input: RenameConnectionInput,
+  idempotencyKey: string,
+) {
+  return callDomainRpc("rename_ai_connection", {
+    ...userContext(context),
+    p_connection_id: connectionId,
+    p_name: input.name,
+    ...commandMetadata(
+      "rename_ai_connection",
+      { connectionId, ...input },
+      idempotencyKey,
+    ),
+  });
+}
+
+async function enqueueThreadCommand(
+  context: UserWorkspaceContext,
+  input: {
+    connectionId: string;
+    sessionId: string | null;
+    action: "create" | "rename" | "delete";
+    name: string | null;
+    directoryKey: string | null;
+    model: string | null;
+    reasoningEffort: string | null;
+    platform: string | null;
+  },
+  idempotencyKey: string,
+) {
+  const scope = `${context.workspaceId}\0${context.userId}\0enqueue_ai_thread_command\0${idempotencyKey}`;
+  return callDomainRpc("enqueue_ai_thread_command_with_settings", {
+    ...userContext(context),
+    p_command_id: deriveStableUuid(scope),
+    p_connection_id: input.connectionId,
+    p_session_id: input.sessionId,
+    p_action: input.action,
+    p_name: input.name,
+    p_directory_key: input.directoryKey,
+    p_model: input.model,
+    p_reasoning_effort: input.reasoningEffort,
+    p_platform: input.platform,
+    ...commandMetadata(
+      "enqueue_ai_thread_command_with_settings",
+      input,
+      idempotencyKey,
+    ),
+  });
+}
+
+export function createThread(
+  context: UserWorkspaceContext,
+  connectionId: string,
+  input: CreateThreadInput,
+  idempotencyKey: string,
+) {
+  return enqueueThreadCommand(
+    context,
+    {
+      connectionId,
+      sessionId: null,
+      action: "create",
+      name: input.name,
+      directoryKey: input.directory_key ?? null,
+      model: input.model ?? null,
+      reasoningEffort: input.reasoning_effort ?? null,
+      platform: input.platform ?? null,
+    },
+    idempotencyKey,
+  );
+}
+
+async function sessionConnectionId(
+  context: UserWorkspaceContext,
+  sessionId: string,
+): Promise<string> {
+  const { data, error } = await createAdminClient()
+    .from("ai_sessions")
+    .select("connection_id")
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!data) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+  return data.connection_id;
+}
+
+export async function renameThread(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  input: RenameThreadInput,
+  idempotencyKey: string,
+) {
+  const connectionId = await sessionConnectionId(context, sessionId);
+  return enqueueThreadCommand(
+    context,
+    {
+      connectionId,
+      sessionId,
+      action: "rename",
+      name: input.name,
+      directoryKey: null,
+      model: input.model ?? null,
+      reasoningEffort: input.reasoning_effort ?? null,
+      platform: null,
+    },
+    idempotencyKey,
+  );
+}
+
+export async function deleteThread(
+  context: UserWorkspaceContext,
+  sessionId: string,
+  idempotencyKey: string,
+) {
+  const connectionId = await sessionConnectionId(context, sessionId);
+  return enqueueThreadCommand(
+    context,
+    {
+      connectionId,
+      sessionId,
+      action: "delete",
+      name: null,
+      directoryKey: null,
+      model: null,
+      reasoningEffort: null,
+      platform: null,
+    },
+    idempotencyKey,
+  );
+}
+
+/** 用户打开 Thread 控制台后，把“完成未查看”的任务全部标记为已查看。 */
+export async function markSessionCompletionsViewed(
+  context: UserWorkspaceContext,
+  sessionId: string,
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("ai_sessions")
+    .update({ unviewed_completed_count: 0 })
+    .eq("workspace_id", context.workspaceId)
+    .eq("id", sessionId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+  if (!data) {
+    throw new AppError("SESSION_NOT_AUTHORIZED", "Session not found");
+  }
+  return { session_id: sessionId, unviewed_completed_count: 0 };
+}
+
 export async function listSessions(context: UserWorkspaceContext) {
   const admin = createAdminClient();
   const sessions = await collectRangePages(async (from, to) => {
@@ -461,6 +1108,7 @@ export async function listSessions(context: UserWorkspaceContext) {
       .from("ai_sessions")
       .select("*")
       .eq("workspace_id", context.workspaceId)
+      .is("deletion_requested_at", null)
       // Offset pagination must use immutable ordering columns. Heartbeats
       // continuously update last_seen_at and would otherwise move rows across
       // page boundaries while a multi-page snapshot is being collected.
@@ -568,6 +1216,7 @@ export async function getSessionConversation(
     .select("*")
     .eq("workspace_id", context.workspaceId)
     .eq("id", sessionId)
+    .is("deletion_requested_at", null)
     .maybeSingle();
   if (sessionError) throw mapDatabaseError(sessionError);
   if (!sessionRow) {
@@ -714,6 +1363,21 @@ export async function getSessionConversation(
     ),
     ...rawActorEvents.slice(0, legacyLimit).map((event) => event.task_id),
   ]);
+  const activityTaskIds = [...new Set(activities.flatMap((activity) =>
+    activity.task_id ? [activity.task_id] : [],
+  ))];
+  const activityArtifacts = activityTaskIds.length
+    ? await collectChunkedRows(activityTaskIds, async (taskIds) => {
+        const { data, error } = await admin
+          .from("artifacts")
+          .select("*")
+          .eq("workspace_id", context.workspaceId)
+          .in("task_id", [...taskIds])
+          .order("created_at");
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      })
+    : [];
   const missingTaskIds = [...historicalTaskIds].filter((taskId) => !tasksById.has(taskId));
   if (missingTaskIds.length) {
     const historicalTasks = await collectChunkedRows(
@@ -745,8 +1409,10 @@ export async function getSessionConversation(
       session,
       tasks: [],
       messages: [],
+      input_requests: [],
       events: [],
       activities,
+      artifacts: activityArtifacts,
       history_sync: historySync,
       pagination: {
         activities: {
@@ -770,6 +1436,20 @@ export async function getSessionConversation(
   }
   let newestMessages: TaskMessageRow[] = [];
   let newestEvents: TaskEventRow[] = [];
+  const inputRequests = includeLegacy
+    ? await collectChunkedRows(taskIds, async (taskIdBatch) => {
+        const { data, error } = await admin
+          .from("task_user_input_requests")
+          .select(SAFE_TASK_USER_INPUT_REQUEST_COLUMNS)
+          .eq("workspace_id", context.workspaceId)
+          .eq("session_id", sessionId)
+          .eq("status", "pending")
+          .in("task_id", [...taskIdBatch])
+          .order("created_at");
+        if (error) throw mapDatabaseError(error);
+        return data ?? [];
+      })
+    : [];
   if (includeLegacy) {
     for (const taskIdBatch of chunkValues(taskIds)) {
       const [batchMessages, batchEvents] = await Promise.all([
@@ -826,8 +1506,10 @@ export async function getSessionConversation(
     // Legacy task rows are not intrinsically session-scoped. Keep user/system
     // context, but do not attribute another AI session's output to this one.
     messages: newestMessages.slice(0, legacyLimit).reverse(),
+    input_requests: inputRequests,
     events: newestEvents.slice(0, legacyLimit).reverse(),
     activities,
+    artifacts: activityArtifacts,
     history_sync: historySync,
     pagination: {
       activities: {
@@ -853,23 +1535,91 @@ export async function getSessionConversation(
 export async function createSessionTurn(
   context: UserWorkspaceContext,
   sessionId: string,
-  input: CreateSessionTurnInput,
+  input: CreateSessionTurnInput & { images?: File[] },
   idempotencyKey: string,
 ) {
   const title = taskTitleFromPrompt(input.content);
-  const requestInput = { sessionId, title, content: input.content };
-  const result = await callDomainRpc("create_session_turn", {
-    ...userContext(context),
-    p_session_id: sessionId,
-    p_title: title,
-    p_content: input.content,
-    p_priority: 50,
-    ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
-  });
-  if (!result.task || !result.message || !result.activity) {
-    throw new AppError("INTERNAL_ERROR", "Session turn creation returned incomplete data");
+  const admin = createAdminClient();
+  const uploadedPaths: string[] = [];
+  const images = [];
+  for (const [index, file] of (input.images ?? []).entries()) {
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const id = deriveStableUuid(
+      `${context.workspaceId}\0${context.userId}\0${sessionId}\0${idempotencyKey}\0${index}\0${sha256}`,
+    );
+    const name =
+      (file.name.normalize("NFKC").split(/[\\/]/).at(-1) ?? "")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .trim()
+        .slice(0, 500) || `image-${index + 1}`;
+    const mimeType = safeMimeType(file.type);
+    const storagePath = `${context.workspaceId}/turn-images/${id}-${safeFilename(name)}`;
+    const { error } = await admin.storage
+      .from("task-artifacts")
+      .upload(storagePath, bytes, { contentType: mimeType, upsert: false });
+    if (error && !isStorageObjectAlreadyPresent(error)) {
+      if (uploadedPaths.length) {
+        await admin.storage.from("task-artifacts").remove(uploadedPaths).catch(() => undefined);
+      }
+      throw new AppError("INTERNAL_ERROR", "Turn image upload failed");
+    }
+    if (!error) uploadedPaths.push(storagePath);
+    images.push({
+      id,
+      name,
+      mime_type: mimeType,
+      size: bytes.byteLength,
+      storage_path: storagePath,
+      content_sha256: sha256,
+    });
   }
-  return result;
+
+  const requestInput = {
+    sessionId,
+    title,
+    content: input.content,
+    images,
+    model: input.model ?? null,
+    reasoning_effort: input.reasoning_effort ?? null,
+    goal_mode: input.goal_mode ?? null,
+    steer: input.steer ?? false,
+  };
+  try {
+    const result = await callDomainRpc("create_session_turn_with_settings", {
+      ...userContext(context),
+      p_session_id: sessionId,
+      p_title: title,
+      p_content: input.content,
+      p_priority: 50,
+      p_images: images,
+      p_model: input.model ?? null,
+      p_reasoning_effort: input.reasoning_effort ?? null,
+      p_goal_mode: input.goal_mode ?? null,
+      p_steer: input.steer ?? false,
+      ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
+    });
+    if (!result.task || !result.message || !result.activity) {
+      throw new AppError("INTERNAL_ERROR", "Session turn creation returned incomplete data");
+    }
+    return result;
+  } catch (error) {
+    if (uploadedPaths.length) {
+      const ids = images.map((image) => image.id);
+      const { data: committed } = await admin
+        .from("artifacts")
+        .select("id")
+        .in("id", ids);
+      const committedIds = new Set((committed ?? []).map((row) => row.id));
+      const orphanedPaths = images
+        .filter((image) => !committedIds.has(image.id) && uploadedPaths.includes(image.storage_path))
+        .map((image) => image.storage_path);
+      if (orphanedPaths.length) {
+        await admin.storage.from("task-artifacts").remove(orphanedPaths).catch(() => undefined);
+      }
+    }
+    throw error;
+  }
 }
 
 export async function createArtifactDownload(

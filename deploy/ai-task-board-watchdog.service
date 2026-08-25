@@ -1,0 +1,7 @@
+[Unit]
+Description=Ensure AI Task Board web app is running
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ai-task-board-watchdog

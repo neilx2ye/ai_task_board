@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeConnections,
+  bridgeVersionForPlatform,
+  supportsManagedDirectoryCreation,
+  supportsRemoteBridgeUpdate,
+  supportsWorkingDirectoryInventory,
+  supportsWebThreadManagement,
+  supportsWebThreadRename,
   type PublicConnection,
 } from "@/hooks/use-connections";
 
@@ -49,5 +55,124 @@ describe("activeConnections", () => {
 
   it("空输入返回空数组", () => {
     expect(activeConnections([])).toEqual([]);
+  });
+
+  it.each([
+    ["0.5.0", true],
+    ["0.12.3", true],
+    ["1.0.0", true],
+    ["0.4.99", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的 Web Thread 管理能力", (bridgeVersion, expected) => {
+    expect(
+      supportsWebThreadManagement(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["0.7.0", true],
+    ["0.12.3", true],
+    ["1.0.0", true],
+    ["0.6.99", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的多工作目录能力", (bridgeVersion, expected) => {
+    expect(
+      supportsWorkingDirectoryInventory(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+
+  it("对 Kimi Bridge 启用创建和删除，但隐藏 ACP 不支持的改名", () => {
+    const kimi = connection({
+      platform: "Kimi Code",
+      bridge_version: "0.9.0-kimi.1",
+    });
+    expect(supportsWebThreadManagement(kimi)).toBe(true);
+    expect(supportsWebThreadRename(kimi)).toBe(false);
+    expect(
+      supportsWebThreadRename(
+        connection({ platform: "Codex", bridge_version: "0.9.0" }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["1.3.0", true],
+    ["1.3.0-kimi.1", true],
+    ["2.0.0", true],
+    ["1.2.0", false],
+    ["0.9.0", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的设备端建目录能力", (bridgeVersion, expected) => {
+    expect(
+      supportsManagedDirectoryCreation(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["1.5.0", true],
+    ["1.5.0-kimi.1", true],
+    ["1.8.1-kimi.1", true],
+    ["1.5.0-antigravity.1", true],
+    ["2.0.0", true],
+    ["1.4.0", false],
+    ["1.3.0", false],
+    ["0.9.0", false],
+    ["dev", false],
+    [null, false],
+  ])("识别 Bridge %s 的远程自更新能力", (bridgeVersion, expected) => {
+    expect(
+      supportsRemoteBridgeUpdate(
+        connection({ bridge_version: bridgeVersion as string | null }),
+      ),
+    ).toBe(expected);
+  });
+});
+
+describe("bridgeVersionForPlatform", () => {
+  it("reads the matching runtime entry of a unified connection", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({
+          platform: "All",
+          bridge_version: "1.8.1-claude.1",
+          bridge_versions: [
+            { platform: "codex", bridge_version: "1.8.1" },
+            { platform: "kimi", bridge_version: "1.8.1-kimi.1" },
+          ],
+        }),
+        "kimi",
+      ),
+    ).toBe("1.8.1-kimi.1");
+  });
+
+  it("returns null for a unified runtime that has not reported", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({
+          platform: "All",
+          bridge_version: "1.8.1-claude.1",
+          bridge_versions: [{ platform: "codex", bridge_version: "1.8.1" }],
+        }),
+        "kimi",
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to the connection-level version for single-runtime links", () => {
+    expect(
+      bridgeVersionForPlatform(
+        connection({ bridge_version: "1.8.1-claude.1" }),
+        "claude",
+      ),
+    ).toBe("1.8.1-claude.1");
   });
 });

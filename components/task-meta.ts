@@ -1,58 +1,53 @@
 import type { SessionStatus, TaskStatus } from "@/lib/types/database";
+import type { SessionListItem } from "@/lib/types/domain";
+import { effectiveSessionStatus } from "@/lib/domain/session-presence";
 
 type StatusMeta = {
   label: string;
   /** 徽标样式：浅色底 + 深色字，避免过度渐变。 */
   badgeClass: string;
-  /** 看板卡片左侧的状态条颜色。 */
-  barClass: string;
 };
 
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   inbox: {
     label: "未绑定（历史）",
     badgeClass: "border-stone-200 bg-stone-100 text-stone-700",
-    barClass: "bg-stone-300",
   },
   ready: {
     label: "已预留",
     badgeClass: "border-teal-200 bg-teal-50 text-teal-700",
-    barClass: "bg-teal-500",
   },
   claimed: {
     label: "会话已接收",
     badgeClass: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    barClass: "bg-indigo-400",
   },
   running: {
     label: "执行中",
     badgeClass: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    barClass: "bg-indigo-500",
   },
   waiting_user: {
     label: "等我回复",
     badgeClass: "border-amber-200 bg-amber-50 text-amber-800",
-    barClass: "bg-amber-500",
   },
   blocked: {
     label: "已阻塞",
     badgeClass: "border-orange-200 bg-orange-50 text-orange-800",
-    barClass: "bg-orange-400",
+  },
+  paused: {
+    label: "已暂停",
+    badgeClass: "border-stone-200 bg-stone-100 text-stone-600",
   },
   completed: {
     label: "已完成",
     badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    barClass: "bg-emerald-500",
   },
   failed: {
     label: "已失败",
     badgeClass: "border-red-200 bg-red-50 text-red-700",
-    barClass: "bg-red-500",
   },
   cancelled: {
     label: "已取消",
     badgeClass: "border-stone-200 bg-stone-100 text-stone-500",
-    barClass: "bg-stone-300",
   },
 };
 
@@ -77,6 +72,39 @@ export const SESSION_STATUS_META: Record<
     badgeClass: "border-stone-200 bg-stone-100 text-stone-600",
   },
 };
+
+/**
+ * Thread 列表徽标状态：优先展示“完成未查看（待查看）”，用户查看过最近一次
+ * 完成且当前空闲时展示“已完成”，否则回落为在线/忙碌/等待用户/离线。
+ */
+export function sessionStatusMeta(
+  session: Pick<
+    SessionListItem,
+    | "unviewed_completed_count"
+    | "last_completed_task"
+    | "current_task"
+    | "status"
+    | "archived_at"
+    | "inventory_active"
+    | "last_seen_at"
+  >,
+  now = Date.now(),
+): StatusMeta {
+  const unviewedCount = session.unviewed_completed_count ?? 0;
+  if (unviewedCount > 0) {
+    return {
+      label: unviewedCount > 1 ? `待查看 ×${unviewedCount}` : "待查看",
+      badgeClass: "border-amber-200 bg-amber-50 text-amber-800",
+    };
+  }
+  if (!session.current_task && session.last_completed_task) {
+    return {
+      label: "已完成",
+      badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  return SESSION_STATUS_META[effectiveSessionStatus(session, now)];
+}
 
 export const ACTOR_TYPE_LABEL: Record<"user" | "ai" | "system", string> = {
   user: "用户",
@@ -113,12 +141,17 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   session_activity_reported: "同步会话活动",
   subtasks_created: "拆分任务",
   user_input_requested: "请求用户输入",
+  structured_user_input_requested: "等待 Web 结构化回答",
+  structured_user_input_answered: "Web 结构化回答已提交",
   user_replied: "用户已回复",
   task_completed: "完成任务",
   task_failed: "任务失败",
   task_released: "释放任务",
+  task_paused: "暂停任务",
+  task_resumed: "恢复任务",
   task_cancelled: "取消任务",
   task_reopened: "重新打开",
+  legacy_task_unbound: "修正为未绑定历史任务",
   session_assigned: "指定会话",
   session_unassigned: "解除指定",
   message_posted: "新消息",

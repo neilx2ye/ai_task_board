@@ -4,12 +4,10 @@ import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { AppSidebar, MobileNav } from "@/components/app-nav";
-import { NotConfigured } from "@/components/not-configured";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useRealtimeWorkspace } from "@/hooks/use-realtime";
 import { useWorkspace } from "@/hooks/use-workspace";
-import { isSupabaseConfigured } from "@/hooks/use-supabase";
 
 /** 登录后挂载 Realtime 订阅，断线重连与变更时失效查询缓存。 */
 function RealtimeSync() {
@@ -38,7 +36,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     if (auth.status === "anonymous") router.replace("/login");
   }, [auth.status, router]);
 
-  if (!isSupabaseConfigured) return <NotConfigured />;
   if (auth.status !== "authenticated") return <AuthSplash />;
 
   return (

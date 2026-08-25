@@ -15,11 +15,24 @@ export type TaskStatus =
   | "blocked"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "paused";
 
 export type MemberRole = "owner" | "member";
 export type ActorType = "user" | "ai" | "system";
 export type SessionStatus = "online" | "busy" | "waiting" | "offline";
+export type AIThreadCommandAction = "create" | "rename" | "delete" | "pause";
+export type AIThreadCommandStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
+export type AIFileCommandAction = "list" | "read";
+export type AIFileCommandStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
 export type SessionActivityKind =
   | "user_message"
   | "assistant_message"
@@ -32,6 +45,7 @@ export type SessionActivityKind =
   | "error"
   | "usage"
   | "status";
+export type SessionTurnPlanStatus = "draft" | "dispatched" | "cancelled";
 
 type Relationship = {
   foreignKeyName: string;
@@ -111,6 +125,7 @@ export type AIConnectionInsert = {
 
 export type AIConnectionBridgeSettingsRow = {
   connection_id: string;
+  platform: string;
   workspace_id: string;
   version: number;
   desired_enabled: boolean;
@@ -119,6 +134,13 @@ export type AIConnectionBridgeSettingsRow = {
   desired_max_concurrent_turns: number;
   desired_sync_history: boolean;
   desired_history_turn_limit: number;
+  desired_working_directories: Json | null;
+  desired_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  desired_approval_mode: "decline" | "accept" | "accept-session" | null;
   applied_version: number | null;
   effective_enabled: boolean | null;
   effective_include_thread_titles: boolean | null;
@@ -126,6 +148,13 @@ export type AIConnectionBridgeSettingsRow = {
   effective_max_concurrent_turns: number | null;
   effective_sync_history: boolean | null;
   effective_history_turn_limit: number | null;
+  effective_working_directories: Json | null;
+  effective_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  effective_approval_mode: "decline" | "accept" | "accept-session" | null;
   constraint_remote_configuration_enabled: boolean | null;
   constraint_allow_thread_titles: boolean | null;
   constraint_max_threads: number | null;
@@ -133,10 +162,23 @@ export type AIConnectionBridgeSettingsRow = {
   constraint_thread_scope: "cwd" | "all" | null;
   constraint_working_directory: string | null;
   constraint_fixed_thread: boolean | null;
-  constraint_permission_mode: "safe" | "inherit" | null;
+  constraint_permission_mode:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
   constraint_approval_mode: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync: boolean | null;
   constraint_max_history_turns: number | null;
+  constraint_allow_working_directory_configuration: boolean | null;
+  model_catalog: Json | null;
+  model_catalog_updated_at: string | null;
+  quota: Json | null;
+  quota_updated_at: string | null;
+  device_id: string | null;
+  device_label: string | null;
+  desired_bridge_version: string | null;
+  bridge_version: string | null;
   error: string | null;
   applied_at: string | null;
   active_runtime_instance_id: string | null;
@@ -148,6 +190,7 @@ export type AIConnectionBridgeSettingsRow = {
 
 export type AIConnectionBridgeSettingsInsert = {
   connection_id: string;
+  platform?: string;
   workspace_id: string;
   version?: number;
   desired_enabled?: boolean;
@@ -156,6 +199,13 @@ export type AIConnectionBridgeSettingsInsert = {
   desired_max_concurrent_turns?: number;
   desired_sync_history?: boolean;
   desired_history_turn_limit?: number;
+  desired_working_directories?: Json | null;
+  desired_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  desired_approval_mode?: "decline" | "accept" | "accept-session" | null;
   applied_version?: number | null;
   effective_enabled?: boolean | null;
   effective_include_thread_titles?: boolean | null;
@@ -163,6 +213,13 @@ export type AIConnectionBridgeSettingsInsert = {
   effective_max_concurrent_turns?: number | null;
   effective_sync_history?: boolean | null;
   effective_history_turn_limit?: number | null;
+  effective_working_directories?: Json | null;
+  effective_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
+  effective_approval_mode?: "decline" | "accept" | "accept-session" | null;
   constraint_remote_configuration_enabled?: boolean | null;
   constraint_allow_thread_titles?: boolean | null;
   constraint_max_threads?: number | null;
@@ -170,10 +227,23 @@ export type AIConnectionBridgeSettingsInsert = {
   constraint_thread_scope?: "cwd" | "all" | null;
   constraint_working_directory?: string | null;
   constraint_fixed_thread?: boolean | null;
-  constraint_permission_mode?: "safe" | "inherit" | null;
+  constraint_permission_mode?:
+    | "safe"
+    | "inherit"
+    | "danger-full-access"
+    | null;
   constraint_approval_mode?: "decline" | "accept" | "accept-session" | null;
   constraint_allow_history_sync?: boolean | null;
   constraint_max_history_turns?: number | null;
+  constraint_allow_working_directory_configuration?: boolean | null;
+  model_catalog?: Json | null;
+  model_catalog_updated_at?: string | null;
+  quota?: Json | null;
+  quota_updated_at?: string | null;
+  device_id?: string | null;
+  device_label?: string | null;
+  desired_bridge_version?: string | null;
+  bridge_version?: string | null;
   error?: string | null;
   applied_at?: string | null;
   active_runtime_instance_id?: string | null;
@@ -186,6 +256,7 @@ export type AIConnectionBridgeSettingsInsert = {
 export type AIConnectionBridgeRuntimeRow = {
   workspace_id: string;
   connection_id: string;
+  platform: string;
   runtime_instance_id: string;
   last_report_sequence: number;
   retired_at: string | null;
@@ -196,9 +267,36 @@ export type AIConnectionBridgeRuntimeRow = {
 export type AIConnectionBridgeRuntimeInsert = {
   workspace_id: string;
   connection_id: string;
+  platform?: string;
   runtime_instance_id: string;
   last_report_sequence: number;
   retired_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AIBridgeDirectoryRow = {
+  workspace_id: string;
+  connection_id: string;
+  platform: string;
+  directory_key: string;
+  name: string;
+  working_directory: string;
+  inventory_active: boolean;
+  last_seen_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AIBridgeDirectoryInsert = {
+  workspace_id: string;
+  connection_id: string;
+  platform?: string;
+  directory_key: string;
+  name: string;
+  working_directory: string;
+  inventory_active?: boolean;
+  last_seen_at?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -214,10 +312,18 @@ export type AISessionRow = {
   capabilities: string[];
   status: SessionStatus;
   current_task_id: string | null;
+  /** 本 Thread 已完成但用户尚未查看的叶子任务数。 */
+  unviewed_completed_count: number;
+  /** 最近一次完成的任务，用于在查看后继续展示“已完成”。 */
+  last_completed_task_id: string | null;
   last_seen_at: string;
   working_directory: string | null;
+  bridge_directory_key: string | null;
   archived_at: string | null;
   inventory_active: boolean;
+  sync_process_details: boolean;
+  user_name: string | null;
+  deletion_requested_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -233,11 +339,106 @@ export type AISessionInsert = {
   capabilities?: string[];
   status?: SessionStatus;
   current_task_id?: string | null;
+  unviewed_completed_count?: number;
+  last_completed_task_id?: string | null;
   last_seen_at?: string;
   working_directory?: string | null;
+  bridge_directory_key?: string | null;
   archived_at?: string | null;
   inventory_active?: boolean;
+  sync_process_details?: boolean;
+  user_name?: string | null;
+  deletion_requested_at?: string | null;
   created_at?: string;
+  updated_at?: string;
+};
+
+export type AIThreadCommandRow = {
+  id: string;
+  workspace_id: string;
+  connection_id: string;
+  platform: string;
+  session_id: string | null;
+  action: AIThreadCommandAction;
+  name: string | null;
+  /** 暂停命令锚定的任务；Bridge 只中断与该任务匹配的活跃 turn。 */
+  task_id: string | null;
+  directory_key: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  external_thread_id: string | null;
+  status: AIThreadCommandStatus;
+  attempt_count: number;
+  requested_by_user_id: string | null;
+  runtime_instance_id: string | null;
+  lease_expires_at: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type AIThreadCommandInsert = {
+  id?: string;
+  workspace_id: string;
+  connection_id: string;
+  platform?: string;
+  session_id?: string | null;
+  action: AIThreadCommandAction;
+  name?: string | null;
+  task_id?: string | null;
+  directory_key?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  external_thread_id?: string | null;
+  status?: AIThreadCommandStatus;
+  attempt_count?: number;
+  requested_by_user_id?: string | null;
+  runtime_instance_id?: string | null;
+  lease_expires_at?: string | null;
+  error?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string;
+};
+
+export type AIFileCommandRow = {
+  id: string;
+  workspace_id: string;
+  connection_id: string;
+  action: AIFileCommandAction;
+  path: string;
+  status: AIFileCommandStatus;
+  attempt_count: number;
+  requested_by_user_id: string | null;
+  runtime_instance_id: string | null;
+  lease_expires_at: string | null;
+  result: Json | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type AIFileCommandInsert = {
+  id?: string;
+  workspace_id: string;
+  connection_id: string;
+  action: AIFileCommandAction;
+  path: string;
+  status?: AIFileCommandStatus;
+  attempt_count?: number;
+  requested_by_user_id?: string | null;
+  runtime_instance_id?: string | null;
+  lease_expires_at?: string | null;
+  result?: Json | null;
+  error?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
   updated_at?: string;
 };
 
@@ -252,10 +453,15 @@ export type TaskRow = {
   status: TaskStatus;
   priority: number;
   position: number | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  goal_mode: boolean | null;
+  steer: boolean | null;
   assigned_session_id: string | null;
   claimed_by_session_id: string | null;
   claimed_at: string | null;
   lease_expires_at: string | null;
+  awaiting_user_input: boolean;
   required_capabilities: string[];
   external_source: string | null;
   external_task_ref: string | null;
@@ -287,11 +493,16 @@ export type TaskInsert = {
   status?: TaskStatus;
   priority?: number;
   position?: number | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  goal_mode?: boolean | null;
+  steer?: boolean | null;
   assigned_session_id?: string | null;
   claimed_by_session_id?: string | null;
   claim_token_hash?: string | null;
   claimed_at?: string | null;
   lease_expires_at?: string | null;
+  awaiting_user_input?: boolean;
   required_capabilities?: string[];
   external_source?: string | null;
   external_task_ref?: string | null;
@@ -343,6 +554,73 @@ export type TaskMessageInsert = {
   requires_response?: boolean;
   read_at?: string | null;
   created_at?: string;
+};
+
+export type TaskUserInputRequestStatus =
+  | "pending"
+  | "answered"
+  | "consumed"
+  | "cancelled";
+
+export type TaskUserInputOption = {
+  label: string;
+  description: string;
+};
+
+export type TaskUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options: TaskUserInputOption[] | null;
+  isOther: boolean;
+  isSecret: boolean;
+};
+
+export type TaskUserInputAnswers = Record<string, string[]>;
+
+/** Safe projection returned to Web clients; answer values are intentionally absent. */
+export type TaskUserInputRequestRow = {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  session_id: string;
+  message_id: string;
+  external_request_id: string;
+  turn_id: string;
+  item_id: string;
+  is_blocking: boolean;
+  status: TaskUserInputRequestStatus;
+  questions: TaskUserInputQuestion[];
+  answered_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Secret-bearing service-role database shape. Never return it from an HTTP API. */
+export type TaskUserInputRequestDatabaseRow = TaskUserInputRequestRow & {
+  claim_token_hash: string;
+  answers: TaskUserInputAnswers | null;
+  answered_by_user_id: string | null;
+};
+
+export type TaskUserInputRequestInsert = {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  session_id: string;
+  message_id: string;
+  external_request_id: string;
+  turn_id: string;
+  item_id: string;
+  is_blocking?: boolean;
+  status?: TaskUserInputRequestStatus;
+  questions: TaskUserInputQuestion[];
+  claim_token_hash: string;
+  answers?: TaskUserInputAnswers | null;
+  answered_by_user_id?: string | null;
+  answered_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type TaskEventRow = {
@@ -528,6 +806,88 @@ export type IdempotencyRecordInsert = {
   expires_at?: string;
 };
 
+export type PlanningNoteRow = {
+  workspace_id: string;
+  project_ref: string;
+  content: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlanningNoteInsert = {
+  workspace_id: string;
+  project_ref: string;
+  content?: string;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ThreadPlanningNoteRow = {
+  workspace_id: string;
+  session_id: string;
+  content: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ThreadPlanningNoteInsert = {
+  workspace_id: string;
+  session_id: string;
+  content?: string;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserThreadViewStateRow = {
+  workspace_id: string;
+  user_id: string;
+  selected_session_ids: string[];
+  visible_session_ids: string[];
+  updated_at: string;
+};
+
+export type UserThreadViewStateInsert = {
+  workspace_id: string;
+  user_id: string;
+  selected_session_ids?: string[];
+  visible_session_ids?: string[];
+  updated_at?: string;
+};
+
+export type SessionTurnPlanRow = {
+  id: string;
+  workspace_id: string;
+  session_id: string;
+  position: number;
+  content: string;
+  model: string | null;
+  reasoning_effort: string | null;
+  status: SessionTurnPlanStatus;
+  dispatched_task_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionTurnPlanInsert = {
+  id?: string;
+  workspace_id: string;
+  session_id: string;
+  position: number;
+  content: string;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  status?: SessionTurnPlanStatus;
+  dispatched_task_id?: string | null;
+  created_by: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type TaskRpcPayload = TaskRow & {
   structured_progress: {
     completed_leaves: number;
@@ -552,8 +912,26 @@ type MessageResponse = {
   task: TaskRpcPayload;
   message: TaskMessageRow;
 };
+type TaskUserInputRequestResponse = {
+  task: TaskRpcPayload;
+  request: TaskUserInputRequestRow;
+};
+type TaskUserInputAnswerResponse = TaskUserInputRequestResponse & {
+  message: TaskMessageRow;
+};
+type TaskUserInputPollResponse = {
+  request: {
+    id: string;
+    status: TaskUserInputRequestStatus;
+    answers: TaskUserInputAnswers | null;
+  };
+};
 type SessionTurnResponse = MessageResponse & {
   activity: SessionActivityRow;
+  artifacts?: ArtifactRow[];
+};
+type DispatchTurnPlanChainResponse = {
+  dispatched: { step_id: string; task_id: string }[];
 };
 type SessionActivityResponse = {
   task: TaskRpcPayload | Pick<TaskRpcPayload, "id">;
@@ -576,7 +954,21 @@ type CompleteAndClaimNextResponse = CompleteResponse & {
   next_task: TaskRpcPayload | null;
 };
 type ConnectionResponse = { connection: PublicAIConnectionRow };
+export type AIThreadCommandResponse = {
+  command: AIThreadCommandRow | null;
+};
+export type AIFileCommandResponse = {
+  command: AIFileCommandRow | null;
+};
 type ArtifactResponse = { artifact: ArtifactRow };
+
+export type BridgeWorkingDirectory = {
+  directory_key: string;
+  name: string;
+  working_directory: string;
+  /** 授权设备在路径不存在时创建该目录；缺省保持 fail-closed。 */
+  create_if_missing?: boolean;
+};
 
 export type BridgeDesiredConfiguration = {
   enabled: boolean;
@@ -585,6 +977,11 @@ export type BridgeDesiredConfiguration = {
   max_concurrent_turns: number;
   sync_history: boolean;
   history_turn_limit: number;
+  working_directories: BridgeWorkingDirectory[] | null;
+  /** Codex 专用；其余运行时为 null（仍由设备决定）。 */
+  permission_mode: "safe" | "inherit" | "danger-full-access" | null;
+  /** Codex 专用；其余运行时为 null（仍由设备决定）。 */
+  approval_mode: "decline" | "accept" | "accept-session" | null;
 };
 
 export type BridgeConfigurationConstraints = {
@@ -595,10 +992,11 @@ export type BridgeConfigurationConstraints = {
   thread_scope: "cwd" | "all";
   working_directory: string;
   fixed_thread: boolean;
-  permission_mode: "safe" | "inherit";
+  permission_mode: "safe" | "inherit" | "danger-full-access";
   approval_mode: "decline" | "accept" | "accept-session";
   allow_history_sync: boolean;
   max_history_turns: number;
+  allow_working_directory_configuration: boolean;
 };
 
 export type BridgeAppliedConfiguration = {
@@ -616,15 +1014,40 @@ export type BridgeRuntimeStatus = {
 
 export type BridgeConfiguration = {
   connection_id: string;
+  /** Canonical runtime kind owning this configuration row. */
+  platform?: string;
   version: number;
   desired: BridgeDesiredConfiguration;
   applied: BridgeAppliedConfiguration | null;
   runtime: BridgeRuntimeStatus;
+  /** Owner 在网页设置的自更新目标版本；null/缺失表示无待升级。 */
+  desired_bridge_version?: string | null;
   updated_at: string;
 };
 
 export type BridgeConfigurationResponse = {
   configuration: BridgeConfiguration;
+};
+
+export type ProjectDispatchStatus = "submitted" | "skipped" | "failed";
+
+export type ProjectDispatchResult = {
+  connection_id: string;
+  connection_name: string;
+  status: ProjectDispatchStatus;
+  reason?: string;
+};
+
+export type CreateProjectResponse = {
+  results: ProjectDispatchResult[];
+};
+
+export type ProjectDeletionResponse = {
+  results: ProjectDispatchResult[];
+  /** 本次从 ai_bridge_directories 删除的项目目录记录数。 */
+  deleted_directory_rows: number;
+  /** 因目录记录删除而解除绑定的 Session 数（Session 数据本身保留）。 */
+  detached_sessions: number;
 };
 
 type IdempotencyArgs = {
@@ -725,10 +1148,52 @@ export interface Database {
         [
           {
             foreignKeyName: "ai_connection_bridge_runtimes_settings_fk";
-            columns: ["workspace_id", "connection_id"];
+            columns: ["workspace_id", "connection_id", "platform"];
             isOneToOne: false;
             referencedRelation: "ai_connection_bridge_settings";
-            referencedColumns: ["workspace_id", "connection_id"];
+            referencedColumns: ["workspace_id", "connection_id", "platform"];
+          },
+        ]
+      >;
+      ai_bridge_directories: TableDefinition<
+        AIBridgeDirectoryRow,
+        AIBridgeDirectoryInsert,
+        Partial<AIBridgeDirectoryRow>,
+        [
+          {
+            foreignKeyName: "ai_bridge_directories_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      ai_file_commands: TableDefinition<
+        AIFileCommandRow,
+        AIFileCommandInsert,
+        Partial<AIFileCommandRow>,
+        [
+          {
+            foreignKeyName: "ai_file_commands_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_file_commands_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "ai_file_commands_requested_by_user_id_fkey";
+            columns: ["requested_by_user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           },
         ]
       >;
@@ -752,10 +1217,65 @@ export interface Database {
             referencedColumns: ["workspace_id", "id"];
           },
           {
+            foreignKeyName: "ai_sessions_bridge_directory_fk";
+            columns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "bridge_directory_key",
+            ];
+            isOneToOne: false;
+            referencedRelation: "ai_bridge_directories";
+            referencedColumns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "directory_key",
+            ];
+          },
+          {
             foreignKeyName: "ai_sessions_current_task_fk";
             columns: ["workspace_id", "current_task_id"];
             isOneToOne: false;
             referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      ai_thread_commands: TableDefinition<
+        AIThreadCommandRow,
+        AIThreadCommandInsert,
+        Partial<AIThreadCommandRow>,
+        [
+          {
+            foreignKeyName: "ai_thread_commands_connection_fk";
+            columns: ["workspace_id", "connection_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_connections";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "ai_thread_commands_directory_fk";
+            columns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "directory_key",
+            ];
+            isOneToOne: false;
+            referencedRelation: "ai_bridge_directories";
+            referencedColumns: [
+              "workspace_id",
+              "connection_id",
+              "platform",
+              "directory_key",
+            ];
+          },
+          {
+            foreignKeyName: "ai_thread_commands_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
             referencedColumns: ["workspace_id", "id"];
           },
         ]
@@ -845,6 +1365,34 @@ export interface Database {
           {
             foreignKeyName: "task_messages_reply_fk";
             columns: ["workspace_id", "reply_to_message_id"];
+            isOneToOne: false;
+            referencedRelation: "task_messages";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      task_user_input_requests: TableDefinition<
+        TaskUserInputRequestDatabaseRow,
+        TaskUserInputRequestInsert,
+        Partial<TaskUserInputRequestDatabaseRow>,
+        [
+          {
+            foreignKeyName: "task_user_input_requests_task_fk";
+            columns: ["workspace_id", "task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "task_user_input_requests_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "task_user_input_requests_message_fk";
+            columns: ["workspace_id", "message_id"];
             isOneToOne: false;
             referencedRelation: "task_messages";
             referencedColumns: ["workspace_id", "id"];
@@ -991,6 +1539,90 @@ export interface Database {
           },
         ]
       >;
+      planning_notes: TableDefinition<
+        PlanningNoteRow,
+        PlanningNoteInsert,
+        Partial<PlanningNoteRow>,
+        [
+          {
+            foreignKeyName: "planning_notes_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      thread_planning_notes: TableDefinition<
+        ThreadPlanningNoteRow,
+        ThreadPlanningNoteInsert,
+        Partial<ThreadPlanningNoteRow>,
+        [
+          {
+            foreignKeyName: "thread_planning_notes_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "thread_planning_notes_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      session_turn_plans: TableDefinition<
+        SessionTurnPlanRow,
+        SessionTurnPlanInsert,
+        Partial<SessionTurnPlanRow>,
+        [
+          {
+            foreignKeyName: "session_turn_plans_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "session_turn_plans_session_fk";
+            columns: ["workspace_id", "session_id"];
+            isOneToOne: false;
+            referencedRelation: "ai_sessions";
+            referencedColumns: ["workspace_id", "id"];
+          },
+          {
+            foreignKeyName: "session_turn_plans_task_fk";
+            columns: ["workspace_id", "dispatched_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["workspace_id", "id"];
+          },
+        ]
+      >;
+      user_thread_view_state: TableDefinition<
+        UserThreadViewStateRow,
+        UserThreadViewStateInsert,
+        Partial<UserThreadViewStateRow>,
+        [
+          {
+            foreignKeyName: "user_thread_view_state_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_thread_view_state_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
     };
     Views: Record<string, never>;
     Functions: {
@@ -1009,6 +1641,16 @@ export interface Database {
         Args: AIConnectionArgs &
           IdempotencyArgs & {
             p_bridge_version: string;
+            p_threads: Json;
+          };
+        Returns: SessionSyncResponse;
+      };
+      sync_ai_sessions_with_directories: {
+        Args: AIConnectionArgs &
+          IdempotencyArgs & {
+            p_bridge_version: string;
+            p_platform: string | null;
+            p_directories: Json | null;
             p_threads: Json;
           };
         Returns: SessionSyncResponse;
@@ -1032,6 +1674,14 @@ export interface Database {
         Returns: TaskResponse;
       };
       claim_next_task: {
+        Args: AISessionArgs &
+          IdempotencyArgs & {
+            p_claim_token_hash: string;
+            p_lease_seconds: number;
+          };
+        Returns: NullableTaskResponse;
+      };
+      claim_steer_task: {
         Args: AISessionArgs &
           IdempotencyArgs & {
             p_claim_token_hash: string;
@@ -1078,6 +1728,28 @@ export interface Database {
             p_question: string;
           };
         Returns: MessageResponse;
+      };
+      register_task_user_input_request: {
+        Args: AISessionArgs &
+          IdempotencyArgs & {
+            p_task_id: string;
+            p_claim_token_hash: string;
+            p_request_id: string;
+            p_external_request_id: string;
+            p_turn_id: string;
+            p_item_id: string;
+            p_is_blocking: boolean;
+            p_questions: Json;
+          };
+        Returns: TaskUserInputRequestResponse;
+      };
+      poll_task_user_input_request: {
+        Args: AISessionArgs & {
+          p_task_id: string;
+          p_claim_token_hash: string;
+          p_request_id: string;
+        };
+        Returns: TaskUserInputPollResponse;
       };
       complete_task_and_claim_next: {
         Args: AISessionArgs &
@@ -1189,6 +1861,40 @@ export interface Database {
           };
         Returns: SessionTurnResponse;
       };
+      create_session_turn_with_images: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_title: string;
+            p_content: string;
+            p_priority: number;
+            p_images: Json;
+          };
+        Returns: SessionTurnResponse;
+      };
+      create_session_turn_with_settings: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_title: string;
+            p_content: string;
+            p_priority: number;
+            p_images: Json;
+            p_model: string | null;
+            p_reasoning_effort: string | null;
+            p_goal_mode: boolean | null;
+            p_steer: boolean | null;
+          };
+        Returns: SessionTurnResponse;
+      };
+      dispatch_session_turn_chain: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_session_id: string;
+            p_titles: Json;
+          };
+        Returns: DispatchTurnPlanChainResponse;
+      };
       update_user_task: {
         Args: UserArgs &
           IdempotencyArgs & {
@@ -1223,6 +1929,15 @@ export interface Database {
           };
         Returns: MessageResponse;
       };
+      answer_task_user_input_request: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_task_id: string;
+            p_request_id: string;
+            p_answers: Json;
+          };
+        Returns: TaskUserInputAnswerResponse;
+      };
       release_task_by_user: {
         Args: UserTaskCommandArgs;
         Returns: TaskResponse;
@@ -1232,6 +1947,14 @@ export interface Database {
         Returns: TaskResponse;
       };
       reopen_task: {
+        Args: UserTaskCommandArgs;
+        Returns: TaskResponse;
+      };
+      pause_task: {
+        Args: UserTaskCommandArgs;
+        Returns: TaskResponse;
+      };
+      resume_task: {
         Args: UserTaskCommandArgs;
         Returns: TaskResponse;
       };
@@ -1273,10 +1996,101 @@ export interface Database {
           };
         Returns: ConnectionResponse;
       };
+      rename_ai_connection: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_connection_id: string;
+            p_name: string;
+          };
+        Returns: ConnectionResponse;
+      };
+      enqueue_ai_thread_command: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_thread_command_with_directory: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+            p_directory_key: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_thread_command_with_settings: {
+        Args: UserArgs &
+          IdempotencyArgs & {
+            p_command_id: string;
+            p_connection_id: string;
+            p_session_id: string | null;
+            p_action: AIThreadCommandAction;
+            p_name: string | null;
+            p_directory_key: string | null;
+            p_model: string | null;
+            p_reasoning_effort: string | null;
+            p_platform: string | null;
+          };
+        Returns: AIThreadCommandResponse;
+      };
+      claim_ai_thread_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_lease_seconds: number;
+          p_platform: string | null;
+        };
+        Returns: AIThreadCommandResponse;
+      };
+      complete_ai_thread_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_command_id: string;
+          p_succeeded: boolean;
+          p_external_thread_id: string | null;
+          p_error: string | null;
+        };
+        Returns: AIThreadCommandResponse;
+      };
+      enqueue_ai_file_command: {
+        Args: UserArgs & {
+          p_command_id: string;
+          p_connection_id: string;
+          p_action: AIFileCommandAction;
+          p_path: string;
+        };
+        Returns: AIFileCommandResponse;
+      };
+      claim_ai_file_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_lease_seconds: number;
+        };
+        Returns: AIFileCommandResponse;
+      };
+      complete_ai_file_command: {
+        Args: AIConnectionArgs & {
+          p_runtime_instance_id: string;
+          p_command_id: string;
+          p_succeeded: boolean;
+          p_result: Json | null;
+          p_error: string | null;
+        };
+        Returns: AIFileCommandResponse;
+      };
       update_ai_connection_bridge_config: {
         Args: UserArgs &
           IdempotencyArgs & {
             p_connection_id: string;
+            p_platform: string;
             p_expected_version: number;
             p_enabled: boolean;
             p_include_thread_titles: boolean;
@@ -1284,11 +2098,13 @@ export interface Database {
             p_max_concurrent_turns: number;
             p_sync_history: boolean;
             p_history_turn_limit: number;
+            p_working_directories: Json | null;
           };
         Returns: BridgeConfigurationResponse;
       };
       exchange_ai_connection_bridge_config: {
         Args: AIConnectionArgs & {
+          p_platform: string;
           p_runtime_instance_id: string;
           p_report_sequence: number;
           p_lease_seconds: number;

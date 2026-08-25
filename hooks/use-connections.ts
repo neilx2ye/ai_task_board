@@ -3,10 +3,38 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/hooks/api-client";
-import type { AIConnectionRow } from "@/lib/types/database";
+import { SESSIONS_QUERY_KEY } from "@/hooks/query-keys";
+import {
+  canonicalBridgeKind,
+  isAntigravityPlatform,
+  isClaudeCodePlatform,
+  isKimiPlatform,
+  isUnifiedPlatform,
+} from "@/lib/agent-platforms";
+import type { AgentModelCatalogEntry } from "@/lib/codex-models";
+import type { AIConnectionRow, Json } from "@/lib/types/database";
+import type { BridgeRuntimeVersion } from "@/lib/types/domain";
 
 /** 连接行中不含令牌哈希的服务端投影。 */
-export type PublicConnection = Omit<AIConnectionRow, "api_token_hash">;
+export type PublicConnection = Omit<AIConnectionRow, "api_token_hash"> & {
+  model_catalog?: AgentModelCatalogEntry[] | null;
+  model_catalog_updated_at?: string | null;
+  quota?: Json | null;
+  quota_updated_at?: string | null;
+  /** Per-runtime quota snapshots for a unified device connection. */
+  quotas?: Array<{
+    platform: string;
+    quota: Json | null;
+    quota_updated_at: string | null;
+  }> | null;
+  /** Bridge 自上报的稳定设备标识；旧 Bridge 未上报时为 null。 */
+  device_id?: string | null;
+  device_label?: string | null;
+  /** Owner 设置的自更新目标版本；null 表示无待升级。 */
+  desired_bridge_version?: string | null;
+  /** 按运行时拆分的能力版本与升级目标；统一设备连接各运行时一份。 */
+  bridge_versions?: BridgeRuntimeVersion[] | null;
+};
 
 export type ConnectionWithToken = {
   connection: PublicConnection;
@@ -19,7 +47,7 @@ export type ConnectionInput = {
   platform: string;
 };
 
-const CONNECTIONS_KEY = ["connections"] as const;
+export const CONNECTIONS_KEY = ["connections"] as const;
 
 /** 防御性过滤：列表只保留未被撤销的连接（revoked_at 为 null）。 */
 export function activeConnections(
@@ -28,9 +56,92 @@ export function activeConnections(
   return connections.filter((connection) => connection.revoked_at === null);
 }
 
-export function useConnections() {
+/**
+ * 取某个运行时实际使用的 Bridge 能力版本。统一设备连接必须匹配运行时；
+ * 单运行时连接在没有平台维度数据时回退到连接级版本。
+ */
+export function bridgeVersionForPlatform(
+  connection: Pick<
+    PublicConnection,
+    "bridge_version" | "bridge_versions" | "platform"
+  >,
+  platform?: string | null,
+): string | null {
+  const kind = canonicalBridgeKind(platform ?? connection.platform);
+  const entry = connection.bridge_versions?.find(
+    (row) => row.platform === kind,
+  );
+  if (entry?.bridge_version) return entry.bridge_version;
+  if (isUnifiedPlatform(connection.platform)) return null;
+  return connection.bridge_version;
+}
+
+function supportsBridgeMinorVersion(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+  minimumMinor: number,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= minimumMinor;
+}
+
+export function supportsWebThreadManagement(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  return supportsBridgeMinorVersion(connection, 5);
+}
+
+export function supportsWebThreadRename(
+  connection: Pick<AIConnectionRow, "bridge_version" | "platform">,
+): boolean {
+  return (
+    supportsWebThreadManagement(connection) &&
+    !isKimiPlatform(connection.platform) &&
+    !isAntigravityPlatform(connection.platform) &&
+    !isClaudeCodePlatform(connection.platform)
+  );
+}
+
+export function supportsWorkingDirectoryInventory(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  return supportsBridgeMinorVersion(connection, 7);
+}
+
+/**
+ * 设备端创建项目目录（create_if_missing）与设备标识上报从 Bridge 1.3.0 开始；
+ * 同时 Kimi / Antigravity 运行时的 Web 目录管理也在该版本加入。
+ */
+export function supportsManagedDirectoryCreation(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 3);
+}
+
+/**
+ * Web 触发的 Bridge 自更新从 1.5.0 开始携带更新器；
+ * 更早的版本只能在设备上手动升级一次。
+ */
+export function supportsRemoteBridgeUpdate(
+  connection: Pick<AIConnectionRow, "bridge_version">,
+): boolean {
+  const match = connection.bridge_version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 5);
+}
+
+export function useConnections(enabled = true) {
   return useQuery({
     queryKey: CONNECTIONS_KEY,
+    enabled,
     queryFn: async () => {
       const data = await apiFetch<{ connections?: PublicConnection[] }>(
         "/api/user/connections",
@@ -48,6 +159,7 @@ function useConnectionMutation<TInput, TResult>(
     mutationFn: fn,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     },
   });
 }
@@ -58,6 +170,15 @@ export function useCreateConnection() {
       method: "POST",
       json: input,
     }),
+  );
+}
+
+export function useRenameConnection(connectionId: string) {
+  return useConnectionMutation((input: { name: string }) =>
+    apiFetch<{ connection: PublicConnection }>(
+      `/api/user/connections/${connectionId}`,
+      { method: "PATCH", json: input },
+    ),
   );
 }
 
@@ -84,6 +205,7 @@ export function useRevokeConnection(connectionId: string) {
         old?.filter((connection) => connection.id !== connectionId),
       );
       void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY });
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     },
   });
 }
