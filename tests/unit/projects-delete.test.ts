@@ -55,6 +55,8 @@ vi.mock("@/lib/supabase/admin", () => ({
           filters.push({ column, value });
           return builder;
         },
+        order: () => builder,
+        range: () => builder,
         is: (column: string, value: unknown) => {
           filters.push({ column, value, isNull: value === null });
           return builder;
@@ -251,5 +253,126 @@ describe("deleteProjectOnBridges", () => {
     expect(result.results[0]?.status).toBe("submitted");
     expect(state.updateConfig).toHaveBeenCalledTimes(2);
     expect(state.updateConfig.mock.calls[1]?.[4]).toContain(":retry");
+  });
+
+  it("keeps device-managed directories that the desired list no longer contains", async () => {
+    state.tables.ai_connection_bridge_settings = [
+      settingsRow({
+        desired_working_directories: [mainDirectory],
+        effective_working_directories: [mainDirectory, docsDirectory],
+      }),
+    ];
+    state.tables.ai_bridge_directories = [
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...mainDirectory,
+      },
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...docsDirectory,
+      },
+    ];
+
+    const result = await deleteProjectOnBridges(
+      ownerContext,
+      { working_directory: "/srv/main" },
+      "web/projects/delete/stale-desired",
+    );
+
+    expect(result.results[0]?.status).toBe("submitted");
+    expect(state.updateConfig.mock.calls[0]?.[3]).toMatchObject({
+      working_directories: [docsDirectory],
+    });
+  });
+
+  it("removes a project that only exists in the device-reported list", async () => {
+    state.tables.ai_connection_bridge_settings = [
+      settingsRow({
+        desired_working_directories: [docsDirectory],
+        effective_working_directories: [mainDirectory, docsDirectory],
+      }),
+    ];
+
+    const result = await deleteProjectOnBridges(
+      ownerContext,
+      { working_directory: "/srv/main" },
+      "web/projects/delete/effective-only",
+    );
+
+    expect(result.results[0]?.status).toBe("submitted");
+    expect(state.updateConfig.mock.calls[0]?.[3]).toMatchObject({
+      working_directories: [docsDirectory],
+    });
+  });
+
+  it("stops a runtime with empty Web config whose device still reports the path", async () => {
+    state.tables.ai_connection_bridge_settings = [
+      settingsRow({
+        desired_working_directories: null,
+        effective_working_directories: null,
+      }),
+    ];
+    state.tables.ai_bridge_directories = [
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...mainDirectory,
+        inventory_active: true,
+      },
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...docsDirectory,
+        inventory_active: true,
+      },
+    ];
+
+    const result = await deleteProjectOnBridges(
+      ownerContext,
+      { working_directory: "/srv/main" },
+      "web/projects/delete/inventory-only",
+    );
+
+    expect(result.results[0]?.status).toBe("submitted");
+    expect(state.updateConfig.mock.calls[0]?.[3]).toMatchObject({
+      working_directories: [docsDirectory],
+    });
+    expect(state.tables.ai_bridge_directories).toEqual([
+      expect.objectContaining({ ...docsDirectory, inventory_active: true }),
+    ]);
+  });
+
+  it("keeps the device startup configuration when the deleted path is its only inventory entry", async () => {
+    state.tables.ai_connection_bridge_settings = [
+      settingsRow({
+        desired_working_directories: null,
+        effective_working_directories: null,
+      }),
+    ];
+    state.tables.ai_bridge_directories = [
+      {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        platform: "codex",
+        ...mainDirectory,
+        inventory_active: true,
+      },
+    ];
+
+    const result = await deleteProjectOnBridges(
+      ownerContext,
+      { working_directory: "/srv/main" },
+      "web/projects/delete/inventory-single",
+    );
+
+    expect(result.results[0]?.status).toBe("skipped");
+    expect(state.updateConfig).not.toHaveBeenCalled();
+    expect(state.tables.ai_bridge_directories).toEqual([]);
   });
 });

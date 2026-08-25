@@ -406,7 +406,9 @@ npx --yes ${BRIDGE_INSTALL_PACKAGE} run codex`}</CopyableCodeBlock>
           </li>
           <li>
             当前版本支持 Web Thread 管理和同 turn 结构化问答转发；暂停命令可尽力中断
-            运行中的 turn（一个轮询周期内生效），但仍不支持运行中 steer 与网页逐次审批。默认 <code>danger-full-access</code>
+            运行中的 turn（一个轮询周期内生效）。Bridge 1.8.7 起，Codex 运行时支持
+            运行中 steer：对话面板的「Steer 实时调整」开关开启后，Thread 忙碌时发送的
+            消息会实时追加进当前 turn，turn 已结束时自动回退为排队任务；网页逐次审批仍不支持。默认 <code>danger-full-access</code>
             不启用 sandbox，默认 <code>accept</code> 会在设备端自动同意与当前活跃 turn
             关联的受支持请求，无需网页确认；组合使用会在当前 OS 用户权限范围内无沙箱执行，
             属于高风险配置。
@@ -795,7 +797,7 @@ Idempotency-Key: <唯一键>
         <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           连接令牌只在创建或轮换时显示一次，服务端只保存其哈希。请勿把令牌、
-          SUPABASE_SECRET_KEY 提交到仓库或发送到公开渠道。
+          AI_TOKEN_PEPPER 提交到仓库或发送到公开渠道。
         </p>
       </Section>
 
@@ -804,7 +806,7 @@ Idempotency-Key: <唯一键>
           <li>
             任务详情页的「结果与附件」区可以上传文件，单个文件最大
             <strong className="text-foreground"> 50 MiB</strong>
-            ，存储在私有 Bucket 中。
+            ，存储在服务器本地的私有目录中。
           </li>
           <li>
             下载通过短期签名 URL 完成，有效期
@@ -825,9 +827,9 @@ Idempotency-Key: <唯一键>
             report-current 同步已开始的工作后，Thread 条目会显示当前任务状态。
           </FaqItem>
           <FaqItem question="无法登录或收不到验证邮件？">
-            请确认使用注册时的邮箱和密码。当前开发项目已在 Supabase 中关闭邮箱
-            验证，注册后可直接登录；如果你连接的是自己开启邮箱验证的项目，则需要
-            先完成邮件验证。
+            请确认使用管理员创建的邮箱和密码。当前部署关闭了公开注册、也不启用
+            邮箱验证，账号由管理员在服务端创建；如果你自己接入了邮箱验证服务，
+            则需要先完成邮件验证。
           </FaqItem>
           <FaqItem question="AI 为什么接收不到预留任务？">
             常见原因：任务没有分配给当前会话；还有未完成依赖；任务要求的能力不在会话
@@ -839,9 +841,10 @@ Idempotency-Key: <唯一键>
             租约过期说明会话可能已失联；任务不会被别的 AI 抢走。你可以手动释放后再明确改派。
           </FaqItem>
           <FaqItem question="页面会自动刷新吗？">
-            会。页面通过 Supabase Realtime 订阅任务、消息、事件、会话活动、会话、附件、
-            Bridge 工作目录、历史同步和规划笔记等数据的变化并自动更新；断线重连后会补拉
-            遗漏事件，另有 30 秒低频轮询兜底，不需要手动刷新。
+            会。页面通过 PostgreSQL 实时通知（LISTEN/NOTIFY → SSE）订阅任务、
+            消息、事件、会话活动、会话、附件、Bridge 工作目录、历史同步和规划笔记等
+            数据的变化并自动更新；断线重连后会全量重拉，另有 30 秒低频轮询兜底，
+            不需要手动刷新。
           </FaqItem>
           <FaqItem question="为什么四个 Bridge 的环境变量数量差很多？">
             四者共享同一组 AI_TASK_BOARD_* 看板变量和各自前缀的工作目录白名单，也都有
@@ -875,7 +878,7 @@ Idempotency-Key: <唯一键>
             详见「Bridge 升级与回滚」章节。
           </FaqItem>
           <FaqItem question="密钥和令牌应该如何保管？">
-            SUPABASE_SECRET_KEY 只存在于服务端环境，浏览器永远不会接触；
+            AI_TOKEN_PEPPER 只存在于服务端环境，浏览器永远不会接触；
             连接令牌和领取令牌只在创建时显示一次，服务端只保存哈希。任何令牌
             都不要写入代码、日志或公开渠道，泄露后立即在「AI 连接」页轮换或撤销。
           </FaqItem>

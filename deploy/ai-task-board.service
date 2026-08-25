@@ -27,17 +27,17 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ai-task-board
 
-# The application needs outbound HTTPS access to Supabase and write access only
-# to Next.js' local runtime cache. Runtime secrets are injected from the
-# root-owned /etc/ai-task-board.env file. /home/ubuntu is mounted read-only so
-# the file preview page can browse project working directories there (scoped by
-# FILE_EXPLORER_ROOTS in /etc/ai-task-board.env).
+# The application connects to the local PostgreSQL through the Unix socket and
+# writes attachments under /var/lib/ai-task-board/storage. Runtime secrets are
+# injected from the root-owned /etc/ai-task-board.env file. /home/ubuntu is
+# mounted read-only so the file preview page can browse project working
+# directories there (scoped by FILE_EXPLORER_ROOTS in /etc/ai-task-board.env).
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=tmpfs
-BindReadOnlyPaths="/home/ubuntu"
+BindReadOnlyPaths=/home/ubuntu
 BindPaths="/home/ubuntu/AI Task Board/.next/cache"
 ProtectControlGroups=true
 ProtectKernelModules=true

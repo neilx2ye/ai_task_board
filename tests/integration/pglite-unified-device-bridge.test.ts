@@ -396,6 +396,149 @@ describe("Unified device Bridge migration", () => {
     ]);
   });
 
+  it("adopts a renamed directory key for an existing path on the same runtime", async () => {
+    await database.query(
+      `insert into public.ai_thread_commands (
+         workspace_id, connection_id, action, name, status, platform,
+         directory_key
+       ) values ($1::uuid, $2::uuid, 'create', 'New main thread',
+                 'queued', 'codex', 'main')`,
+      [workspaceId, unifiedId],
+    );
+
+    await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'codex', $5::jsonb,
+         $6::jsonb, $7::text, $8::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.8.1",
+        JSON.stringify([
+          {
+            directory_key: "main-renamed",
+            name: "Main renamed",
+            working_directory: "/srv/main",
+          },
+        ]),
+        JSON.stringify([
+          {
+            external_conversation_ref: "codex-thread-1",
+            name: "codex thread",
+            platform: "codex",
+            working_directory: "/srv/main",
+            directory_key: "main-renamed",
+            capabilities: [],
+            archived: false,
+          },
+        ]),
+        "verify-sync-rekey",
+        "verify-sync-hash-rekey",
+      ],
+    );
+
+    const directories = await database.query<{
+      directory_key: string;
+      working_directory: string;
+    }>(
+      `select directory_key, working_directory
+       from public.ai_bridge_directories
+       where connection_id = $1 and platform = 'codex'`,
+      [unifiedId],
+    );
+    expect(directories.rows).toEqual([
+      {
+        directory_key: "main-renamed",
+        working_directory: "/srv/main",
+      },
+    ]);
+
+    const session = await database.query<{ bridge_directory_key: string | null }>(
+      `select bridge_directory_key from public.ai_sessions
+       where connection_id = $1 and external_conversation_ref = 'codex-thread-1'`,
+      [unifiedId],
+    );
+    expect(session.rows[0].bridge_directory_key).toBe("main-renamed");
+
+    const command = await database.query<{ directory_key: string | null }>(
+      `select directory_key from public.ai_thread_commands
+       where connection_id = $1 and platform = 'codex'`,
+      [unifiedId],
+    );
+    expect(command.rows[0].directory_key).toBe("main-renamed");
+  });
+
+  it("rejects a renamed key when the new key is already used by another path", async () => {
+    await database.query(
+      `select public.sync_ai_sessions_with_directories(
+         $1::uuid, $2::uuid, $3::text, $4::text, 'codex', $5::jsonb,
+         $6::jsonb, $7::text, $8::text
+       )`,
+      [
+        workspaceId,
+        unifiedId,
+        tokenHash,
+        "1.8.1",
+        JSON.stringify([
+          {
+            directory_key: "main-renamed",
+            name: "Main renamed",
+            working_directory: "/srv/main",
+          },
+          {
+            directory_key: "other",
+            name: "Other",
+            working_directory: "/srv/other",
+          },
+        ]),
+        JSON.stringify([
+          {
+            external_conversation_ref: "codex-thread-1",
+            name: "codex thread",
+            platform: "codex",
+            working_directory: "/srv/main",
+            directory_key: "main-renamed",
+            capabilities: [],
+            archived: false,
+          },
+        ]),
+        "verify-sync-conflict-setup",
+        "verify-sync-hash-conflict-setup",
+      ],
+    );
+
+    await expect(
+      database.query(
+        `select public.sync_ai_sessions_with_directories(
+           $1::uuid, $2::uuid, $3::text, $4::text, 'codex', $5::jsonb,
+           '[]'::jsonb, $6::text, $7::text
+         )`,
+        [
+          workspaceId,
+          unifiedId,
+          tokenHash,
+          "1.8.1",
+          JSON.stringify([
+            {
+              directory_key: "other",
+              name: "Main renamed",
+              working_directory: "/srv/main",
+            },
+            {
+              directory_key: "other-2",
+              name: "Other",
+              working_directory: "/srv/other",
+            },
+          ]),
+          "verify-sync-conflict",
+          "verify-sync-hash-conflict",
+        ],
+      ),
+    ).rejects.toThrow("INVALID_SESSION");
+  });
+
   it("scopes session inventory omission to the reporting runtime", async () => {
     const kimiEmptySync = await database.query(
       `select public.sync_ai_sessions_with_directories(

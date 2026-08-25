@@ -50,7 +50,7 @@ type CompletionParameters = Pick<
 >;
 
 export const SAFE_TASK_COLUMNS =
-  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, model, reasoning_effort, goal_mode, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
+  "id, workspace_id, parent_task_id, root_task_id, title, description, acceptance_criteria, status, priority, position, model, reasoning_effort, goal_mode, steer, assigned_session_id, claimed_by_session_id, claimed_at, lease_expires_at, awaiting_user_input, required_capabilities, external_source, external_task_ref, external_conversation_ref, progress_note, progress_percent_estimate, result_summary, result_json, created_by_type, created_by_id, created_at, updated_at, completed_at" as const;
 
 export const SAFE_TASK_USER_INPUT_REQUEST_COLUMNS =
   "id, workspace_id, task_id, session_id, message_id, external_request_id, turn_id, item_id, is_blocking, status, questions, answered_at, created_at, updated_at" as const;
@@ -140,6 +140,25 @@ export async function claimNextTask(
     p_claim_token_hash: hashToken(claimToken, "claim"),
     p_lease_seconds: input.lease_seconds ?? DEFAULT_LEASE_SECONDS,
     ...requestMetadata("claim_next_task", input, idempotencyKey),
+  });
+  return withClaimToken(result, claimToken);
+}
+
+/**
+ * 领取运行中 turn 的 steer 消息。与 claimNextTask 不同，它允许 Session 在
+ * 已有活跃主 Task 时再领取 steer = true 的辅助任务；Thread 空闲时返回空。
+ */
+export async function claimSteerTask(
+  context: AISessionContext,
+  input: ClaimOptionsInput,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const claimToken = issuedClaimToken(context, "claim_steer_task", idempotencyKey);
+  const result = await callDomainRpc("claim_steer_task", {
+    ...aiContext(context),
+    p_claim_token_hash: hashToken(claimToken, "claim"),
+    p_lease_seconds: input.lease_seconds ?? DEFAULT_LEASE_SECONDS,
+    ...requestMetadata("claim_steer_task", input, idempotencyKey),
   });
   return withClaimToken(result, claimToken);
 }

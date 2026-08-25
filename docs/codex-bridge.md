@@ -40,7 +40,7 @@ Bridge 必须在保存 Codex 登录、thread 数据和目标工作区的设备�
 Linux 上推荐直接启动交互式安装器：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.6 setup codex
+npx --yes ai-task-board-bridge@1.8.7 setup codex
 ```
 
 `ai-task-board-bridge` 也是 Kimi、Antigravity 与 Claude Code Bridge 的唯一公开
@@ -88,7 +88,7 @@ setup。不同用户各自的 systemd user manager 可以拥有同名 unit，但
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORY='/path/to/a/safe/start-directory' \
-npx --yes ai-task-board-bridge@1.8.6 run codex
+npx --yes ai-task-board-bridge@1.8.7 run codex
 ```
 
 > **高风险默认值：** Bridge 默认使用
@@ -110,7 +110,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_WORKING_DIRECTORIES='[{"key":"main","name":"Main App","path":"/srv/main"},{"key":"docs","name":"Docs","path":"/srv/docs"}]' \
 CODEX_THREAD_SCOPE='cwd' \
-npx --yes ai-task-board-bridge@1.8.6 run codex
+npx --yes ai-task-board-bridge@1.8.7 run codex
 ```
 
 目录 key 只允许字母、数字、点、下划线和连字符，且在同一 Bridge 内必须稳定唯一；数组最多 100 项，路径也不能重复。Board 会按“设备 → 工作目录 → Thread”展示，并只在新建命令中返回选中的 key，由 Bridge 本机把 key 解析为路径。
@@ -122,7 +122,7 @@ AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CODEX_THREAD_ID='REPLACE_WITH_LOCAL_THREAD_ID' \
 CODEX_WORKING_DIRECTORY='/path/to/target-repository' \
-npx --yes ai-task-board-bridge@1.8.6 run codex
+npx --yes ai-task-board-bridge@1.8.7 run codex
 ```
 
 不要把 Connection Token 写入仓库、截图、日志或命令行参数。长期运行时应由本机 Secret Store 或权限 `0600` 的环境文件注入。Bridge 启动 App Server 时会从子进程环境删除 `AI_TASK_BOARD_CONNECTION_TOKEN`，同时保留 Codex 登录所需的普通环境变量。但同一 OS UID 的进程通常仍可通过进程环境、调试接口或同 UID 文件读取等路径互相影响，这不是令牌的强隔离；强隔离应使用独立 UID 和/或仅代转所需请求的 token proxy。若使用自定义 Codex home，systemd 服务必须看到相同设置。
@@ -142,7 +142,7 @@ npx --yes ai-task-board-bridge@1.8.6 run codex
 | `CODEX_BRIDGE_WEB_CONFIG` | 否 | 废弃 | 已废弃并被忽略：Web Console 始终是配置入口 |
 | `CODEX_BRIDGE_ALLOW_REMOTE_THREAD_TITLES` | 否 | 废弃 | 已废弃并被忽略：标题上传直接由网页控制 |
 | `CODEX_BRIDGE_ALLOW_HISTORY_SYNC` | 否 | 废弃 | 已废弃并被忽略：历史同步直接由网页控制 |
-| `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | 废弃 | 已废弃并被忽略：网页可以直接提交项目 key、名称和绝对路径；Bridge 仍会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
+| `CODEX_BRIDGE_ALLOW_REMOTE_WORKING_DIRECTORIES` | 否 | 废弃 | 已废弃并被忽略：网页可以直接提交项目名称和绝对路径（稳定 key 由看板自动分配）；Bridge 仍会验证每个路径存在且为目录，携带 `create_if_missing: true` 的条目（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动创建 |
 | `CODEX_BRIDGE_MAX_HISTORY_TURNS` | 否 | `50` | 仅作为 Web 配置生效前的启动历史 turn 回退值，范围 `1..500`；网页值生效后由网页直接设置 `1..500` |
 | `CODEX_MODEL` | 否 | 空 | thread 未报告模型时使用的 Board 展示标签，不覆盖实际模型 |
 | `CODEX_CAPABILITIES` | 否 | `coding,shell,file-edit,multi-thread,app-server` | 用于 Board 任务能力匹配的列表 |
@@ -170,10 +170,11 @@ turn 数，Web 是唯一配置入口，不再需要任何设备端授权开关�
 `1..32` 内由网页直接设置为整台设备的运行上限；本机 `CODEX_MAX_THREADS` /
 `CODEX_MAX_CONCURRENT_TURNS` 只作为首次 Web 配置生效前的启动值。标题上传与 Codex
 历史同步在新连接上默认开启（历史只对 Codex 运行时生效），可随时在网页关闭。Bridge
-0.8 还可管理 1 到 100 个项目工作目录，网页直接提交稳定 key、显示名称和本机绝对路径，
-Bridge 会校验格式、重复项、绝对路径及目录存在性，再安全停止已被排除的 worker、更新
-实际清单并回报结果；`create_if_missing: true`（1.3.0+，由「新建项目」下发）授权设备
-在路径不存在时自动创建。Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的
+0.8 还可管理 1 到 100 个项目工作目录，网页提交显示名称和本机绝对路径，稳定 key 由
+看板自动分配并在项目存续期间保持不变；Bridge 会校验格式、重复项、绝对路径及目录
+存在性，再安全停止已被排除的 worker、更新实际清单并回报结果；
+`create_if_missing: true`（1.3.0+，由「新建项目」下发）授权设备在路径不存在时自动
+创建。Bridge 会在会话同步中上报稳定的设备标识（本机生成并持久化的
 device id 与 hostname 标签），看板据此把同一台设备上的多个 Bridge 归为一组。Bridge
 默认每 10 秒拉取期望版本，应用后回报实际值、设备约束与错误；修改不需要重启 systemd。
 
@@ -263,7 +264,13 @@ journalctl --user -u ai-task-board-bridge.service -f
 8. 若 App Server 在 turn 中发出 blocking `item/tool/requestUserInput`，Bridge 将结构化问题持久化到 Board 并保持原请求等待；Web 选择框提交后，Bridge 把答案返回该请求，同一个 turn 原地继续。等待期间 Task claim 和心跳均不释放。
 9. `turn/completed` 后，最后一条 AI 消息用于完成 Task；错误会把 Task 标记为失败。Bridge 随后继续处理对应 Session 队列。
 
-网页在某个 thread 正忙时发送的新消息会创建下一张排队 Task。当前版本不会把它可靠地 steer 到当前 turn。
+网页在某个 thread 正忙时发送的新消息默认创建下一张排队 Task。对话面板开启
+「Steer 实时调整」后，消息会标记为 steer：Bridge 在主 turn 运行期间通过
+`/api/ai/tasks/claim-steer` 领取它，并用 App Server `turn/steer` 把文本追加进
+当前 turn，随后把该 Task 标记为完成；AI 的回复增量仍归属原来的主 turn。若
+turn 已经结束、交付失败或运行的是旧版 Board，消息自动退回普通队列按顺序执行。
+Steer 交付是 at-least-once：设备进程在 `turn/steer` 已送达但完成回执未落地时
+崩溃，租约恢复后可能重复追加同一条消息。Steer 只支持文本，不支持附带图片。
 
 ### 面板可见内容
 
@@ -295,7 +302,7 @@ Board MCP 仍可供其他 AI Host 主动操作任务，也可以作为 Codex 自
 
 - **Web 路径由受信 Owner 直接管理。** 0.8 起网页可以管理项目清单，受信 Owner 可以把 Bridge 工作范围切换到该 OS 用户可访问的其他目录；Bridge 只校验路径存在且为目录。Session 名称前缀与逐个 thread 的 allow/deny 仍由设备配置或后续版本处理，网页侧栏隐藏某个 Session 也不会停止其本地 worker。
 - **历史同步是限量白名单，不是完整原始日志镜像。** 只补录最近完成 turn 的用户消息与最终 AI 回复；思考、工具过程、附件与本机路径都不会补录。扩大 turn 上限后会从最近历史重新幂等扫描；关闭或降低上限不会反向删除已导入内容。
-- **没有可靠的运行中 steer。** 忙碌时的新网页消息排到下一张 Task，当前 turn 完成后才执行。
+- **运行中 steer 是 Codex 专用的尽力交付。** 开启「Steer 实时调整」后，忙碌时的新消息会实时追加进当前 turn；turn 已结束或交付失败时回退为普通排队任务。交付是 at-least-once，仅支持文本，且需要 Board 应用 steer migration 与 Bridge 1.8.7+。其他运行时没有 steer，忙碌时的新网页消息仍排到下一张 Task。
 - **没有网页审批。** 默认 `danger-full-access` 不施加沙箱写入或网络限制，默认 `accept` 会在设备端自动批准与当前活跃 turn 关联的受支持请求；这个高风险组合不是用户逐次确认。可用 `safe` 收紧沙箱，用 `decline` 统一拒绝审批，两者需要分别设置。
 - **网页 interrupt 是尽力的。** 暂停 `claimed`/`running` 任务会立即把任务置为 `paused` 并清理领取，Bridge 在下一个命令轮询周期内请求 App Server 中断当前 turn；已完成的 turn 按成功空操作处理。网页取消或状态操作仍不保证立即终止本地命令；停止 systemd 服务只会走尽力的 App Server interrupt。
 - **只转换协议级结构化问题。** blocking `item/tool/requestUserInput` 会自动显示 Web 选择框并保留原 turn；普通 AI 文本里的疑问句不会自动暂停，网页普通消息仍会成为下一张 Task。

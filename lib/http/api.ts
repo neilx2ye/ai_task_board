@@ -133,6 +133,11 @@ export async function withApiHandler(
   try {
     return await handler();
   } catch (error) {
+    if (!(error instanceof AppError)) {
+      // Unexpected failures are invisible to clients by design; log the real
+      // cause so production 500s can be diagnosed from the journal.
+      console.error("[api] unhandled request error", error);
+    }
     return apiError(error);
   }
 }

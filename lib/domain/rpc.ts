@@ -1,7 +1,8 @@
 import "server-only";
 
+import { query } from "@/lib/db";
+import { buildRpcCall } from "@/lib/db/rpc";
 import { mapDatabaseError } from "@/lib/domain/errors";
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/types/database";
 
 type PublicFunctions = Database["public"]["Functions"];
@@ -16,12 +17,18 @@ export async function callDomainRpc<Name extends DomainFunctionName>(
   functionName: Name,
   parameters: DomainFunctionArgs<Name>,
 ): Promise<DomainFunctionReturn<Name>> {
-  const { data, error } = await createAdminClient().rpc(functionName, parameters);
-  if (error) throw mapDatabaseError(error);
-  // supabase-js cannot preserve the name/return correlation through its own
-  // generic filter-builder conditional. Keep the single boundary cast here;
-  // callers remain fully constrained by Database.public.Functions.
-  return data as unknown as DomainFunctionReturn<Name>;
+  try {
+    const { text, values } = buildRpcCall(
+      functionName as string,
+      parameters as Record<string, unknown>,
+    );
+    const result = await query(text, values);
+    return (result.rows[0]?.[functionName] ?? null) as unknown as DomainFunctionReturn<Name>;
+  } catch (error) {
+    throw mapDatabaseError(
+      error as { message?: string; code?: string; details?: string },
+    );
+  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

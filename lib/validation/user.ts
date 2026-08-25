@@ -58,6 +58,7 @@ export const createSessionTurnSchema = z
     model: z.string().trim().min(1).max(200).nullable().optional(),
     reasoning_effort: z.string().trim().min(1).max(50).nullable().optional(),
     goal_mode: z.boolean().nullable().optional(),
+    steer: z.boolean().optional(),
   })
   .strict()
   .refine(

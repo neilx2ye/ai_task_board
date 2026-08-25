@@ -4,15 +4,16 @@ vi.mock("server-only", () => ({}));
 
 import {
   getAITokenPepper,
-  getPublicSupabaseEnv,
-  getSupabaseSecretKey,
+  getAppUrl,
+  getDatabaseUrl,
+  getLocalStorageDir,
 } from "@/lib/env";
 
 const names = [
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  "SUPABASE_SECRET_KEY",
+  "DATABASE_URL",
   "AI_TOKEN_PEPPER",
+  "LOCAL_STORAGE_DIR",
+  "NEXT_PUBLIC_APP_URL",
 ] as const;
 
 afterEach(() => {
@@ -21,32 +22,33 @@ afterEach(() => {
 });
 
 describe("server environment contract", () => {
-  it("prefers publishable and secret key names for new projects", () => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "publishable-new");
-    vi.stubEnv("SUPABASE_SECRET_KEY", "secret-new");
-
-    expect(getPublicSupabaseEnv()).toEqual({
-      url: "https://project.supabase.co",
-      publishableKey: "publishable-new",
-    });
-    expect(getSupabaseSecretKey()).toBe("secret-new");
+  it("reads the local PostgreSQL connection URL", () => {
+    vi.stubEnv("DATABASE_URL", "postgresql:///ai_task_board_local");
+    expect(getDatabaseUrl()).toBe("postgresql:///ai_task_board_local");
   });
 
-  it("requires a non-empty project URL", () => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "publishable-new");
-
-    expect(() => getPublicSupabaseEnv()).toThrow(
-      "Missing required environment variable: NEXT_PUBLIC_SUPABASE_URL",
+  it("requires a database URL", () => {
+    expect(() => getDatabaseUrl()).toThrow(
+      "Missing required environment variable: DATABASE_URL",
     );
   });
 
   it("rejects a short AI token pepper", () => {
     vi.stubEnv("AI_TOKEN_PEPPER", "too-short");
-
     expect(() => getAITokenPepper()).toThrow(
       "AI_TOKEN_PEPPER must contain at least 32 characters",
     );
+  });
+
+  it("defaults the app URL and storage directory", () => {
+    expect(getAppUrl()).toBe("http://localhost:3000");
+    expect(getLocalStorageDir()).toMatch(/local-storage$/);
+  });
+
+  it("honors explicit app URL and storage directory", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://task.example.com");
+    vi.stubEnv("LOCAL_STORAGE_DIR", "/var/lib/ai-task-board");
+    expect(getAppUrl()).toBe("https://task.example.com");
+    expect(getLocalStorageDir()).toBe("/var/lib/ai-task-board");
   });
 });

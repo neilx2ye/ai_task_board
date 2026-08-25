@@ -27,7 +27,7 @@ Run setup as the same OS user that owns the Antigravity login and target
 workspaces:
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.6 setup antigravity
+npx --yes ai-task-board-bridge@1.8.7 setup antigravity
 ```
 
 The wizard asks only for the Board URL (leave it empty to use
@@ -51,7 +51,7 @@ a local allowlist instead. `AI_TASK_BOARD_URL` is optional and defaults to
 AI_TASK_BOARD_URL='https://board.example.com' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
-npx --yes ai-task-board-bridge@1.8.6 setup antigravity
+npx --yes ai-task-board-bridge@1.8.7 setup antigravity
 ```
 
 ## Foreground mode
@@ -62,7 +62,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.6 run antigravity
+npx --yes ai-task-board-bridge@1.8.7 run antigravity
 ```
 
 For several projects, set a stable exact-directory allowlist:
@@ -121,7 +121,7 @@ the Bridge process runs under systemd (`INVOCATION_ID` is set), because the
 update flow rewrites the unit and exits with code 75 for `Restart=on-failure`
 to start the new version. A foreground Bridge logs a one-time stderr hint per
 target version and keeps running the old code; upgrade it manually by
-rerunning `npx --yes ai-task-board-bridge@1.8.6 setup antigravity`.
+rerunning `npx --yes ai-task-board-bridge@1.8.7 setup antigravity`.
 
 With the systemd requirement satisfied, the Bridge downloads
 `ai-task-board-bridge@<version>`, installs the embedded Antigravity runtime

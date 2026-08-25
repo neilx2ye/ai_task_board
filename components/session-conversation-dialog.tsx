@@ -938,6 +938,7 @@ function SessionConversationContent({
     );
   });
   const [goalMode, setGoalMode] = useState<"inherit" | "on" | "off">("inherit");
+  const [steerMode, setSteerMode] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [dismissedInputRequestId, setDismissedInputRequestId] =
     useState<string | null>(null);
@@ -1072,6 +1073,12 @@ function SessionConversationContent({
     event.preventDefault();
     const content = composer.trim();
     if ((!content && !images.length) || !sessionId) return;
+    if (steerMode && images.length) {
+      setSendError(
+        "Steer（实时调整）模式暂不支持附带图片；请关闭 Steer 或移除图片后重试",
+      );
+      return;
+    }
 
     setSendError(null);
     try {
@@ -1084,6 +1091,7 @@ function SessionConversationContent({
             ? null
             : reasoningEffort,
         goal_mode: goalMode === "inherit" ? null : goalMode === "on",
+        steer: steerMode,
       });
       setComposer("");
       setImages([]);
@@ -1517,6 +1525,35 @@ function SessionConversationContent({
                         : "Goal 不变"}
                   </Button>
                 )}
+                {session?.platform?.toLowerCase().includes("codex") ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label="Steer 实时调整模式"
+                    aria-pressed={steerMode}
+                    title={
+                      steerMode
+                        ? "Steer 开启：Thread 忙碌时，消息会实时调整正在运行的 Turn"
+                        : "Steer 关闭：消息按顺序排队，当前 Turn 完成后执行"
+                    }
+                    disabled={!canSend || createTurn.isPending}
+                    onClick={() => setSteerMode((current) => !current)}
+                    className={cn(
+                      "h-7 shrink-0 gap-1 px-2 text-xs",
+                      steerMode
+                        ? "bg-primary/15 text-primary hover:bg-primary/20"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    <ZapIcon
+                      className={cn(
+                        "size-3.5",
+                        steerMode && "fill-current",
+                      )}
+                    />
+                    Steer 实时调整
+                  </Button>
+                ) : null}
                 <Button
                   type="submit"
                   size="icon"

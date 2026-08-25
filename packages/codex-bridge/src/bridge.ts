@@ -66,7 +66,7 @@ export {
   workingDirectoryForThreadCreate,
 } from "./working-directories.js";
 
-const BRIDGE_VERSION = "1.8.6";
+const BRIDGE_VERSION = "1.8.7";
 /** Canonical settings-row kind shared with the unified device Bridge. */
 const BRIDGE_PLATFORM = "codex";
 const APP_SERVER_PROTOCOL = "codex-app-server/v1";
@@ -92,6 +92,7 @@ type ClaimedTask = {
   model?: string | null;
   reasoning_effort?: string | null;
   goal_mode?: boolean | null;
+  steer?: boolean | null;
   claim_token: string;
 };
 
@@ -1845,6 +1846,8 @@ class SessionWorker {
   private pauseRequested = false;
   private turnAbortController: AbortController | null = null;
   private turnAbortCleanup: (() => void) | null = null;
+  private steerPumpAbort: AbortController | null = null;
+  private steerPumpDone: Promise<void> | null = null;
   private mutatingRequestCount = 0;
   private heartbeatInFlightPromise: Promise<void> | null = null;
   private usageSequence = 0;
@@ -2183,6 +2186,7 @@ class SessionWorker {
       waiter.reject(new Error(reason));
     }
     this.turnWaiters.clear();
+    this.steerPumpAbort?.abort();
     for (const buffer of this.buffers.values()) {
       if (buffer.timer) clearTimeout(buffer.timer);
     }
@@ -2418,6 +2422,7 @@ class SessionWorker {
         this.turnAbortCleanup?.();
         this.turnAbortCleanup = null;
         this.turnAbortController = null;
+        this.steerPumpAbort?.abort();
       }
     } finally {
       releasePermit?.();
@@ -2571,7 +2576,13 @@ class SessionWorker {
         .catch(() => undefined);
       throw new Error("任务已被用户暂停");
     }
-    const turn = await this.waitForTurn(turnId, this.stopController.signal);
+    this.startSteerPump();
+    let turn: TurnResult;
+    try {
+      turn = await this.waitForTurn(turnId, this.stopController.signal);
+    } finally {
+      await this.stopSteerPump();
+    }
     await this.eventChain;
     await this.flushAllBuffers();
     await this.activityChain;
@@ -2602,6 +2613,166 @@ class SessionWorker {
         artifacts: [],
       },
     });
+  }
+
+  /**
+   * 主 turn 运行期间的 steer 领取泵：持续领取 steer = true 的辅助任务并用
+   * App Server `turn/steer` 追加进当前 turn。turn 结束、进程停止或旧 Board
+   * 不支持该端点时自动退出；未能送达的消息退回普通队列，按顺序执行。
+   */
+  private startSteerPump(): void {
+    if (this.steerPumpDone) return;
+    const controller = new AbortController();
+    const onParentAbort = () =>
+      controller.abort(this.stopController.signal.reason);
+    if (this.stopController.signal.aborted) {
+      controller.abort(this.stopController.signal.reason);
+    } else {
+      this.stopController.signal.addEventListener("abort", onParentAbort, {
+        once: true,
+      });
+    }
+    this.steerPumpAbort = controller;
+    const done = this.runSteerPump(controller.signal).finally(() => {
+      this.stopController.signal.removeEventListener("abort", onParentAbort);
+      if (this.steerPumpAbort === controller) this.steerPumpAbort = null;
+      if (this.steerPumpDone === done) this.steerPumpDone = null;
+    });
+    this.steerPumpDone = done;
+  }
+
+  private async stopSteerPump(): Promise<void> {
+    this.steerPumpAbort?.abort();
+    const done = this.steerPumpDone;
+    if (done) await done.catch(() => undefined);
+    if (this.steerPumpAbort) this.steerPumpAbort = null;
+    if (this.steerPumpDone === done) this.steerPumpDone = null;
+  }
+
+  private async runSteerPump(signal: AbortSignal): Promise<void> {
+    while (!this.stopping && !signal.aborted) {
+      if (!this.activeTurnId || !this.activeClaim) {
+        await this.wakeLatch.wait(
+          Math.max(1_000, this.configuration.pollIntervalMs),
+          signal,
+        );
+        continue;
+      }
+      try {
+        const response = await this.board.request<ClaimResponse>(
+          "/api/ai/tasks/claim-steer",
+          {
+            method: "POST",
+            sessionId: this.session.id,
+            idempotencyKey: idempotencyKey("claim-steer"),
+            signal,
+            body: { lease_seconds: this.configuration.leaseSeconds },
+          },
+        );
+        const steerTask = response.task;
+        if (!steerTask) {
+          await this.wakeLatch.wait(
+            this.configuration.pollIntervalMs,
+            signal,
+          );
+          continue;
+        }
+        await this.deliverSteerTask(steerTask, signal);
+      } catch (error) {
+        if (signal.aborted || this.stopping) return;
+        const status = errorStatus(error);
+        if (status === 404 || status === 405) return;
+        await this.wakeLatch.wait(
+          this.configuration.pollIntervalMs,
+          signal,
+        );
+      }
+    }
+  }
+
+  private async deliverSteerTask(
+    task: ClaimedTask,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const turnId = this.activeTurnId;
+    if (this.stopping || signal.aborted || !turnId) {
+      // turn 已结束或 Bridge 停止：退回普通队列，之后按顺序任务执行。
+      await this.releaseSteerTask(
+        task,
+        !turnId ? "Turn 已结束，回退为普通排队任务" : "Codex Bridge 已停止",
+      );
+      return;
+    }
+    const text = [
+      task.description?.trim() || task.title,
+      task.acceptance_criteria
+        ? `\n\n验收条件：\n${task.acceptance_criteria}`
+        : "",
+    ].join("");
+    try {
+      await this.trackMutatingRequest(
+        this.appServer.turnSteer(
+          {
+            threadId: this.thread.id,
+            expectedTurnId: turnId,
+            input: [{ type: "text", text, text_elements: [] }],
+          },
+          { timeoutMs: 0 },
+        ),
+      );
+    } catch (error) {
+      // turn 可能恰好完成，或 App Server 拒绝了本次 steer：退回普通队列。
+      await this.releaseSteerTask(
+        task,
+        `Steer 未送达：${errorMessage(error)}`,
+      );
+      process.stderr.write(
+        `Steer 未送达 [${this.thread.id}]：${errorMessage(error)}\n`,
+      );
+      return;
+    }
+    await this.board
+      .request("/api/ai/tasks/complete", {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey(`steer-complete/${task.id}`),
+        maxAttempts: 3,
+        signal: this.stopController.signal,
+        body: {
+          task_id: task.id,
+          claim_token: task.claim_token,
+          result_summary: "已实时调整正在运行的 Turn",
+          result_json: null,
+          message: null,
+          artifacts: [],
+        },
+      })
+      .catch((error) => {
+        process.stderr.write(
+          `Steer 任务完成回执失败 [${this.thread.id}]：${errorMessage(error)}\n`,
+        );
+      });
+  }
+
+  private async releaseSteerTask(
+    task: ClaimedTask,
+    reason: string,
+  ): Promise<void> {
+    await this.board
+      .request("/api/ai/tasks/release", {
+        method: "POST",
+        sessionId: this.session.id,
+        idempotencyKey: idempotencyKey("steer-release"),
+        maxAttempts: 1,
+        timeoutMs: 5_000,
+        signal: this.stopController.signal,
+        body: {
+          task_id: task.id,
+          claim_token: task.claim_token,
+          reason,
+        },
+      })
+      .catch(() => undefined);
   }
 
   private waitForTurn(

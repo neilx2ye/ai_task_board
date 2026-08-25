@@ -21,6 +21,7 @@ const FULL_TASK_ROW: TaskDatabaseRow = {
   model: null,
   reasoning_effort: null,
   goal_mode: null,
+  steer: null,
   assigned_session_id: null,
   claimed_by_session_id: null,
   claim_token_hash: "secret-hash",

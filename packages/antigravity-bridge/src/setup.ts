@@ -203,7 +203,7 @@ WorkingDirectory=${escapeSystemdPath(options.workingDirectory)}
 Environment=${quoteSystemdArgument(`HOME=${options.homeDirectory}`)}
 EnvironmentFile=${escapeSystemdPath(options.environmentFile)}
 ExecStart=${command}
-Restart=on-failure
+Restart=always
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=30

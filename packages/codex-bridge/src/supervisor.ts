@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-/** Non-zero so systemd Restart=on-failure starts the freshly installed version. */
+/** Exit code a runtime uses after staging an update; the supervisor restarts the whole unified service. */
 const UPDATE_RESTART_EXIT_CODE = 75;
 const START_BACKOFF_MIN_MS = 1_000;
 const START_BACKOFF_MAX_MS = 30_000;

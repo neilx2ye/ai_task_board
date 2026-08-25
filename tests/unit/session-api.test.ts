@@ -585,6 +585,52 @@ describe("session conversation REST API", () => {
     expect(domainMocks.createSessionTurn).not.toHaveBeenCalled();
   });
 
+  it("forwards Steer mode on the next JSON turn", async () => {
+    const response = await createTurn(
+      jsonRequest(
+        `/api/user/sessions/${sessionId}`,
+        { content: "把输出改成表格", steer: true },
+        { "Idempotency-Key": "web/session/turn-steer-on" },
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      { content: "把输出改成表格", steer: true },
+      "web/session/turn-steer-on",
+    );
+  });
+
+  it("parses Steer mode from a multipart session turn", async () => {
+    const form = new FormData();
+    form.set("content", "先处理失败测试");
+    form.set("steer", "true");
+    const response = await createTurn(
+      new Request(`http://localhost/api/user/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "turn-steer-multipart" },
+        body: form,
+      }),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(domainMocks.createSessionTurn).toHaveBeenCalledWith(
+      userContext,
+      sessionId,
+      {
+        content: "先处理失败测试",
+        model: null,
+        reasoning_effort: null,
+        steer: true,
+      },
+      "turn-steer-multipart",
+    );
+  });
+
   it("accepts image files in a multipart session turn", async () => {
     const form = new FormData();
     form.set("content", "分析截图");

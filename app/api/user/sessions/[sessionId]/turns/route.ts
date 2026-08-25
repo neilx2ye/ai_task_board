@@ -10,11 +10,17 @@ import {
 
 type RouteContext = { params: Promise<{ sessionId: string }> };
 
-function parseFormBoolean(value: FormDataEntryValue | null): boolean | null | undefined {
+function parseFormBoolean(
+  field: string,
+  value: FormDataEntryValue | null,
+): boolean | null | undefined {
   if (value === null) return undefined;
   if (value === "true") return true;
   if (value === "false") return false;
-  throw new AppError("INVALID_REQUEST", "goal_mode must be true or false");
+  throw new AppError(
+    "INVALID_REQUEST",
+    `${field} must be true or false`,
+  );
 }
 
 export async function POST(request: Request, route: RouteContext) {
@@ -35,7 +41,8 @@ export async function POST(request: Request, route: RouteContext) {
         content: formData.get("content"),
         model: formData.get("model"),
         reasoning_effort: formData.get("reasoning_effort"),
-        goal_mode: parseFormBoolean(formData.get("goal_mode")),
+        goal_mode: parseFormBoolean("goal_mode", formData.get("goal_mode")),
+        steer: parseFormBoolean("steer", formData.get("steer")),
       });
       try {
         images = validateTurnImages(

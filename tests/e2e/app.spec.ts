@@ -169,29 +169,16 @@ test("shows an actionable startup screen", async ({ page }) => {
   await page.goto("/login");
 
   const loginTitle = page.getByText("AI Task Board", { exact: true });
-  const notConfiguredHeading = page.getByRole("heading", {
-    name: "尚未配置 Supabase",
-  });
-  await expect(loginTitle.or(notConfiguredHeading)).toBeVisible();
-
-  if (await loginTitle.isVisible()) {
-    await expect(loginTitle).toBeVisible();
-    await expect(page.getByLabel("邮箱")).toBeVisible();
-    await expect(page.getByLabel("密码")).toBeVisible();
-    await expect(page.getByRole("button", { name: "登录", exact: true })).toBeEnabled();
-  } else {
-    await expect(page.getByRole("heading", { name: "尚未配置 Supabase" })).toBeVisible();
-    await expect(page.getByText("NEXT_PUBLIC_SUPABASE_URL", { exact: true })).toBeVisible();
-    await expect(
-      page.getByText("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", { exact: true }),
-    ).toBeVisible();
-  }
+  await expect(loginTitle).toBeVisible();
+  await expect(page.getByLabel("邮箱")).toBeVisible();
+  await expect(page.getByLabel("密码")).toBeVisible();
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeEnabled();
 });
 
 test("shows a connection token once and revokes the connection", async ({ page }) => {
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   await signIn(page);
@@ -255,7 +242,7 @@ test("shows a connection token once and revokes the connection", async ({ page }
 test("uploads a private attachment and requests an authorized download URL", async ({ page }) => {
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   await signIn(page);
@@ -303,7 +290,9 @@ test("uploads a private attachment and requests an authorized download URL", asy
     data?: { url?: string; expires_in?: number };
   };
   expect(downloadBody.data?.expires_in).toBe(60);
-  expect(downloadBody.data?.url).toContain("/storage/v1/object/sign/task-artifacts/");
+  expect(downloadBody.data?.url).toContain(
+    "/api/storage/object?bucket=task-artifacts",
+  );
   await expect
     .poll(() =>
       page.evaluate(
@@ -319,7 +308,7 @@ test("runs a five-step AI workflow through decomposition, cross-browser reply, a
   test.setTimeout(120_000);
   test.skip(
     !e2eEmail || !e2ePassword,
-    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a hosted test project",
+    "Set E2E_USER_EMAIL/E2E_USER_PASSWORD and point the app at a local PostgreSQL",
   );
 
   const controlContext = await browser.newContext();

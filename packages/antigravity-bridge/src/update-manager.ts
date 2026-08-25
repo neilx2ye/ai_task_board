@@ -27,7 +27,7 @@ const COMMAND_TIMEOUT_MS = 60_000;
 const SMOKE_TEST_TIMEOUT_MS = 10_000;
 /** 失败目标的自动重试退避：覆盖 npm 镜像同步延迟与瞬时网络抖动。 */
 const UPDATE_FAILURE_RETRY_MS = 5 * 60_000;
-/** Non-zero so systemd Restart=on-failure starts the freshly installed version. */
+/** Non-zero so systemd Restart=always starts the freshly installed version. */
 const UPDATE_RESTART_EXIT_CODE = 75;
 
 // Strict semver 2.0.0 with optional prerelease/build metadata. Prerelease is
@@ -299,7 +299,7 @@ function defaultLog(message: string): void {
  * exchange. Returns null when nothing failed; on a failed attempt returns the
  * redacted error text so the caller can report it in the next exchange's
  * `error` field. On success the process exits with code 75 and systemd's
- * Restart=on-failure starts the installed version.
+ * Restart=always starts the installed version.
  */
 export async function maybeApplyDesiredBridgeUpdate(
   options: DesiredBridgeUpdateOptions,

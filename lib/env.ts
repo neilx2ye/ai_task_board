@@ -1,9 +1,6 @@
 import "server-only";
 
-type PublicSupabaseEnv = {
-  url: string;
-  publishableKey: string;
-};
+import path from "node:path";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -13,15 +10,8 @@ function required(name: string): string {
   return value;
 }
 
-export function getPublicSupabaseEnv(): PublicSupabaseEnv {
-  return {
-    url: required("NEXT_PUBLIC_SUPABASE_URL"),
-    publishableKey: required("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
-  };
-}
-
-export function getSupabaseSecretKey(): string {
-  return required("SUPABASE_SECRET_KEY");
+export function getDatabaseUrl(): string {
+  return required("DATABASE_URL");
 }
 
 export function getAITokenPepper(): string {
@@ -30,4 +20,18 @@ export function getAITokenPepper(): string {
     throw new Error("AI_TOKEN_PEPPER must contain at least 32 characters");
   }
   return pepper;
+}
+
+export function getLocalStorageDir(): string {
+  const value = process.env.LOCAL_STORAGE_DIR?.trim();
+  return value || path.join(process.cwd(), "local-storage");
+}
+
+export function getAppUrl(): string {
+  const value = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  return value || "http://localhost:3000";
+}
+
+export function isSignupEnabled(): boolean {
+  return process.env.ALLOW_SIGNUP?.trim() === "true";
 }

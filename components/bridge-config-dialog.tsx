@@ -120,16 +120,21 @@ export function validateWorkingDirectories(
   return null;
 }
 
-function nextDirectoryKey(
-  directories: readonly WorkingDirectoryInput[],
-): string {
-  const keys = new Set(directories.map((directory) => directory.directory_key));
+export function nextDirectoryKey(taken: Iterable<string>): string {
+  const keys = new Set(taken);
   if (!keys.has("project")) return "project";
   for (let suffix = 2; suffix <= 100; suffix += 1) {
     const candidate = `project-${suffix}`;
     if (!keys.has(candidate)) return candidate;
   }
-  return `project-${Date.now().toString(36)}`;
+  // Beyond project-100, mint a time-based suffix that still avoids every
+  // known key so a historical directory row is never silently reclaimed.
+  const stamp = Date.now().toString(36);
+  let candidate = `project-${stamp}`;
+  for (let attempt = 2; keys.has(candidate) && attempt < 1_000; attempt += 1) {
+    candidate = `project-${stamp}-${attempt}`;
+  }
+  return candidate;
 }
 
 const STATUS_COPY: Record<
@@ -551,14 +556,22 @@ function BridgeConfigForm({
   };
 
   const addWorkingDirectory = () => {
-    setWorkingDirectories((current) => [
-      ...current,
-      {
-        directory_key: nextDirectoryKey(current),
-        name: "",
-        working_directory: "",
-      },
-    ]);
+    setWorkingDirectories((current) => {
+      const taken = new Set<string>(
+        directories.map((directory) => directory.directory_key),
+      );
+      for (const directory of current) {
+        taken.add(directory.directory_key);
+      }
+      return [
+        ...current,
+        {
+          directory_key: nextDirectoryKey(taken),
+          name: "",
+          working_directory: "",
+        },
+      ];
+    });
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -847,7 +860,11 @@ function BridgeConfigForm({
                     ? activeDirectories
                     : [
                         {
-                          directory_key: "project",
+                          directory_key: nextDirectoryKey(
+                            directories.map(
+                              (directory) => directory.directory_key,
+                            ),
+                          ),
                           name: "",
                           working_directory: "",
                         },
@@ -865,10 +882,18 @@ function BridgeConfigForm({
                   key={index}
                   className="grid gap-2 rounded-md bg-muted/50 p-3 sm:grid-cols-2"
                 >
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor={`${fieldId}-directory-${index}-name`}>
-                      项目名称
-                    </Label>
+                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor={`${fieldId}-directory-${index}-name`}>
+                        项目名称
+                      </Label>
+                      <span
+                        title="由看板自动分配并保持稳定，用于在设备与 Board 之间安全引用该目录"
+                        className="font-mono text-[10px] text-muted-foreground"
+                      >
+                        标识 {directory.directory_key} · 自动
+                      </span>
+                    </div>
                     <Input
                       id={`${fieldId}-directory-${index}-name`}
                       required
@@ -877,26 +902,6 @@ function BridgeConfigForm({
                       placeholder="例如：AI Task Board"
                       onChange={(event) =>
                         changeWorkingDirectory(index, "name", event.target.value)
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor={`${fieldId}-directory-${index}-key`}>
-                      稳定标识
-                    </Label>
-                    <Input
-                      id={`${fieldId}-directory-${index}-key`}
-                      required
-                      maxLength={100}
-                      pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}"
-                      value={directory.directory_key}
-                      placeholder="ai-task-board"
-                      onChange={(event) =>
-                        changeWorkingDirectory(
-                          index,
-                          "directory_key",
-                          event.target.value,
-                        )
                       }
                     />
                   </div>

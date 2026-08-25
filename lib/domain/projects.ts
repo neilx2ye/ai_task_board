@@ -5,6 +5,7 @@ import { bridgeKindDisplayName } from "@/lib/agent-platforms";
 import { updateBridgeConfiguration } from "@/lib/domain/bridge-config";
 import { AppError, mapDatabaseError } from "@/lib/domain/errors";
 import { migrateProjectPlanningNote } from "@/lib/domain/planning";
+import { collectRangePages } from "@/lib/domain/postgrest-pagination";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   BridgeWorkingDirectory,
@@ -558,6 +559,7 @@ async function dispatchProjectDelete(
   connection: { id: string; name: string },
   input: DeleteProjectInput,
   idempotencyKey: string,
+  inventoryByPlatform: ReadonlyMap<string, readonly BridgeWorkingDirectory[]>,
 ): Promise<ProjectDispatchResult[]> {
   const admin = createAdminClient();
   const base = {
@@ -611,6 +613,8 @@ async function dispatchProjectDelete(
 
       let desired: BridgeWorkingDirectory[] | null;
       let effective: BridgeWorkingDirectory[] | null;
+      const deviceDirectories =
+        inventoryByPlatform.get(snapshot.platform) ?? [];
       try {
         desired = parseDirectoryList(snapshot.desired_working_directories);
         effective = parseDirectoryList(snapshot.effective_working_directories);
@@ -633,7 +637,11 @@ async function dispatchProjectDelete(
           (directory) =>
             directory.working_directory === input.working_directory,
         ) ?? false;
-      if (!desiredHasProject && !effectiveHasProject) {
+      const deviceHasProject = deviceDirectories.some(
+        (directory) =>
+          directory.working_directory === input.working_directory,
+      );
+      if (!desiredHasProject && !effectiveHasProject && !deviceHasProject) {
         results.push({
           ...resultBase,
           status: "skipped",
@@ -642,19 +650,52 @@ async function dispatchProjectDelete(
         break;
       }
 
-      const source = desired ?? effective;
-      const remaining =
-        source?.filter(
-          (directory) =>
-            directory.working_directory !== input.working_directory,
-        ) ?? [];
-      if (remaining.length === source?.length) {
-        results.push({
-          ...resultBase,
-          status: "skipped",
-          reason: "该 Bridge 已停止托管这个项目",
-        });
-        break;
+      // 剩余清单必须覆盖设备当前实际管理的目录。Web 的期望清单可能与
+      // 设备本地新增的目录脱节，若只按 desired 过滤，删除单个项目时会把
+      // 设备上其他项目的目录一并从清单里剔除。以 desired 条目为基础
+      // （保留 create_if_missing 等授权字段），再补回 effective 中设备仍在
+      // 管理、但 desired 尚未包含的目录。
+      const remaining: BridgeWorkingDirectory[] = [];
+      const remainingKeys = new Set<string>();
+      const remainingPaths = new Set<string>();
+      for (const directory of desired ?? []) {
+        if (directory.working_directory === input.working_directory) continue;
+        if (
+          remainingKeys.has(directory.directory_key) ||
+          remainingPaths.has(directory.working_directory)
+        ) {
+          continue;
+        }
+        remaining.push(directory);
+        remainingKeys.add(directory.directory_key);
+        remainingPaths.add(directory.working_directory);
+      }
+      // desired / effective 都可能为空（例如该运行时的 Web 目录管理从未
+      // 开启），而设备仍按启动配置上报该路径。此时以设备最新上报的活跃目录
+      // 为准，否则设备会在下一次清单同步时把刚删除的目录行重新插回来。
+      for (const directory of deviceDirectories) {
+        if (directory.working_directory === input.working_directory) continue;
+        if (
+          remainingKeys.has(directory.directory_key) ||
+          remainingPaths.has(directory.working_directory)
+        ) {
+          continue;
+        }
+        remaining.push(directory);
+        remainingKeys.add(directory.directory_key);
+        remainingPaths.add(directory.working_directory);
+      }
+      for (const directory of effective ?? []) {
+        if (directory.working_directory === input.working_directory) continue;
+        if (
+          remainingKeys.has(directory.directory_key) ||
+          remainingPaths.has(directory.working_directory)
+        ) {
+          continue;
+        }
+        remaining.push(directory);
+        remainingKeys.add(directory.directory_key);
+        remainingPaths.add(directory.working_directory);
       }
 
       // 清单不能为空：删除最后一个项目时回退到设备启动配置。
@@ -725,11 +766,50 @@ export async function deleteProjectOnBridges(
   input: DeleteProjectInput,
   idempotencyKey: string,
 ): Promise<ProjectDeletionResponse> {
+  const admin = createAdminClient();
+
+  // 设备上报的活跃目录清单必须在删除目录行之前读取。Web 期望/生效清单
+  // 可能为空，但设备仍按本机启动配置管理路径；删除后设备继续上报会把
+  // 目录行重建，项目随之重新出现。这里把清单按连接和平台分组，供下发时
+  // 补全「剩余目录」并让设备真正停止托管。
+  const inventory = await collectRangePages(async (from, to) => {
+    const { data, error } = await admin
+      .from("ai_bridge_directories")
+      .select(
+        "connection_id, platform, directory_key, name, working_directory, inventory_active",
+      )
+      .eq("workspace_id", context.workspaceId)
+      .order("connection_id")
+      .order("platform")
+      .order("directory_key")
+      .range(from, to);
+    if (error) throw mapDatabaseError(error);
+    return data ?? [];
+  });
+  const inventoryByConnection = new Map<
+    string,
+    Map<string, BridgeWorkingDirectory[]>
+  >();
+  for (const row of inventory) {
+    if (!row.inventory_active) continue;
+    let byPlatform = inventoryByConnection.get(row.connection_id);
+    if (!byPlatform) {
+      byPlatform = new Map();
+      inventoryByConnection.set(row.connection_id, byPlatform);
+    }
+    const directories = byPlatform.get(row.platform) ?? [];
+    directories.push({
+      directory_key: row.directory_key,
+      name: row.name,
+      working_directory: row.working_directory,
+    });
+    byPlatform.set(row.platform, directories);
+  }
+
   const removal = await removeProjectDatabaseRecords(
     context,
     input.working_directory,
   );
-  const admin = createAdminClient();
   const { data, error } = await admin
     .from("ai_connections")
     .select("id, name")
@@ -745,6 +825,7 @@ export async function deleteProjectOnBridges(
         connection,
         input,
         idempotencyKey,
+        inventoryByConnection.get(connection.id) ?? new Map(),
       )),
     );
   }

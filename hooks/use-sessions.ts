@@ -245,6 +245,7 @@ export function useCreateSessionTurn(sessionId: string) {
         model?: string | null;
         reasoning_effort?: string | null;
         goal_mode?: boolean | null;
+        steer?: boolean;
       },
       { fingerprint: string; key: string }
     >(),
@@ -257,8 +258,9 @@ export function useCreateSessionTurn(sessionId: string) {
       model?: string | null;
       reasoning_effort?: string | null;
       goal_mode?: boolean | null;
+      steer?: boolean;
     }) => {
-      const fingerprint = `${sessionId}\0${input.content}\0${input.model ?? ""}\0${input.reasoning_effort ?? ""}\0${input.goal_mode ?? ""}\0${(input.images ?? [])
+      const fingerprint = `${sessionId}\0${input.content}\0${input.model ?? ""}\0${input.reasoning_effort ?? ""}\0${input.goal_mode ?? ""}\0${input.steer ?? ""}\0${(input.images ?? [])
         .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
         .join("|")}`;
       const idempotencyKey = idempotency.current!.keyFor(fingerprint);
@@ -271,6 +273,9 @@ export function useCreateSessionTurn(sessionId: string) {
       }
       if (input.goal_mode !== null && input.goal_mode !== undefined) {
         formData.set("goal_mode", String(input.goal_mode));
+      }
+      if (input.steer !== undefined) {
+        formData.set("steer", String(input.steer));
       }
       for (const image of input.images ?? []) formData.append("images", image);
       return apiFetch<unknown>(`/api/user/sessions/${sessionId}/turns`, {

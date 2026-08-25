@@ -4,6 +4,7 @@ import {
   BRIDGE_CONCURRENCY_NOTICE,
   BRIDGE_HISTORY_RETENTION_NOTICE,
   isAbsoluteWorkingDirectoryPath,
+  nextDirectoryKey,
   permissionLabel,
   validateWorkingDirectories,
 } from "@/components/bridge-config-dialog";
@@ -280,5 +281,28 @@ describe("Bridge configuration UI model", () => {
         },
       ]),
     ).toContain("绝对工作路径");
+  });
+
+  it("auto-assigns directory keys without reusing known keys", () => {
+    expect(nextDirectoryKey([])).toBe("project");
+    expect(nextDirectoryKey(["project"])).toBe("project-2");
+    expect(
+      nextDirectoryKey(["project", "project-2", "project-3"]),
+    ).toBe("project-4");
+    expect(nextDirectoryKey(["docs", "main"])).toBe("project");
+  });
+
+  it("keeps auto-assigned keys stable for the same known set", () => {
+    const taken = ["project", "project-2"];
+    expect(nextDirectoryKey(taken)).toBe(nextDirectoryKey(taken));
+    expect(
+      validateWorkingDirectories([
+        {
+          directory_key: nextDirectoryKey(taken),
+          name: "Auto project",
+          working_directory: "/srv/auto",
+        },
+      ]),
+    ).toBeNull();
   });
 });

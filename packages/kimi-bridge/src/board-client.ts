@@ -22,7 +22,7 @@ import {
   stringValue,
 } from "./utils.js";
 
-export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.8.6-kimi.1";
+export const KIMI_BRIDGE_CAPABILITY_VERSION = "1.8.7-kimi.1";
 
 export type BoardSession = {
   id: string;

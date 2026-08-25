@@ -1583,6 +1583,7 @@ export async function createSessionTurn(
     model: input.model ?? null,
     reasoning_effort: input.reasoning_effort ?? null,
     goal_mode: input.goal_mode ?? null,
+    steer: input.steer ?? false,
   };
   try {
     const result = await callDomainRpc("create_session_turn_with_settings", {
@@ -1595,6 +1596,7 @@ export async function createSessionTurn(
       p_model: input.model ?? null,
       p_reasoning_effort: input.reasoning_effort ?? null,
       p_goal_mode: input.goal_mode ?? null,
+      p_steer: input.steer ?? false,
       ...commandMetadata("create_session_turn", requestInput, idempotencyKey),
     });
     if (!result.task || !result.message || !result.activity) {

@@ -326,7 +326,7 @@ Environment=${quoteSystemdArgument(`HOME=${options.homeDirectory}`)}
 Environment=${quoteSystemdArgument(`CODEX_HOME=${options.codexHome}`)}
 EnvironmentFile=${escapeSystemdPath(options.environmentFile)}
 ExecStart=${command}
-Restart=on-failure
+Restart=always
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=30

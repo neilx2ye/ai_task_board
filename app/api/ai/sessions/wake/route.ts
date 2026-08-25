@@ -1,20 +1,17 @@
-import { randomUUID } from "node:crypto";
-
-import type { RealtimeChannel } from "@supabase/supabase-js";
-
 import {
   authenticateAIRequest,
   authorizeAISession,
   sessionIdFromRequest,
 } from "@/lib/auth/ai-auth";
+import { query } from "@/lib/db";
 import { apiError } from "@/lib/http/api";
-import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 const MAX_STREAM_AGE_MS = 5 * 60_000;
+const WAKE_POLL_INTERVAL_MS = 1_000;
 const encoder = new TextEncoder();
 
 function eventFrame(event: string): Uint8Array {
@@ -70,16 +67,15 @@ export async function GET(request: Request): Promise<Response> {
       auth,
       sessionIdFromRequest(request),
     );
-    const admin = createAdminClient();
     let cancelStream: () => void = () => undefined;
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         let finalized = false;
-        let channel: RealtimeChannel | null = null;
         const timers: {
           keepalive?: ReturnType<typeof setInterval>;
           maxAge?: ReturnType<typeof setTimeout>;
+          wakePoll?: ReturnType<typeof setInterval>;
         } = {};
         let registration: OpenWakeStream | null = null;
 
@@ -88,13 +84,9 @@ export async function GET(request: Request): Promise<Response> {
           finalized = true;
           if (timers.keepalive) clearInterval(timers.keepalive);
           if (timers.maxAge) clearTimeout(timers.maxAge);
+          if (timers.wakePoll) clearInterval(timers.wakePoll);
           request.signal.removeEventListener("abort", close);
           if (registration) openWakeStreams.delete(registration);
-          const activeChannel = channel;
-          channel = null;
-          if (activeChannel) {
-            void admin.removeChannel(activeChannel).catch(() => undefined);
-          }
         };
 
         const enqueue = (chunk: Uint8Array) => {
@@ -131,50 +123,34 @@ export async function GET(request: Request): Promise<Response> {
         // the Bridge also applies its own bounded reconnect backoff.
         enqueue(encoder.encode("retry: 2000\n\n"));
 
-        try {
-          const wakeChannel = admin.channel(
-            `ai-session-wake:${context.sessionId}:${randomUUID()}`,
-          );
-          channel = wakeChannel;
-          wakeChannel
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "tasks",
-                filter: `assigned_session_id=eq.${context.sessionId}`,
-              },
-              (payload) => {
-                const row = payload.new as { status?: unknown };
-                if (row.status === "ready") enqueue(eventFrame("wake"));
-              },
-            )
-            .subscribe((status) => {
-              if (status === "SUBSCRIBED") {
-                // Claim once after the subscription is live to close the race
-                // between the Bridge's initial empty claim and channel setup.
-                enqueue(eventFrame("ready"));
-                return;
+        // Emit one ready hint immediately, mirroring the previous "subscription
+        // is live" signal, then poll for work assigned to this session. The
+        // Bridge still claims the authoritative task through the REST API.
+        enqueue(eventFrame("ready"));
+        let woke = false;
+        timers.wakePoll = setInterval(() => {
+          if (woke || finalized) return;
+          void query(
+            `select 1
+             from public.tasks
+             where assigned_session_id = $1::uuid
+               and status = 'ready'
+             limit 1`,
+            [context.sessionId],
+          )
+            .then((result) => {
+              if (result.rows.length > 0 && !finalized) {
+                woke = true;
+                if (timers.wakePoll) clearInterval(timers.wakePoll);
+                enqueue(eventFrame("wake"));
               }
-              if (
-                status === "CHANNEL_ERROR" ||
-                status === "TIMED_OUT" ||
-                status === "CLOSED"
-              ) {
-                enqueue(eventFrame("degraded"));
-                close();
-              }
+            })
+            .catch(() => {
+              enqueue(eventFrame("degraded"));
+              close();
             });
-        } catch {
-          // Do not retain a half-created channel on the singleton admin client.
-          // A fixed degraded frame keeps setup errors free of server details.
-          enqueue(eventFrame("degraded"));
-          close();
-        }
+        }, WAKE_POLL_INTERVAL_MS);
 
-        // A subscription callback can fail synchronously in mocks or alternate
-        // transports; do not create timers after that path has finalized.
         if (finalized) return;
 
         // A short comment keeps Caddy/CDN idle timers from mistaking a healthy

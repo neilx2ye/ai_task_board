@@ -456,6 +456,7 @@ export type TaskRow = {
   model: string | null;
   reasoning_effort: string | null;
   goal_mode: boolean | null;
+  steer: boolean | null;
   assigned_session_id: string | null;
   claimed_by_session_id: string | null;
   claimed_at: string | null;
@@ -495,6 +496,7 @@ export type TaskInsert = {
   model?: string | null;
   reasoning_effort?: string | null;
   goal_mode?: boolean | null;
+  steer?: boolean | null;
   assigned_session_id?: string | null;
   claimed_by_session_id?: string | null;
   claim_token_hash?: string | null;
@@ -1679,6 +1681,14 @@ export interface Database {
           };
         Returns: NullableTaskResponse;
       };
+      claim_steer_task: {
+        Args: AISessionArgs &
+          IdempotencyArgs & {
+            p_claim_token_hash: string;
+            p_lease_seconds: number;
+          };
+        Returns: NullableTaskResponse;
+      };
       claim_task: {
         Args: AISessionArgs &
           IdempotencyArgs & {
@@ -1873,6 +1883,7 @@ export interface Database {
             p_model: string | null;
             p_reasoning_effort: string | null;
             p_goal_mode: boolean | null;
+            p_steer: boolean | null;
           };
         Returns: SessionTurnResponse;
       };
