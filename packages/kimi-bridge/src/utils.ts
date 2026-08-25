@@ -15,6 +15,36 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Best-effort failure text that keeps structured error payloads visible.
+ *
+ * Kimi ACP maps engine failures to a JSON-RPC internal error whose fixed
+ * message is only "Internal error"; the actionable text travels in
+ * `error.data.details`. Board-facing reasons should use this helper instead
+ * of `errorMessage` so those details are not silently discarded.
+ */
+export function errorDescription(error: unknown): string {
+  const message = errorMessage(error);
+  const data = (error as { data?: unknown } | null)?.data;
+  if (typeof data === "string" && data.trim()) {
+    return `${message}：${data}`;
+  }
+  if (!isRecord(data)) return message;
+  const details = data.details;
+  if (typeof details === "string" && details.trim()) {
+    return `${message}：${details}`;
+  }
+  try {
+    const serialized = JSON.stringify(data);
+    if (serialized && serialized !== "{}" && serialized !== "null") {
+      return `${message}：${serialized}`;
+    }
+  } catch {
+    // 无法序列化的 data 直接忽略，保留原始 message。
+  }
+  return message;
+}
+
 export function errorStatus(error: unknown): number | undefined {
   return (error as { status?: number } | null)?.status;
 }

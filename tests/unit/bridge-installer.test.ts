@@ -88,7 +88,7 @@ describe("unified Bridge installer", () => {
     ) as { name: string; private?: boolean };
 
     expect(publicManifest.name).toBe("ai-task-board-bridge");
-    expect(publicManifest.version).toBe("1.8.7");
+    expect(publicManifest.version).toBe("1.8.8");
     expect(publicManifest.dependencies).not.toHaveProperty(
       "@ai-task-board/kimi-bridge-runtime",
     );

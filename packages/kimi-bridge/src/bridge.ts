@@ -49,6 +49,7 @@ import { maybeApplyDesiredBridgeUpdate } from "./update-manager.js";
 import {
   appendBoundedText,
   delay,
+  errorDescription,
   errorMessage,
   errorStatus,
   isPersistentClientError,
@@ -520,7 +521,7 @@ class SessionWorker {
             .releaseTask(this.boardSession.id, task, "Kimi Bridge 正在停止")
             .catch(() => undefined);
         } else {
-          const reason = redactText(errorMessage(error), 10_000);
+          const reason = redactText(errorDescription(error), 10_000);
           await this.board
             .failTask(
               this.boardSession.id,
@@ -617,7 +618,10 @@ class SessionWorker {
       this.activePrompt = false;
       this.acp.setTaskActive(this.info.sessionId, false);
       unsubscribe();
-      await this.acp.closeSession(this.info.sessionId).catch(() => undefined);
+      // 会话保持 live，不调用 session/close。Kimi ACP 在同一常驻连接上
+      // close 后再次 resume 会抛 "runtime ... is registered twice in one
+      // transaction"，让下一轮任务报 Internal error；live 会话上的 resume
+      // 是幂等的，反复执行无副作用。
     }
 
     if (response.stopReason === "refusal") {
@@ -1132,7 +1136,6 @@ export class KimiBridge {
         session.sessionId,
         this.acp.selectedValue(session.sessionId, "model"),
       );
-      await this.acp.closeSession(session.sessionId).catch(() => undefined);
       process.stdout.write(`已从 Kimi ACP 读取 ${this.modelCatalog.length} 个模型\n`);
     } catch (error) {
       process.stderr.write(
@@ -1445,7 +1448,6 @@ export class KimiBridge {
         created.sessionId,
         this.acp.selectedValue(created.sessionId, "model"),
       );
-      await this.acp.closeSession(created.sessionId).catch(() => undefined);
       this.createdSessions.set(created.sessionId, info);
       this.managedSessionIds.add(created.sessionId);
       return created.sessionId;

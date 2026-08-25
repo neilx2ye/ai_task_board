@@ -15,6 +15,7 @@ import {
   resolveRemoteConfiguration,
   TurnLimiter,
 } from "../../packages/kimi-bridge/src/bridge";
+import { errorDescription } from "../../packages/kimi-bridge/src/utils";
 import { agentModelOptions } from "@/lib/codex-models";
 
 const configOptions: SessionConfigOption[] = [
@@ -146,6 +147,30 @@ describe("Kimi Bridge configuration", () => {
         KIMI_BRIDGE_MODE: "unsafe",
       }),
     ).toThrow("KIMI_BRIDGE_MODE");
+  });
+});
+
+describe("Kimi Bridge errorDescription", () => {
+  it("keeps the plain message for errors without structured data", () => {
+    expect(errorDescription(new Error("boom"))).toBe("boom");
+    expect(errorDescription("boom")).toBe("boom");
+  });
+
+  it("surfaces data.details carried by ACP internal errors", () => {
+    const error = Object.assign(new Error("Internal error"), {
+      code: -32603,
+      data: { details: "runtime acp:session-1 is registered twice in one transaction" },
+    });
+    expect(errorDescription(error)).toBe(
+      "Internal error：runtime acp:session-1 is registered twice in one transaction",
+    );
+  });
+
+  it("serializes non-details data instead of dropping it", () => {
+    const error = Object.assign(new Error("Internal error"), {
+      data: { code: "turn.agent_busy" },
+    });
+    expect(errorDescription(error)).toBe('Internal error：{"code":"turn.agent_busy"}');
   });
 });
 

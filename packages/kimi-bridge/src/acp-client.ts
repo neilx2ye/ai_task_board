@@ -405,6 +405,9 @@ export class KimiAcpClient {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    // 常驻连接上不要 close 后 resume：Kimi ACP 会把 close 后的会话在
+    // resume 时重复注册 runtime，从而报 Internal error。仅在确实要
+    // 结束进程/会话时调用。
     if (!this.initializeResponse?.agentCapabilities?.sessionCapabilities?.close) {
       return;
     }

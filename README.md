@@ -112,8 +112,8 @@ Content-Type: application/json
 需要让网页主动排队下一轮 Agent 工作时，使用统一的 `ai-task-board-bridge` npm 包：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.7 setup
-npx --yes ai-task-board-bridge@1.8.7 run
+npx --yes ai-task-board-bridge@1.8.8 setup
+npx --yes ai-task-board-bridge@1.8.8 run
 ```
 
 `setup` 与 `run` 是两个统一命令：一个系统用户只需要**一个 Bridge、一个命令、
@@ -139,7 +139,7 @@ Token，直接非交互运行，不再提问；`AI_TASK_BOARD_URL` 未提供时�
 ```bash
 AI_TASK_BOARD_URL='https://task.neilx.online' \
 AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
-npx --yes ai-task-board-bridge@1.8.7 setup codex
+npx --yes ai-task-board-bridge@1.8.8 setup codex
 ```
 
 Codex 的安装器显式固定该用户的 `HOME` / `CODEX_HOME`，因此默认读取这个用户的
@@ -166,7 +166,7 @@ Bridge 0.6 会单独把 blocking `requestUserInput` 转成 Web 选择框，保�
 先在「AI 连接」中新建平台为 **Kimi Code** 的独立连接，再在已经登录 Kimi Code 的设备上运行：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.7 setup kimi
+npx --yes ai-task-board-bridge@1.8.8 setup kimi
 ```
 
 前台或自动化部署可使用环境变量：
@@ -177,7 +177,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 KIMI_WORKING_DIRECTORY='/absolute/path/to/project' \
 KIMI_BRIDGE_MODE='auto' \
 KIMI_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.7 run kimi
+npx --yes ai-task-board-bridge@1.8.8 run kimi
 ```
 
 Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该子进程。它按精确 cwd 白名单同步 Kimi Sessions，并从 ACP 配置项动态上报当前可用模型、默认模型和思考强度。Web 可创建和删除真实 Kimi Session，也可为新 Session 或下一 Turn 选择 Kimi 模型；Kimi Code 0.34 的 ACP 没有可靠改名方法，因此网页会隐藏 Kimi Thread 的改名入口。完整变量、安全策略和 systemd 说明见 [Kimi Bridge 包文档](packages/kimi-bridge/README.md)。
@@ -188,7 +188,7 @@ Kimi Bridge 启动独立的 `kimi acp` 子进程，Board 令牌不会传入该�
 的设备上运行（需要 `agy` 1.1.8+，可执行 `agy update` 升级）：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.7 setup antigravity
+npx --yes ai-task-board-bridge@1.8.8 setup antigravity
 ```
 
 前台或自动化部署可使用环境变量：
@@ -199,7 +199,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 ANTIGRAVITY_WORKING_DIRECTORY='/absolute/path/to/project' \
 ANTIGRAVITY_BRIDGE_MODE='auto' \
 ANTIGRAVITY_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.7 run antigravity
+npx --yes ai-task-board-bridge@1.8.8 run antigravity
 ```
 
 Antigravity Bridge 只使用 Google 官方文档化的 `agy -p --output-format stream-json`
@@ -224,7 +224,7 @@ Anthropic 官方的 ACP 适配器自动安装到用户数据目录并配置 `CLA
 不需要单独安装：
 
 ```bash
-npx --yes ai-task-board-bridge@1.8.7 setup claude
+npx --yes ai-task-board-bridge@1.8.8 setup claude
 ```
 
 订阅用户请先用同一系统用户运行 `claude login`；API / 自定义网关用户请设置
@@ -237,7 +237,7 @@ AI_TASK_BOARD_CONNECTION_TOKEN='atb_REPLACE_ME' \
 CLAUDE_WORKING_DIRECTORY='/absolute/path/to/project' \
 CLAUDE_BRIDGE_MODE='default' \
 CLAUDE_BRIDGE_APPROVAL_MODE='accept' \
-npx --yes ai-task-board-bridge@1.8.7 run claude
+npx --yes ai-task-board-bridge@1.8.8 run claude
 ```
 
 Claude Code Bridge 启动独立的 `claude-agent-acp` 子进程，Board 令牌不会传入该子

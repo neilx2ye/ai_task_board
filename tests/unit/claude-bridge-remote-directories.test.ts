@@ -141,12 +141,22 @@ describe("Claude Code Bridge remote working directories", () => {
         }),
       ),
     ).toThrow("不存在或不是目录");
-    expect(() =>
+    expect(
       resolveRemoteConfiguration(
         configuration,
         desired({ working_directories: [] }),
-      ),
-    ).toThrow("必须包含 1 到 100 个目录");
+      ).effective.workingDirectories,
+    ).toEqual([]);
+  });
+
+  it("treats an empty remote list as managing no directories", () => {
+    const configuration = baseConfiguration();
+    const resolved = resolveRemoteConfiguration(
+      configuration,
+      desired({ working_directories: [] }),
+    );
+    expect(resolved.effective.workingDirectories).toEqual([]);
+    expect(configuration.localWorkingDirectories).toHaveLength(1);
   });
 
   it("parses remote entries with the shared validation rules", () => {
@@ -204,8 +214,8 @@ describe("Claude Code Bridge session sync device identity", () => {
     });
     await client.syncSessions([], baseConfiguration().workingDirectories, []);
     const body = syncBody(fetchMock);
-    expect(body.bridge_version).toBe("1.8.7-claude.1");
-    expect(CLAUDE_BRIDGE_CAPABILITY_VERSION).toBe("1.8.7-claude.1");
+    expect(body.bridge_version).toBe("1.8.8-claude.1");
+    expect(CLAUDE_BRIDGE_CAPABILITY_VERSION).toBe("1.8.8-claude.1");
     expect(body.device_id).toBe("2f4b91c0-0000-4000-8000-0000000000ab");
     expect(body.device_label).toBe("test-host");
     expect(body.directories).toEqual([
